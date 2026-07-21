@@ -1,143 +1,111 @@
-"""Per-function variable inventory: params, return value, globals (Task 3 scope).
+"""Per-function variable inventory: params, return value, globals.
 
-Struct params/globals explode into member leaves (`test.isvalid`). Deep types
-(arrays, unions, bitfields, pointers, enums) land in Task 4 via the type graph;
-until then unsupported leaf types are skipped, never crash (K5).
+Leaf explosion (nested structs, arrays, unions, enums, bitfields, pointers)
+is delegated to the type graph (typegraph.py); this module decides WHICH
+entities become leaves and with which direction.
 """
 from __future__ import annotations
 
 from clang.cindex import Cursor, CursorKind, TypeKind
 
-from utgen.model import CType, Direction, Inventory, Variable
-
-_SIGNED = {TypeKind.SCHAR, TypeKind.SHORT, TypeKind.INT,
-           TypeKind.LONG, TypeKind.LONGLONG}
-_UNSIGNED = {TypeKind.UCHAR, TypeKind.USHORT, TypeKind.UINT,
-             TypeKind.ULONG, TypeKind.ULONGLONG, TypeKind.BOOL}
-_PLAIN_CHAR = {TypeKind.CHAR_S, TypeKind.CHAR_U}
-
-
-def _clean(spelling: str) -> str:
-    """Type name without const/volatile qualifiers (B19)."""
-    out = spelling
-    for word in ("const ", "volatile "):
-        out = out.replace(word, "")
-    return out.strip()
+from utgen.model import Direction, Inventory
+from utgen.typegraph import LeafDeriver, TypeGraph
 
 
 class InventoryBuilder:
     """Builds the injectable/observable leaf inventory of one function."""
 
     def __init__(self, char_signed: bool = False, const_globals: str = "inject"):
-        self.char_signed = char_signed          # plain `char` signedness (K8)
         self.const_globals = const_globals      # "inject" | "fold" (B19)
+        self.type_graph = TypeGraph(char_signed)
+        self.deriver = LeafDeriver(self.type_graph)
+        self._usage: dict[str, list] = {}       # decl usr -> [decl, read, written]
+        self._order: list[str] = []
 
     def build(self, func_cursor: Cursor, tu) -> Inventory:
-        variables: list[Variable] = []
+        self._usage, self._order = {}, []
+        self._scan(func_cursor, writing=False)  # fills global + param usage
+
+        variables = []
         for param in func_cursor.get_arguments():
-            self._add_leaves(variables, param.spelling, param.type, Direction.IN)
+            member = self.type_graph.describe(param.type, param.spelling)
+            variables.extend(self.deriver.leaves(member, self._param_direction(param)))
         result_type = func_cursor.result_type
         if result_type.get_canonical().kind != TypeKind.VOID:
-            self._add_leaves(variables, f"{func_cursor.spelling}()",
-                             result_type, Direction.OUT)
-        for decl, direction in self._globals_of(func_cursor):
-            self._add_leaves(variables, decl.spelling, decl.type, direction)
+            member = self.type_graph.describe(result_type, f"{func_cursor.spelling}()")
+            variables.extend(self.deriver.leaves(member, Direction.OUT))
+        for decl, direction in self._globals(func_cursor):
+            member = self.type_graph.describe(decl.type, decl.spelling)
+            variables.extend(self.deriver.leaves(member, direction))
         return Inventory(variables, [])
 
-    # --- leaf building ---
+    # --- directions from usage ---
 
-    def _add_leaves(self, out: list, base: str, ctype, direction: Direction,
-                    fmt: str | None = None) -> None:
-        canon = ctype.get_canonical()
-        if canon.kind == TypeKind.RECORD:
-            # Exploded members carry the OUTERMOST struct type name (existing convention).
-            parent_fmt = fmt or _clean(ctype.spelling)
-            for field in canon.get_fields():
-                self._add_leaves(out, f"{base}.{field.spelling}", field.type,
-                                 direction, fmt=parent_fmt)
-            return
-        resolved = self._resolve(ctype)
-        if resolved is None:
-            return                              # Task 4 scope (pointer/array/enum/...)
-        sign_word = "signed" if resolved.signed else "unsigned"
-        out.append(Variable(base, resolved, fmt or sign_word,
-                            str(resolved.bits), direction))
+    def _param_direction(self, param: Cursor) -> Direction:
+        """Pointer params written through become OUT (INOUT when also read), D6."""
+        if param.type.get_canonical().kind != TypeKind.POINTER:
+            return Direction.IN
+        entry = self._usage.get(param.get_usr())
+        return self._direction_of(entry) if entry else Direction.IN
 
-    def _resolve(self, ctype) -> CType | None:
-        canon = ctype.get_canonical()
-        if canon.kind in _PLAIN_CHAR:
-            signed = self.char_signed
-        elif canon.kind in _SIGNED:
-            signed = True
-        elif canon.kind in _UNSIGNED:
-            signed = False
-        else:
-            return None
-        return CType(_clean(ctype.spelling), canon.get_size() * 8, signed)
-
-    # --- global usage analysis ---
-
-    def _globals_of(self, func_cursor: Cursor) -> list:
-        """File-scope variables used by the function, in first-use order.
-
-        read -> IN, written -> OUT, both -> INOUT. Taking a global's address
-        counts as read+write (the callee may do either).
-        """
-        seen: dict[str, list] = {}              # usr -> [decl, read, written]
-        order: list[str] = []
-        self._scan(func_cursor, seen, order, writing=False)
+    def _globals(self, func_cursor: Cursor) -> list:
         result = []
-        for usr in order:
-            decl, read, written = seen[usr]
+        for usr in self._order:
+            decl, read, written = self._usage[usr]
+            if decl.kind != CursorKind.VAR_DECL:
+                continue                        # param usage lives in the same table
             if self.const_globals == "fold" and decl.type.is_const_qualified():
                 continue
-            if read and written:
-                direction = Direction.INOUT
-            elif written:
-                direction = Direction.OUT
-            else:
-                direction = Direction.IN
-            result.append((decl, direction))
+            result.append((decl, self._direction_of(self._usage[usr])))
         return result
 
-    def _scan(self, cur: Cursor, seen: dict, order: list, writing: bool) -> None:
+    def _direction_of(self, entry: list) -> Direction:
+        _, read, written = entry
+        if read and written:
+            return Direction.INOUT
+        return Direction.OUT if written else Direction.IN
+
+    # --- body scan: read/write usage of globals and params ---
+
+    def _scan(self, cur: Cursor, writing: bool) -> None:
         if cur.kind == CursorKind.DECL_REF_EXPR:
-            self._record_ref(cur, seen, order, writing)
+            self._record_ref(cur, writing)
             return
         if cur.kind == CursorKind.COMPOUND_ASSIGNMENT_OPERATOR:
             lhs, rhs = self._two_children(cur)
             if lhs is not None:
-                self._scan(lhs, seen, order, writing=True)
-                self._scan(lhs, seen, order, writing=False)   # compound also reads
-                self._scan(rhs, seen, order, writing=False)
+                self._scan(lhs, writing=True)
+                self._scan(lhs, writing=False)  # compound also reads the LHS
+                self._scan(rhs, writing=False)
                 return
         if cur.kind == CursorKind.BINARY_OPERATOR and self._is_assign(cur):
             lhs, rhs = self._two_children(cur)
             if lhs is not None:
-                self._scan(lhs, seen, order, writing=True)
-                self._scan(rhs, seen, order, writing=False)
+                self._scan(lhs, writing=True)
+                self._scan(rhs, writing=False)
                 return
         if cur.kind == CursorKind.UNARY_OPERATOR and self._first_token(cur) == "&":
-            for child in cur.get_children():
-                self._scan(child, seen, order, writing=True)
-                self._scan(child, seen, order, writing=False)
+            for child in cur.get_children():    # address escapes: read+write
+                self._scan(child, writing=True)
+                self._scan(child, writing=False)
             return
         for child in cur.get_children():
-            self._scan(child, seen, order, writing)
+            self._scan(child, writing)
 
-    def _record_ref(self, cur: Cursor, seen: dict, order: list, writing: bool) -> None:
+    def _record_ref(self, cur: Cursor, writing: bool) -> None:
         ref = cur.referenced
-        if ref is None or ref.kind != CursorKind.VAR_DECL:
+        if ref is None:
             return
-        parent = ref.semantic_parent
-        if parent is None or parent.kind != CursorKind.TRANSLATION_UNIT:
-            return                              # locals/params are not globals
+        is_global = (ref.kind == CursorKind.VAR_DECL and ref.semantic_parent is not None
+                     and ref.semantic_parent.kind == CursorKind.TRANSLATION_UNIT)
+        if not is_global and ref.kind != CursorKind.PARM_DECL:
+            return                              # locals are not injectable entities
         usr = ref.get_usr()
-        entry = seen.get(usr)
+        entry = self._usage.get(usr)
         if entry is None:
             entry = [ref, False, False]
-            seen[usr] = entry
-            order.append(usr)
+            self._usage[usr] = entry
+            self._order.append(usr)
         if writing:
             entry[2] = True
         else:
