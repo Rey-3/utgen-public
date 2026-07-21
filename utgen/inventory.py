@@ -9,16 +9,19 @@ from __future__ import annotations
 from clang.cindex import Cursor, CursorKind, TypeKind
 
 from utgen.model import Direction, Inventory
+from utgen.stubs import DEFAULT_NO_STUB, StubFinder
 from utgen.typegraph import LeafDeriver, TypeGraph
 
 
 class InventoryBuilder:
     """Builds the injectable/observable leaf inventory of one function."""
 
-    def __init__(self, char_signed: bool = False, const_globals: str = "inject"):
+    def __init__(self, char_signed: bool = False, const_globals: str = "inject",
+                 no_stub=DEFAULT_NO_STUB):
         self.const_globals = const_globals      # "inject" | "fold" (B19)
         self.type_graph = TypeGraph(char_signed)
         self.deriver = LeafDeriver(self.type_graph)
+        self.stub_finder = StubFinder(self.type_graph, self.deriver, no_stub)
         self._usage: dict[str, list] = {}       # decl usr -> [decl, read, written]
         self._order: list[str] = []
 
@@ -37,7 +40,9 @@ class InventoryBuilder:
         for decl, direction in self._globals(func_cursor):
             member = self.type_graph.describe(decl.type, decl.spelling)
             variables.extend(self.deriver.leaves(member, direction))
-        return Inventory(variables, [])
+        stubs, stub_vars = self.stub_finder.find(func_cursor)
+        variables.extend(stub_vars)
+        return Inventory(variables, stubs)
 
     # --- directions from usage ---
 
