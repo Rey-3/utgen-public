@@ -173,7 +173,9 @@ class LeafDeriver:
                 self._emit(out, name, child, direction, fmt,
                            pointer, visited | {member.type_name})
             return
-        if member.kind == "enum":
+        if member.type_name in self.graph.enums:
+            # Covers both a direct enum member and a pointer-to-enum (D4): the
+            # injectable domain is the enum's, never a raw scalar.
             enum = self.graph.enums.get(member.type_name)
             values = enum.values if enum else ()
             ctype = CType(member.type_name, member.len_bits, member.signed, values)
