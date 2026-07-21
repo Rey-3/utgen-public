@@ -1,14 +1,17 @@
-"""Stub discovery: called functions -> StubInfo records + tessy_ leaf Variables.
+"""Stub discovery: external calls -> StubInfo records + tessy_ leaf Variables.
 
 Follows the existing pipeline's conventions:
-- every called function is stubbed, same-module callees included (E7),
-  deduped by name in call order (E4), minus the no_stub list (E6);
+- external callees are stubbed, while functions defined in the target .c are
+  ordinary local calls and are ignored (E7), deduped by name in call order
+  (E4), minus the no_stub list (E6);
 - non-void stubs contribute `tessy_<fn>` IN leaves (injected return) and
   `tessy_<fn>__ArgN` OUT capture leaves for every parameter — pointees are
   captured by value, so capture leaves are never pointers (D7);
 - void stubs contribute a StubInfo only, no leaves (E3).
 """
 from __future__ import annotations
+
+import os
 
 from clang.cindex import Cursor, CursorKind, TypeKind
 
@@ -19,7 +22,7 @@ DEFAULT_NO_STUB = ("memcpy", "memset", "memcmp", "abs")
 
 
 class StubFinder:
-    """Finds called functions and derives their tessy_ variables."""
+    """Finds external calls and derives their tessy_ variables."""
 
     def __init__(self, graph: TypeGraph, deriver: LeafDeriver,
                  no_stub=DEFAULT_NO_STUB):
@@ -32,26 +35,45 @@ class StubFinder:
         stubs: list[StubInfo] = []
         variables: list[Variable] = []
         seen: set[str] = set()
-        self._walk(func_cursor, func_cursor.spelling, seen, stubs, variables)
+        source_file = self._file_of(func_cursor)
+        self._walk(func_cursor, func_cursor.spelling, source_file, seen,
+                   stubs, variables)
         return stubs, variables
 
-    def _walk(self, cur: Cursor, self_name: str, seen: set,
-              stubs: list, variables: list) -> None:
+    def _walk(self, cur: Cursor, self_name: str, source_file: str,
+              seen: set, stubs: list, variables: list) -> None:
         if cur.kind == CursorKind.CALL_EXPR:
-            self._record(cur, self_name, seen, stubs, variables)
+            self._record(cur, self_name, source_file, seen, stubs, variables)
         for child in cur.get_children():
-            self._walk(child, self_name, seen, stubs, variables)
+            self._walk(child, self_name, source_file, seen, stubs, variables)
 
-    def _record(self, cur: Cursor, self_name: str, seen: set,
-                stubs: list, variables: list) -> None:
+    def _record(self, cur: Cursor, self_name: str, source_file: str,
+                seen: set, stubs: list, variables: list) -> None:
         callee = cur.referenced
         name = callee.spelling if callee is not None else cur.spelling
-        if not name or name == self_name or name in self.no_stub or name in seen:
+        if (not name or name == self_name or name in self.no_stub or name in seen
+                or self._is_local_definition(callee, source_file)):
             return                              # recursion out of scope; E4 dedupe; E6
         seen.add(name)
         stubs.append(self._stub_info(name, callee))
         if callee is not None:
             variables.extend(self._tessy_leaves(name, callee))
+
+    def _is_local_definition(self, callee: Cursor | None, source_file: str) -> bool:
+        """Return whether a call resolves to a definition in the target .c."""
+        if callee is None or not source_file:
+            return False
+        definition = callee.get_definition()
+        if definition is None:
+            return False
+        return self._file_of(definition) == source_file
+
+    def _file_of(self, cursor: Cursor) -> str:
+        """Return a normalized source path for a cursor location."""
+        location = cursor.location.file
+        if location is None:
+            return ""
+        return os.path.normcase(os.path.normpath(str(location)))
 
     def _stub_info(self, name: str, callee: Cursor | None) -> StubInfo:
         if callee is None:
