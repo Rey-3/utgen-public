@@ -65,9 +65,11 @@ class DecisionExtractor:
             self._loop(cursor)
         elif kind == CursorKind.DO_STMT:
             self._do_loop(cursor)
-        elif kind in (CursorKind.DECL_STMT, CursorKind.RETURN_STMT,
-                      CursorKind.BINARY_OPERATOR, CursorKind.UNARY_OPERATOR,
-                      CursorKind.COMPOUND_ASSIGNMENT_OPERATOR,
+        elif kind in (CursorKind.DECL_STMT, CursorKind.BINARY_OPERATOR,
+                      CursorKind.COMPOUND_ASSIGNMENT_OPERATOR):
+            self._record_cursor(cursor)
+            self._nested_expr(cursor)
+        elif kind in (CursorKind.RETURN_STMT, CursorKind.UNARY_OPERATOR,
                       CursorKind.CALL_EXPR, CursorKind.NULL_STMT):
             self._nested_expr(cursor)
         else:
@@ -116,12 +118,16 @@ class DecisionExtractor:
         for arm in arms:
             for label in arm.labels:
                 case_values.append((_literal_value(label), _source(label)))
+        case_atoms = []
+        for arm in arms:
+            if not arm.default:
+                case_atoms.extend(self._case_atoms(subject, arm.labels))
         returning: list[object] = []
         for arm in arms:
             if arm.default:
-                expr = self._default_expr(_source(subject), case_values)
+                expr = self._default_expr(_source(subject), case_values, case_atoms)
             else:
-                expr = self._case_expr(_source(subject), arm.labels)
+                expr = self._case_expr(subject, arm.labels)
             decision = self._record(expr, "case", arm.labels[0] if arm.labels else cursor)
             with self._guard(decision.expr, True):
                 for statement in arm.body:
@@ -165,11 +171,13 @@ class DecisionExtractor:
         self._nested_expr(condition)
         with self._guard(self._build(condition), True):
             self._statement(body)
+        self._record_cursor(cursor)
 
     def _do_loop(self, cursor: Cursor) -> None:
         children = list(cursor.get_children())
         if children:
             self._statement(children[0])
+            self._record_cursor(cursor)
         if len(children) > 1:
             self._nested_expr(children[1])
 
@@ -207,18 +215,34 @@ class DecisionExtractor:
             return builder.build(cursor)
         return builder(cursor)
 
-    def _case_expr(self, subject: str, labels: list[Cursor]) -> object:
-        atoms: list[Atom] = []
-        for label in labels:
-            label_text = _source(label)
-            value = _literal_value(label)
-            atoms.append(Atom(None, Op.EQ, rhs=value,
-                              text=f"{subject} == {label_text}"))
+    def _record_cursor(self, cursor: Cursor) -> None:
+        copyprop = getattr(self.atom_builder, "copyprop", None)
+        if copyprop is not None and hasattr(copyprop, "record"):
+            copyprop.record(cursor)
+
+    def _case_expr(self, subject: Cursor, labels: list[Cursor]) -> object:
+        atoms = self._case_atoms(subject, labels)
         if len(atoms) == 1:
             return atoms[0]
         return Or(tuple(atoms))
 
-    def _default_expr(self, subject: str, values: list[tuple[int | None, str]]) -> object:
+    def _case_atoms(self, subject: Cursor, labels: list[Cursor]) -> list[Atom]:
+        atoms = []
+        for label in labels:
+            label_text = _source(label)
+            value = _literal_value(label)
+            build_case = getattr(self.atom_builder, "build_case", None)
+            if build_case is not None:
+                atoms.append(build_case(subject, label))
+            else:
+                atoms.append(Atom(None, Op.EQ, rhs=value,
+                                  text=f"{_source(subject)} == {label_text}"))
+        return atoms
+
+    def _default_expr(self, subject: str, values: list[tuple[int | None, str]],
+                      case_atoms: list[Atom] | None = None) -> object:
+        if case_atoms is not None:
+            return And(tuple(Not(atom) for atom in case_atoms))
         atoms: list[Not] = []
         for value, label_text in values:
             eq = Atom(None, Op.EQ, rhs=value,
