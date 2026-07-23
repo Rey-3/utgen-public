@@ -241,6 +241,7 @@ class GlobalDef:
 class Ref:
     """Read of a leaf/local by dotted path, e.g. `test.isvalid`."""
     path: str
+    scope: str = ""
 
 
 @dataclass(frozen=True)
@@ -300,6 +301,56 @@ class MemberE:
     name: str
 
 
+@dataclass(frozen=True)
+class Phi:
+    """Value selected by a symbolic branch condition at a join."""
+    condition: object
+    when_true: object
+    when_false: object
+
+
+@dataclass(frozen=True)
+class PathConstraint:
+    """One decision outcome required by a path."""
+    decision_id: int | None
+    expr: object
+    outcome: bool
+
+
+@dataclass
+class DataflowState:
+    """Symbolic values and path facts at one program point."""
+    values: dict
+    path: tuple = ()
+    reachable: bool = True
+    unknown: tuple = ()
+    condition: object = None
+    aliases: dict = field(default_factory=dict)
+
+
+@dataclass
+class DataflowPoint:
+    """States reaching one decision or observable program point."""
+    decision_id: int | None
+    states: tuple
+    location: str = ""
+
+
+@dataclass
+class DataflowResult:
+    """Path-sensitive symbolic analysis for one function."""
+    points: list
+    returns: list
+    writes: list
+
+    def point(self, decision_id: int) -> DataflowPoint:
+        """Return the first recorded point for a decision id."""
+        for point in self.points:
+            if point.decision_id == decision_id:
+                return point
+        raise KeyError(decision_id)
+
+
 # --- statement IR ---
 
 @dataclass(frozen=True)
@@ -307,6 +358,8 @@ class Decl:
     """Local variable declaration with optional initializer."""
     name: str
     init: object = None
+    scope: str = ""
+    is_pointer: bool = False
 
 
 @dataclass(frozen=True)
@@ -323,6 +376,7 @@ class If:
     decision_id: int
     then: tuple = ()
     els: tuple = ()
+    condition: object = None
 
 
 @dataclass(frozen=True)
@@ -330,6 +384,8 @@ class SwitchCase:
     """One case (or default) arm, linked to its case Decision by id."""
     decision_id: int
     body: tuple = ()
+    labels: tuple = ()
+    default: bool = False
 
 
 @dataclass(frozen=True)
@@ -388,6 +444,7 @@ class FunctionIR:
     leaves: list                    # Variable items
     decisions: list                 # Decision items
     body: tuple = ()                # Stmt items
+    dataflow: DataflowResult | None = None
 
 
 @dataclass

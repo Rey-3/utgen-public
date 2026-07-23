@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import ast
 
-from clang.cindex import Cursor, CursorKind
+from clang.cindex import Cursor, CursorKind, TypeKind
 
 from utgen.decisions import DecisionExtractor
 from utgen.model import (Assign, Binop, Break, CallE, Cast, Const, Decl,
@@ -33,6 +33,7 @@ class BodyIrBuilder:
         self.decisions = []
         self._decision_map = {}
         self._body_atom_builder = atom_builder
+        self._local_scopes = {}
 
     def build(self, func_cursor: Cursor) -> list:
         """Return the top-level statements for a function definition or body."""
@@ -46,6 +47,7 @@ class BodyIrBuilder:
             self._decision_map.setdefault(key, []).append(decision)
         self._body_atom_builder = _fresh_atom_builder(self.atom_builder)
         body = _function_body(func_cursor) if func_cursor.kind == CursorKind.FUNCTION_DECL else func_cursor
+        self._local_scopes = _local_scopes(body)
         return self._block(body) if body is not None else []
 
     def _block(self, cursor: Cursor) -> list:
@@ -95,7 +97,9 @@ class BodyIrBuilder:
             if child.kind != CursorKind.VAR_DECL:
                 continue
             init = _initializer(child)
-            declarations.append(Decl(child.spelling, self._expr(init) if init is not None else None))
+            scope = self._local_scopes.get(child.get_usr(), "")
+            pointer = child.type.get_canonical().kind == TypeKind.POINTER
+            declarations.append(Decl(child.spelling, self._expr(init) if init is not None else None, scope, pointer))
         return declarations
 
     def _if(self, cursor: Cursor) -> If:
@@ -104,7 +108,7 @@ class BodyIrBuilder:
         decision_id = self._decision_id("if", condition)
         then = self._arm(children[1]) if len(children) > 1 else ()
         els = self._arm(children[2]) if len(children) > 2 else ()
-        return If(decision_id, then, els)
+        return If(decision_id, then, els, self._expr(condition))
 
     def _switch(self, cursor: Cursor) -> Switch:
         children = list(cursor.get_children())
@@ -117,7 +121,10 @@ class BodyIrBuilder:
             case_body = []
             for statement in statements:
                 case_body.extend(self._statement(statement))
-            cases.append(SwitchCase(decision_id, tuple(case_body)))
+            case_labels = []
+            for label in labels:
+                case_labels.append(_literal(label))
+            cases.append(SwitchCase(decision_id, tuple(case_body), tuple(case_labels), default))
         return Switch(subject, tuple(cases))
 
     def _loop(self, cursor: Cursor) -> While:
@@ -167,7 +174,9 @@ class BodyIrBuilder:
             return Const(_source(cursor))
         if kind in (CursorKind.DECL_REF_EXPR, CursorKind.VAR_DECL,
                     CursorKind.PARM_DECL):
-            return Ref(cursor.spelling)
+            referenced = cursor.referenced if kind == CursorKind.DECL_REF_EXPR else cursor
+            scope = self._local_scopes.get(referenced.get_usr(), "") if referenced is not None else ""
+            return Ref(cursor.spelling, scope)
         if kind == CursorKind.MEMBER_REF_EXPR:
             children = list(cursor.get_children())
             base = self._expr(children[0]) if children else Unknown("")
@@ -219,6 +228,28 @@ def _function_body(cursor: Cursor) -> Cursor | None:
         if child.kind == CursorKind.COMPOUND_STMT:
             return child
     return None
+
+
+def _local_scopes(cursor: Cursor | None) -> dict:
+    declarations = []
+
+    def collect(current):
+        if current.kind == CursorKind.VAR_DECL:
+            declarations.append(current)
+        for child in current.get_children():
+            collect(child)
+
+    if cursor is not None:
+        collect(cursor)
+    counts = {}
+    for declaration in declarations:
+        counts[declaration.spelling] = counts.get(declaration.spelling, 0) + 1
+    scopes, next_scope = {}, 1
+    for declaration in declarations:
+        if counts[declaration.spelling] > 1:
+            scopes[declaration.get_usr()] = f"scope{next_scope}"
+            next_scope += 1
+    return scopes
 
 
 def _initializer(cursor: Cursor) -> Cursor | None:
