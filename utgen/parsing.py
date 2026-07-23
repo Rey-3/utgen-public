@@ -20,11 +20,13 @@ class ClangParser:
     to the module indexer (Task 9 / spec L4).
     """
 
-    def parse(self, source: Path, includes: list) -> TranslationUnit:
+    def parse(self, source: Path, includes: list, defines=()) -> TranslationUnit:
         configure_libclang(None)
         args = ["-x", "c"]
         for inc in includes:
             args.append("-I" + str(inc))
+        for define in defines:
+            args.append(str(define) if str(define).startswith("-D") else "-D" + str(define))
         tu = Index.create().parse(
             str(source), args=args,
             options=TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD)

@@ -5,8 +5,8 @@ from dataclasses import dataclass, replace
 
 from utgen.model import (And, Assign, Atom, Binop, Break, CallE, Cast, Const,
                          DataflowPoint, DataflowResult, DataflowState, Decl,
-                         Direction, DoWhile, ExprStmt, If, Index, MemberE, Not,
-                         Op, Or, PathConstraint, Phi, Ref, Return, Switch,
+                         Direction, DoWhile, ExprStmt, For, If, Index, MemberE,
+                         Not, Op, Or, PathConstraint, Phi, Ref, Return, Switch,
                          Ternary, Unary, Unknown, While)
 
 
@@ -73,6 +73,8 @@ class DataflowEngine:
             return _Flow(tuple(result))
         if isinstance(statement, If):
             return self._if(states, statement)
+        if isinstance(statement, For):
+            return self._for(states, statement)
         if isinstance(statement, (While, DoWhile)):
             return self._loop(states, statement)
         if isinstance(statement, Switch):
@@ -109,10 +111,15 @@ class DataflowEngine:
         active = then_flow.active + else_flow.active
         return _Flow(self._limit(active), then_flow.breaks + else_flow.breaks)
 
-    def _loop(self, states, statement):
+    def _for(self, states, statement):
+        initialized = self._block(states, statement.init)
+        loop = While(statement.cond, statement.body + statement.increment)
+        return self._loop(initialized.active, loop, self._written(statement.init))
+
+    def _loop(self, states, statement, extra_written=()):
         if isinstance(statement, DoWhile):
             return self._do_loop(states, statement)
-        exits, written = [], self._written(statement.body)
+        exits, written = [], self._written(statement.body) | set(extra_written)
         for state in states:
             condition = self._condition(statement.cond, state)
             true_state = self._branch(state, None, condition, True)
@@ -546,6 +553,10 @@ class DataflowEngine:
             elif isinstance(statement, If):
                 names.update(self._written(statement.then))
                 names.update(self._written(statement.els))
+            elif isinstance(statement, For):
+                names.update(self._written(statement.init))
+                names.update(self._written(statement.body))
+                names.update(self._written(statement.increment))
             elif isinstance(statement, (While, DoWhile)):
                 names.update(self._written(statement.body))
             elif isinstance(statement, Switch):

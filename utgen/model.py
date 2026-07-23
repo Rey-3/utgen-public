@@ -248,6 +248,7 @@ class Ref:
 class Const:
     """Integer (or enum-name) literal."""
     value: int | str
+    type_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -397,8 +398,17 @@ class Switch:
 
 @dataclass(frozen=True)
 class While:
-    """while/for loop: guard-only, condition kept as a boolean Node (A14)."""
+    """while loop: guard-only, condition kept as a boolean Node (A14)."""
     cond: object
+    body: tuple = ()
+
+
+@dataclass(frozen=True)
+class For:
+    """for loop with explicit initializer, guard, increment, and body."""
+    init: tuple = ()
+    cond: object = None
+    increment: tuple = ()
     body: tuple = ()
 
 

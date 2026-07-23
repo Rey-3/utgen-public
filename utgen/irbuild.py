@@ -5,10 +5,12 @@ import ast
 
 from clang.cindex import Cursor, CursorKind, TypeKind
 
+from utgen.atoms import _fold_int, _macro_constant
 from utgen.decisions import DecisionExtractor
 from utgen.model import (Assign, Binop, Break, CallE, Cast, Const, Decl,
-                         DoWhile, ExprStmt, If, Index, MemberE, Ref, Return,
-                         Switch, SwitchCase, Ternary, Unary, Unknown, While)
+                         DoWhile, ExprStmt, For, If, Index, MemberE, Ref,
+                         Return, Switch, SwitchCase, Ternary, Unary, Unknown,
+                         While)
 
 
 _WRAPPERS = {CursorKind.UNEXPOSED_EXPR, CursorKind.PAREN_EXPR}
@@ -27,13 +29,16 @@ _ASSIGNMENT_KINDS = {CursorKind.BINARY_OPERATOR, CursorKind.COMPOUND_ASSIGNMENT_
 class BodyIrBuilder:
     """Build statement and expression IR while linking decisions by location."""
 
-    def __init__(self, atom_builder, decisions=None):
+    def __init__(self, atom_builder, decisions=None, macros=None):
         self.atom_builder = atom_builder
         self._provided_decisions = decisions
         self.decisions = []
         self._decision_map = {}
         self._body_atom_builder = atom_builder
         self._local_scopes = {}
+        self._macro_values = {}
+        for macro in macros or ():
+            self._macro_values[macro.name] = macro.value if macro.value is not None else macro.raw
 
     def build(self, func_cursor: Cursor) -> list:
         """Return the top-level statements for a function definition or body."""
@@ -97,9 +102,10 @@ class BodyIrBuilder:
             if child.kind != CursorKind.VAR_DECL:
                 continue
             init = _initializer(child)
+            value = Const(0) if init is None and _is_static(child) else self._expr(init)
             scope = self._local_scopes.get(child.get_usr(), "")
             pointer = child.type.get_canonical().kind == TypeKind.POINTER
-            declarations.append(Decl(child.spelling, self._expr(init) if init is not None else None, scope, pointer))
+            declarations.append(Decl(child.spelling, value, scope, pointer))
         return declarations
 
     def _if(self, cursor: Cursor) -> If:
@@ -123,25 +129,21 @@ class BodyIrBuilder:
                 case_body.extend(self._statement(statement))
             case_labels = []
             for label in labels:
-                case_labels.append(_literal(label))
+                case_labels.append(_literal(label, self._macro_values))
             cases.append(SwitchCase(decision_id, tuple(case_body), tuple(case_labels), default))
         return Switch(subject, tuple(cases))
 
-    def _loop(self, cursor: Cursor) -> While:
+    def _loop(self, cursor: Cursor) -> While | For:
         children = list(cursor.get_children())
         body_cursor = children[-1] if children else None
         before_body = children[:-1]
         condition = _loop_condition(cursor, before_body)
-        body = []
         if cursor.kind == CursorKind.FOR_STMT:
-            for item in _for_side_statements(before_body, condition, self):
-                body.extend(item)
-        if body_cursor is not None:
-            body.extend(self._statement(body_cursor))
-        if cursor.kind == CursorKind.FOR_STMT:
-            increment = _for_increment(before_body, condition)
-            if increment is not None:
-                body.extend(self._statement(increment))
+            init = _for_part(before_body, 0, self)
+            increment = _for_part(before_body, 2, self)
+            body = self._statement(body_cursor) if body_cursor is not None else []
+            return For(init, self._boolean(condition), increment, tuple(body))
+        body = self._statement(body_cursor) if body_cursor is not None else []
         return While(self._boolean(condition), tuple(body))
 
     def _do_loop(self, cursor: Cursor) -> DoWhile:
@@ -169,12 +171,17 @@ class BodyIrBuilder:
         cursor = _unwrap(cursor)
         kind = cursor.kind
         if kind in (CursorKind.INTEGER_LITERAL, CursorKind.CHARACTER_LITERAL):
-            return Const(_literal(cursor))
+            value = _literal(cursor, self._macro_values)
+            return Const(value, _literal_type(cursor, value))
         if kind == CursorKind.FLOATING_LITERAL:
-            return Const(_source(cursor))
+            return Const(_spelling(cursor))
+        if kind == CursorKind.INIT_LIST_EXPR:
+            return Const(0) if _zero_initializer(cursor, self._macro_values) else Unknown(_source(cursor))
         if kind in (CursorKind.DECL_REF_EXPR, CursorKind.VAR_DECL,
                     CursorKind.PARM_DECL):
             referenced = cursor.referenced if kind == CursorKind.DECL_REF_EXPR else cursor
+            if referenced is not None and referenced.kind == CursorKind.ENUM_CONSTANT_DECL:
+                return Const(referenced.enum_value)
             scope = self._local_scopes.get(referenced.get_usr(), "") if referenced is not None else ""
             return Ref(cursor.spelling, scope)
         if kind == CursorKind.MEMBER_REF_EXPR:
@@ -206,6 +213,9 @@ class BodyIrBuilder:
         if kind in (CursorKind.BINARY_OPERATOR, CursorKind.COMPOUND_ASSIGNMENT_OPERATOR):
             children = list(cursor.get_children())
             if len(children) == 2:
+                constant = _literal(cursor, self._macro_values)
+                if isinstance(constant, int):
+                    return Const(constant)
                 return Binop(_operator(cursor), self._expr(children[0]), self._expr(children[1]))
             return Unknown(_source(cursor))
         return Unknown(_source(cursor))
@@ -253,23 +263,56 @@ def _local_scopes(cursor: Cursor | None) -> dict:
 
 
 def _initializer(cursor: Cursor) -> Cursor | None:
-    for child in reversed(list(cursor.get_children())):
+    children = list(cursor.get_children())
+    for child in children:
+        if child.kind == CursorKind.INIT_LIST_EXPR:
+            return child
+    if _is_array_type(cursor):
+        return None
+    for child in reversed(children):
         if child.kind not in (CursorKind.TYPE_REF, CursorKind.ANNOTATE_ATTR):
             return child
     return None
+
+
+def _is_static(cursor: Cursor) -> bool:
+    storage = getattr(cursor, "storage_class", "")
+    return getattr(storage, "name", str(storage)).lower() == "static"
+
+
+def _is_array_type(cursor: Cursor) -> bool:
+    kind = getattr(cursor.type.get_canonical().kind, "name", "")
+    return kind in {"CONSTANTARRAY", "INCOMPLETEARRAY", "VARIABLEARRAY", "DEPENDENTSIZEDARRAY"}
+
+
+def _zero_initializer(cursor: Cursor, macros=None) -> bool:
+    for child in cursor.get_children():
+        if getattr(child.kind, "name", "") == "IMPLICIT_VALUE_INIT_EXPR":
+            continue
+        if _literal(child, macros) != 0:
+            return False
+    return True
 
 
 def _arms(body: Cursor | None):
     if body is None:
         return []
     result = []
+    active = None
     for child in body.get_children():
         if child.kind == CursorKind.CASE_STMT:
             labels, statements = _case_chain(child)
-            result.append((labels, statements, False))
+            active = [labels, list(statements), False]
+            result.append(active)
         elif child.kind == CursorKind.DEFAULT_STMT:
-            result.append(([], list(child.get_children()), True))
-    return result
+            active = [[], list(child.get_children()), True]
+            result.append(active)
+        elif active is not None:
+            active[1].append(child)
+    arms = []
+    for item in result:
+        arms.append((item[0], item[1], item[2]))
+    return arms
 
 
 def _case_chain(cursor: Cursor):
@@ -291,26 +334,14 @@ def _case_chain(cursor: Cursor):
 def _loop_condition(cursor: Cursor, before_body: list[Cursor]):
     if cursor.kind == CursorKind.WHILE_STMT or cursor.kind == CursorKind.DO_STMT:
         return before_body[0] if before_body else None
-    for child in before_body:
-        if child.kind not in (CursorKind.DECL_STMT, CursorKind.NULL_STMT):
-            return child
-    return None
+    condition = before_body[1] if len(before_body) > 1 else None
+    return None if condition is None or condition.kind == CursorKind.NULL_STMT else condition
 
 
-def _for_side_statements(before_body, condition, builder):
-    if not before_body:
-        return []
-    first = before_body[0]
-    if first is condition or first.kind == CursorKind.NULL_STMT:
-        return []
-    return [builder._statement(first)]
-
-
-def _for_increment(before_body, condition):
-    candidates = [child for child in before_body if child is not condition]
-    if len(candidates) > 1:
-        return candidates[-1]
-    return None
+def _for_part(before_body, index, builder):
+    if len(before_body) <= index or before_body[index].kind == CursorKind.NULL_STMT:
+        return ()
+    return tuple(builder._statement(before_body[index]))
 
 
 def _unwrap(cursor: Cursor) -> Cursor:
@@ -340,8 +371,27 @@ def _callee_name(cursor: Cursor) -> str:
     return referenced.spelling if referenced is not None else cursor.spelling
 
 
-def _literal(cursor: Cursor):
-    text = _source(cursor).strip()
+def _literal(cursor: Cursor, macros=None):
+    cursor = _unwrap(cursor)
+    if cursor.kind in _CASTS:
+        children = list(cursor.get_children())
+        return _literal(children[-1], macros) if children else ""
+    if cursor.kind == CursorKind.DECL_REF_EXPR and cursor.referenced is not None:
+        if cursor.referenced.kind == CursorKind.ENUM_CONSTANT_DECL:
+            return cursor.referenced.enum_value
+    try:
+        result = cursor.evaluate()
+        if result is not None and hasattr(result, "as_int"):
+            return result.as_int()
+    except Exception:
+        pass
+    macro = _macro_constant(cursor, macros)
+    if macro is not None:
+        return macro
+    folded = _fold_int(_source(cursor), macros)
+    if folded is not None:
+        return folded
+    text = _spelling(cursor)
     if text.startswith("'") and text.endswith("'"):
         try:
             return ord(ast.literal_eval(text))
@@ -352,6 +402,22 @@ def _literal(cursor: Cursor):
         return int(value, 0)
     except ValueError:
         return text
+
+
+def _literal_type(cursor: Cursor, value) -> str:
+    if not isinstance(value, int) or value <= 0x7FFFFFFF:
+        return ""
+    spelling = getattr(_unwrap(cursor).type, "spelling", "")
+    return spelling if "unsigned" in spelling else ""
+
+
+def _spelling(cursor: Cursor) -> str:
+    spelling = getattr(cursor, "spelling", "").strip()
+    if spelling:
+        return spelling
+    for token in cursor.get_tokens():
+        return token.spelling
+    return ""
 
 
 def _operator(cursor: Cursor) -> str:

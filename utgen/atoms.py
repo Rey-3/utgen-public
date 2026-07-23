@@ -1,6 +1,7 @@
 """Map clang condition expressions to controllable boolean atoms."""
 from __future__ import annotations
 
+import ast
 import re
 from dataclasses import dataclass
 
@@ -142,9 +143,12 @@ class CopyPropagation:
 class AtomBuilder:
     """Build boolean atom trees mapped to an ``Inventory``."""
 
-    def __init__(self, inventory: Inventory, copyprop: CopyPropagation | None = None):
+    def __init__(self, inventory: Inventory, copyprop: CopyPropagation | None = None, macros=None):
         self.inventory = inventory
         self.copyprop = copyprop or CopyPropagation()
+        self._macro_values = {}
+        for macro in macros or ():
+            self._macro_values[macro.name] = macro.value if macro.value is not None else macro.raw
         self.constants: dict[str, bool] = {}
         self.uncontrollable: list[str] = []
 
@@ -157,7 +161,7 @@ class AtomBuilder:
         subject = self._value(subject_cursor)
         label = _constant(_unwrap(label_cursor))
         if label is None:
-            label = _macro_constant(_unwrap(label_cursor))
+            label = _macro_constant(_unwrap(label_cursor), self._macro_values)
         text = f"{_source(subject_cursor)} == {_source(label_cursor)}"
         if subject.variable is not None and label is not None:
             return Atom(subject.variable, Op.EQ, rhs=label, text=text)
@@ -234,7 +238,7 @@ class AtomBuilder:
         cursor = _unwrap(cursor)
         constant = _constant(cursor)
         if constant is None:
-            constant = _macro_constant(cursor)
+            constant = _macro_constant(cursor, self._macro_values)
         if constant is not None:
             return _Value(constant=constant)
         path = _raw_path(cursor)
@@ -403,10 +407,8 @@ def _constant(cursor: Cursor) -> int | None:
         return None
 
 
-def _macro_constant(cursor: Cursor) -> int | None:
+def _macro_constant(cursor: Cursor, macros=None) -> int | None:
     """Resolve an object-like numeric macro behind an expanded literal."""
-    if cursor.kind != CursorKind.INTEGER_LITERAL or cursor.spelling:
-        return None
     file = cursor.location.file
     if file is None or cursor.location.line < 1:
         return None
@@ -427,14 +429,72 @@ def _macro_constant(cursor: Cursor) -> int | None:
             break
     if name is None:
         return None
+    if macros is not None and name in macros:
+        value = macros[name]
+        value = getattr(value, "value", value)
+        return value if isinstance(value, int) else _fold_int(value, macros, (name,))
     for match in re.finditer(r"^\s*#define\s+(\w+)\s+(.+)$", source, re.MULTILINE):
         if match.group(1) != name:
             continue
-        value = match.group(2).split("//", 1)[0].strip().rstrip("uUlL")
-        try:
-            return int(value, 0)
-        except ValueError:
+        return _fold_int(match.group(2), {name: match.group(2)}, (name,))
+    return None
+
+
+def _fold_int(raw, macros=None, seen=()):
+    """Fold a small C integer expression used by object-like macros."""
+    text = re.sub(r"/\*.*?\*/|//.*", "", str(raw), flags=re.S).strip()
+    text = re.sub(r"\(\s*(?:const\s+)?[A-Za-z_]\w*\s*\*\s*\)", "", text)
+    text = re.sub(r"\(\s*(?:unsigned\s+|signed\s+)?(?:char|short|int|long|bool|void|uint\d+|sint\d+)\s*\)", "", text)
+    text = re.sub(r"(0[xX][0-9A-Fa-f]+|\d+)[uUlL]+\b", r"\1", text)
+    try:
+        node = ast.parse(text, mode="eval").body
+    except (SyntaxError, ValueError):
+        return None
+    return _fold_node(node, macros or {}, seen)
+
+
+def _fold_node(node, macros, seen):
+    if isinstance(node, ast.Constant) and isinstance(node.value, int):
+        return node.value
+    if isinstance(node, ast.Name) and node.id in macros and node.id not in seen:
+        value = macros[node.id]
+        value = getattr(value, "value", value)
+        return value if isinstance(value, int) else _fold_int(value, macros, seen + (node.id,))
+    if isinstance(node, ast.UnaryOp):
+        value = _fold_node(node.operand, macros, seen)
+        if value is not None and isinstance(node.op, ast.UAdd):
+            return value
+        if value is not None and isinstance(node.op, ast.USub):
+            return -value
+        if value is not None and isinstance(node.op, ast.Invert):
+            return ~value
+    if isinstance(node, ast.BinOp):
+        left = _fold_node(node.left, macros, seen)
+        right = _fold_node(node.right, macros, seen)
+        if left is None or right is None:
             return None
+        if isinstance(node.op, ast.Add):
+            return left + right
+        if isinstance(node.op, ast.Sub):
+            return left - right
+        if isinstance(node.op, ast.Mult):
+            return left * right
+        if isinstance(node.op, (ast.Div, ast.FloorDiv)) and right:
+            quotient = abs(left) // abs(right)
+            return -quotient if (left < 0) != (right < 0) else quotient
+        if isinstance(node.op, ast.Mod) and right:
+            quotient = abs(left) // abs(right)
+            return left - (quotient if left >= 0 else -quotient) * right
+        if isinstance(node.op, ast.BitAnd):
+            return left & right
+        if isinstance(node.op, ast.BitOr):
+            return left | right
+        if isinstance(node.op, ast.BitXor):
+            return left ^ right
+        if isinstance(node.op, ast.LShift) and right >= 0:
+            return left << right
+        if isinstance(node.op, ast.RShift) and right >= 0:
+            return left >> right
     return None
 
 
