@@ -82,7 +82,8 @@ class McdcGenerator:
         rows = []
         seen = set()
         base = MaskingRecipes.make(expr, isinstance(expr, And))
-        self._append(rows, seen, base)
+        if any(base in pair for pair in pairs.values()):
+            self._append(rows, seen, base)
         for off, on in pairs.values():
             self._append(rows, seen, off)
             self._append(rows, seen, on)
