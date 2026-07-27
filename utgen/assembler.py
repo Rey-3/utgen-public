@@ -57,6 +57,17 @@ class RowAssembler:
                     notes.append(f"decision {decision.id}: infeasible MC/DC row")
             if not assignments:
                 notes.append(f"decision {decision.id}: no feasible MC/DC pair")
+        from utgen.boundary import BoundaryGenerator
+
+        for boundary in BoundaryGenerator(self.solver).rows(function):
+            key = tuple(boundary.values.items())
+            existing = by_values.get(key)
+            if existing is not None:
+                existing.description += f"; {boundary.description}"
+                existing.intent.update(boundary.intent)
+                continue
+            by_values[key] = boundary
+            rows.append(boundary)
         return rows, notes
 
     @staticmethod
