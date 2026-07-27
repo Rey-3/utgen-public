@@ -4,16 +4,17 @@ from __future__ import annotations
 from itertools import product
 
 from utgen.mcdc import McdcGenerator, MaskingRecipes, eval_expr
-from utgen.model import Atom, Direction, FunctionIR, TestRow, atoms_of
+from utgen.model import Atom, Direction, FunctionIR, Inventory, TestRow, atoms_of
 from utgen.solver import AtomConstraints, Solver
 
 
 class RowAssembler:
     """Combine MC/DC recipes, guards, and solver results into test rows."""
 
-    def __init__(self, solver: Solver, mcdc: McdcGenerator) -> None:
+    def __init__(self, solver: Solver, mcdc: McdcGenerator, fault_overrides: dict | None = None) -> None:
         self.solver = solver
         self.mcdc = mcdc
+        self.fault_overrides = fault_overrides or {}
 
     def assemble(self, function: FunctionIR) -> tuple[list[TestRow], list[str]]:
         """Return deterministic rows and notes for one function's decisions."""
@@ -68,6 +69,17 @@ class RowAssembler:
                 continue
             by_values[key] = boundary
             rows.append(boundary)
+        from utgen.fault import FaultGenerator
+
+        inventory = Inventory(function.leaves, function.stubs)
+        for fault in FaultGenerator(self.fault_overrides).rows(inventory):
+            key = tuple(fault.values.items())
+            existing = by_values.get(key)
+            if existing is not None:
+                existing.description += f"; {fault.description}"
+                continue
+            by_values[key] = fault
+            rows.append(fault)
         return rows, notes
 
     @staticmethod
