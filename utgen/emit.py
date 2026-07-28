@@ -16,7 +16,7 @@ class ValueXmlWriter:
         """Write a TESSY-compatible value XML file for ``function``."""
         root = ET.Element("function", name=function.name, file=_source(function))
         for leaf in function.leaves:
-            attrs = {"name": leaf.name, "len": leaf.xml_len, "format": leaf.fmt,
+            attrs = {"name": leaf.name, "len": _validation_len(leaf), "format": leaf.fmt,
                      "direction": leaf.direction.value, "pointer": _bool(leaf.is_pointer)}
             if leaf.direction in (Direction.IN, Direction.INOUT):
                 values = []
@@ -88,6 +88,15 @@ def _render(leaf, value) -> str:
         if number == value:
             return name
     return str(value)
+
+
+def _validation_len(leaf) -> str:
+    if leaf.ctype.signed or leaf.ctype.enum_values or leaf.fmt.startswith(("signed", "unsigned")):
+        return leaf.xml_len
+    try:
+        return str(int(leaf.xml_len) + 1)
+    except ValueError:
+        return leaf.xml_len
 
 
 def _write_xml(root, path: str | Path) -> None:

@@ -303,7 +303,10 @@ class AtomBuilder:
 def _unwrap(cursor: Cursor) -> Cursor:
     """Remove clang expression wrappers while preserving calls and literals."""
     while cursor.kind in _WRAPPERS:
-        children = list(cursor.get_children())
+        children = []
+        for child in cursor.get_children():
+            if child.kind not in (CursorKind.TYPE_REF, CursorKind.ANNOTATE_ATTR):
+                children.append(child)
         if len(children) != 1:
             break
         cursor = children[0]

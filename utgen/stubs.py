@@ -1,9 +1,8 @@
 """Stub discovery: external calls -> StubInfo records + tessy_ leaf Variables.
 
 Follows the existing pipeline's conventions:
-- external callees are stubbed, while functions defined in the target .c are
-  ordinary local calls and are ignored (E7), deduped by name in call order
-  (E4), minus the no_stub list (E6);
+- external calls are stubbed, while same-module helper calls remain executable,
+  deduped by name in call order (E4), minus the no_stub list (E6);
 - non-void stubs contribute `tessy_<fn>` IN leaves (injected return) and
   `tessy_<fn>__ArgN` OUT capture leaves for every parameter — pointees are
   captured by value, so capture leaves are never pointers (D7);
@@ -22,7 +21,7 @@ DEFAULT_NO_STUB = ("memcpy", "memset", "memcmp", "abs")
 
 
 class StubFinder:
-    """Finds external calls and derives their tessy_ variables."""
+    """Find external calls and derive their tessy_ variables."""
 
     def __init__(self, graph: TypeGraph, deriver: LeafDeriver,
                  no_stub=DEFAULT_NO_STUB):
@@ -64,9 +63,7 @@ class StubFinder:
         if callee is None or not source_file:
             return False
         definition = callee.get_definition()
-        if definition is None:
-            return False
-        return self._file_of(definition) == source_file
+        return definition is not None and self._file_of(definition) == source_file
 
     def _file_of(self, cursor: Cursor) -> str:
         """Return a normalized source path for a cursor location."""

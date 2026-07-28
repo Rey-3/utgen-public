@@ -11,8 +11,9 @@ NEGATE = {Op.EQ: Op.NE, Op.NE: Op.EQ, Op.LT: Op.GE, Op.GE: Op.LT,
 class Domain:
     def __init__(self, ctype):
         self.ctype = ctype
-        self.lo = ctype.lo
-        self.hi = ctype.hi
+        self.values = tuple(sorted({value for _, value in ctype.enum_values}))
+        self.lo = min(self.values) if self.values else ctype.lo
+        self.hi = max(self.values) if self.values else ctype.hi
         self.banned = set()
         self.required = 0
         self.forbidden = 0
@@ -50,6 +51,12 @@ class Domain:
         return value if value <= self.hi else None
 
     def _find(self, start):
+        if self.values:
+            for value in self.values:
+                if value >= max(self.lo, start) and value <= self.hi:
+                    if value not in self.banned and self._bits_ok(value):
+                        return value
+            return None
         for lower, upper in self._ranges(start):
             raw = self._next_bits(lower, upper)
             while raw is not None:
@@ -105,8 +112,9 @@ class Domain:
         return raw & self.required == self.required and not raw & self.forbidden
 
     def pick(self, prefer=None) -> int:
-        if prefer is not None and self.lo <= prefer <= self.hi and prefer not in self.banned and self._bits_ok(prefer):
-            return prefer
+        if prefer is not None and self.lo <= prefer <= self.hi and prefer not in self.banned:
+            if (not self.values or prefer in self.values) and self._bits_ok(prefer):
+                return prefer
         value = self._find(self.lo)
         if value is None:
             raise ValueError("empty domain")

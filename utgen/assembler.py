@@ -11,10 +11,13 @@ from utgen.solver import AtomConstraints, Solver
 class RowAssembler:
     """Combine MC/DC recipes, guards, and solver results into test rows."""
 
-    def __init__(self, solver: Solver, mcdc: McdcGenerator, fault_overrides: dict | None = None) -> None:
+    def __init__(self, solver: Solver, mcdc: McdcGenerator, fault_overrides: dict | None = None,
+                 include_boundary=True, include_fault=True) -> None:
         self.solver = solver
         self.mcdc = mcdc
         self.fault_overrides = fault_overrides or {}
+        self.include_boundary = include_boundary
+        self.include_fault = include_fault
 
     def assemble(self, function: FunctionIR) -> tuple[list[TestRow], list[str]]:
         """Return deterministic rows and notes for one function's decisions."""
@@ -58,28 +61,37 @@ class RowAssembler:
                     notes.append(f"decision {decision.id}: infeasible MC/DC row")
             if not assignments:
                 notes.append(f"decision {decision.id}: no feasible MC/DC pair")
-        from utgen.boundary import BoundaryGenerator
+        from utgen.coverage import CoverageGenerator
 
-        for boundary in BoundaryGenerator(self.solver).rows(function):
-            key = tuple(boundary.values.items())
-            existing = by_values.get(key)
-            if existing is not None:
-                existing.description += f"; {boundary.description}"
-                existing.intent.update(boundary.intent)
-                continue
-            by_values[key] = boundary
-            rows.append(boundary)
-        from utgen.fault import FaultGenerator
+        for coverage in CoverageGenerator().rows(function, rows):
+            key = tuple(coverage.values.items())
+            if key not in by_values:
+                by_values[key] = coverage
+                rows.append(coverage)
+        if self.include_boundary:
+            from utgen.boundary import BoundaryGenerator
 
-        inventory = Inventory(function.leaves, function.stubs)
-        for fault in FaultGenerator(self.fault_overrides).rows(inventory):
-            key = tuple(fault.values.items())
-            existing = by_values.get(key)
-            if existing is not None:
-                existing.description += f"; {fault.description}"
-                continue
-            by_values[key] = fault
-            rows.append(fault)
+            for boundary in BoundaryGenerator(self.solver).rows(function):
+                key = tuple(boundary.values.items())
+                existing = by_values.get(key)
+                if existing is not None:
+                    existing.description += f"; {boundary.description}"
+                    existing.intent.update(boundary.intent)
+                    continue
+                by_values[key] = boundary
+                rows.append(boundary)
+        if self.include_fault:
+            from utgen.fault import FaultGenerator
+
+            inventory = Inventory(function.leaves, function.stubs)
+            for fault in FaultGenerator(self.fault_overrides).rows(inventory):
+                key = tuple(fault.values.items())
+                existing = by_values.get(key)
+                if existing is not None:
+                    existing.description += f"; {fault.description}"
+                    continue
+                by_values[key] = fault
+                rows.append(fault)
         return rows, notes
 
     @staticmethod

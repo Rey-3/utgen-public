@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import re
 import xml.etree.ElementTree as ET
+from dataclasses import fields, is_dataclass
 from pathlib import Path
 from typing import Mapping
 
@@ -49,10 +50,13 @@ class ModuleIndexer:
         functions = []
         for cursor in function_definitions(tu).values():
             functions.append(self._function(cursor, tu, inventory_builder, macros))
-        return ModuleAnalysis(str(source), _sha256(source), include_dirs, headers,
-                              macros, list(inventory_builder.type_graph.enums.values()),
-                              list(inventory_builder.type_graph.structs.values()),
-                              self._globals(tu, inventory_builder), functions)
+        analysis = ModuleAnalysis(str(source), _sha256(source), include_dirs, headers,
+                                  macros, list(inventory_builder.type_graph.enums.values()),
+                                  list(inventory_builder.type_graph.structs.values()),
+                                  self._globals(tu, inventory_builder), functions)
+        _set_constants(analysis)
+        _set_local_functions(analysis)
+        return analysis
 
     def _function(self, cursor, tu, inventory_builder, macros=None):
         inventory = inventory_builder.build(cursor, tu)
@@ -367,8 +371,69 @@ class XmlDbReader:
                 variables.append(_read_global(item))
             elif item.tag == "Function":
                 functions.append(_read_function(item))
-        return ModuleAnalysis(root.get("file", ""), root.get("sha256", ""), dirs, headers,
-                              macros, enums, structs, variables, functions)
+        analysis = ModuleAnalysis(root.get("file", ""), root.get("sha256", ""), dirs, headers,
+                                  macros, enums, structs, variables, functions)
+        _set_constants(analysis)
+        _set_local_functions(analysis)
+        _link_local_call_stubs(analysis)
+        return analysis
+
+
+def _link_local_call_stubs(analysis: ModuleAnalysis) -> None:
+    """Propagate external inputs used by same-module helper calls."""
+    for function in analysis.functions:
+        names = _called_names(function.body)
+        for name in names:
+            helper = analysis.function(name)
+            if helper is None or name == function.name:
+                continue
+            for leaf in helper.leaves:
+                if leaf.direction in (Direction.IN, Direction.INOUT) and not any(item.name == leaf.name for item in function.leaves):
+                    function.leaves.append(leaf)
+            for stub in helper.stubs:
+                if not any(item.name == stub.name for item in function.stubs):
+                    function.stubs.append(stub)
+
+
+def _set_constants(analysis: ModuleAnalysis) -> None:
+    """Give each function the persisted object-macro and enum values."""
+    values = {}
+    for macro in analysis.macros:
+        if macro.value is not None:
+            values[macro.name] = macro.value
+    for enum in analysis.enums:
+        for name, value in enum.values:
+            values[name] = value
+    for function in analysis.functions:
+        function.constants = values
+
+
+def _set_local_functions(analysis: ModuleAnalysis) -> None:
+    functions = {function.name: function for function in analysis.functions}
+    for function in analysis.functions:
+        function.local_functions = functions
+
+
+def _called_names(statements) -> set[str]:
+    names = set()
+    for statement in statements:
+        for node in _nodes(statement):
+            if isinstance(node, CallE):
+                names.add(node.name)
+    return names
+
+
+def _nodes(node):
+    if isinstance(node, CallE):
+        yield node
+    if is_dataclass(node):
+        for field in fields(node):
+            value = getattr(node, field.name)
+            if isinstance(value, (tuple, list)):
+                for item in value:
+                    yield from _nodes(item)
+            elif value is not None:
+                yield from _nodes(value)
 
 
 def _sha256(path: Path) -> str:

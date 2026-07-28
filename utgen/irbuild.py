@@ -142,15 +142,15 @@ class BodyIrBuilder:
             init = _for_part(before_body, 0, self)
             increment = _for_part(before_body, 2, self)
             body = self._statement(body_cursor) if body_cursor is not None else []
-            return For(init, self._boolean(condition), increment, tuple(body))
+            return For(init, self._expr(condition), increment, tuple(body))
         body = self._statement(body_cursor) if body_cursor is not None else []
-        return While(self._boolean(condition), tuple(body))
+        return While(self._expr(condition), tuple(body))
 
     def _do_loop(self, cursor: Cursor) -> DoWhile:
         children = list(cursor.get_children())
         body = self._statement(children[0]) if children else []
         condition = children[1] if len(children) > 1 else None
-        return DoWhile(self._boolean(condition), tuple(body))
+        return DoWhile(self._expr(condition), tuple(body))
 
     def _arm(self, cursor: Cursor) -> tuple:
         if cursor is None:
@@ -182,6 +182,9 @@ class BodyIrBuilder:
             referenced = cursor.referenced if kind == CursorKind.DECL_REF_EXPR else cursor
             if referenced is not None and referenced.kind == CursorKind.ENUM_CONSTANT_DECL:
                 return Const(referenced.enum_value)
+            macro = _literal(cursor, self._macro_values)
+            if isinstance(macro, int):
+                return Const(macro)
             scope = self._local_scopes.get(referenced.get_usr(), "") if referenced is not None else ""
             return Ref(cursor.spelling, scope)
         if kind == CursorKind.MEMBER_REF_EXPR:

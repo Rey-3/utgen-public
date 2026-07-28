@@ -32,7 +32,7 @@ class InventoryBuilder:
         variables = []
         for param in func_cursor.get_arguments():
             member = self.type_graph.describe(param.type, param.spelling)
-            variables.extend(self.deriver.leaves(member, self._param_direction(param)))
+            variables.extend(self.deriver.leaves(member, Direction.IN))
         result_type = func_cursor.result_type
         if result_type.get_canonical().kind != TypeKind.VOID:
             member = self.type_graph.describe(result_type, f"{func_cursor.spelling}()")
@@ -45,13 +45,6 @@ class InventoryBuilder:
         return Inventory(variables, stubs)
 
     # --- directions from usage ---
-
-    def _param_direction(self, param: Cursor) -> Direction:
-        """Pointer params written through become OUT (INOUT when also read), D6."""
-        if param.type.get_canonical().kind != TypeKind.POINTER:
-            return Direction.IN
-        entry = self._usage.get(param.get_usr())
-        return self._direction_of(entry) if entry else Direction.IN
 
     def _globals(self, func_cursor: Cursor) -> list:
         result = []

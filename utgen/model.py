@@ -455,6 +455,8 @@ class FunctionIR:
     decisions: list                 # Decision items
     body: tuple = ()                # Stmt items
     dataflow: DataflowResult | None = None
+    constants: dict = field(default_factory=dict)
+    local_functions: dict = field(default_factory=dict)
 
 
 @dataclass
