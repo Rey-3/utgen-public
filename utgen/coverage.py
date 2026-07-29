@@ -13,11 +13,14 @@ from utgen.model import (And, Atom, Const, Direction, FunctionIR, Index,
 class CoverageGenerator:
     """Mutate injectable inputs until the statement IR reaches missing outcomes."""
 
-    def __init__(self, max_rounds=4, max_rows=256) -> None:
+    def __init__(self, max_rounds=4, max_rows=256, max_candidates=2048) -> None:
         self.max_rounds = max_rounds
         self.max_rows = max_rows
+        self.max_candidates = max_candidates
         self._function = None
         self._results = {}
+        self.candidate_count = 0
+        self.exhausted = False
 
     def rows(self, function: FunctionIR, existing: list[TestRow], decision_ids=None) -> list[TestRow]:
         inputs = [leaf for leaf in function.leaves if leaf.direction in (Direction.IN, Direction.INOUT)]
@@ -26,8 +29,10 @@ class CoverageGenerator:
         interpreter = Interpreter(Inventory(function.leaves, function.stubs))
         if function is not self._function:
             self._function, self._results = function, {}
+            self.candidate_count, self.exhausted = 0, False
         targets = self._targets(function, decision_ids)
         relevant, needs_combinations = self._decision_inputs(function, inputs, decision_ids)
+        search_inputs = inputs if decision_ids is None else [leaf for leaf in inputs if leaf.name in relevant]
         index_values = self._index_values(function.body)
         queue = [row.values.copy() for row in existing]
         if not queue:
@@ -45,7 +50,7 @@ class CoverageGenerator:
             frontier = list(queue)
             queue = []
             for base in frontier:
-                for leaf in inputs:
+                for leaf in search_inputs:
                     for value in self._values(leaf, function, base, index_values):
                         if value == base.get(leaf.name):
                             continue
@@ -54,6 +59,11 @@ class CoverageGenerator:
                         if key in seen:
                             continue
                         seen.add(key)
+                        if key not in self._results:
+                            if self.candidate_count >= self.max_candidates:
+                                self.exhausted = True
+                                return rows
+                            self.candidate_count += 1
                         result = self._run(interpreter, function, candidate)
                         gained = (self._covered(results + [result], function) & targets) - covered
                         if not gained:
