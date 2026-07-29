@@ -15,9 +15,17 @@ class ValueXmlWriter:
     def write(self, function: FunctionIR, rows: list[TestRow], path: str | Path) -> None:
         """Write a TESSY-compatible value XML file for ``function``."""
         root = ET.Element("function", name=function.name, file=_source(function))
+        addresses = {leaf.address_of: leaf for leaf in function.leaves if leaf.address_of}
         for leaf in function.leaves:
+            if leaf.address_of:
+                continue
             attrs = {"name": leaf.name, "len": _validation_len(leaf), "format": leaf.fmt,
                      "direction": leaf.direction.value, "pointer": _bool(leaf.is_pointer)}
+            address = _pointer_address(leaf.name, addresses)
+            if address is not None:
+                attrs["address"] = ",".join(
+                    "NULL" if row.values.get(address.name, 1) in (0, "NULL") else f"tessy_{address.address_of}"
+                    for row in rows)
             if leaf.direction in (Direction.IN, Direction.INOUT):
                 values = []
                 for row in rows:
@@ -26,6 +34,13 @@ class ValueXmlWriter:
                 attrs["testmethod"] = "decision"
             ET.SubElement(root, "argument", **attrs)
         _write_xml(root, path)
+
+
+def _pointer_address(name, addresses):
+    for root, address in addresses.items():
+        if name == root or name.startswith((root + ".", root + "[")):
+            return address
+    return None
 
 
 class StubXmlWriter:

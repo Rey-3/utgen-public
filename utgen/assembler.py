@@ -28,6 +28,9 @@ class RowAssembler:
         rows = []
         notes = []
         by_values = {}
+        from utgen.coverage import CoverageGenerator
+
+        concrete = CoverageGenerator()
         for decision in function.decisions:
             if any(atom.var is None for atom in atoms_of(decision.expr)):
                 notes.append(f"decision {decision.id}: uncontrollable or degenerate condition")
@@ -61,13 +64,11 @@ class RowAssembler:
                     notes.append(f"decision {decision.id}: infeasible MC/DC row")
             if not assignments:
                 notes.append(f"decision {decision.id}: no feasible MC/DC pair")
-        from utgen.coverage import CoverageGenerator
-
-        for coverage in CoverageGenerator().rows(function, rows):
-            key = tuple(coverage.values.items())
-            if key not in by_values:
-                by_values[key] = coverage
-                rows.append(coverage)
+            for coverage in concrete.rows(function, rows, (decision.id,)):
+                key = tuple(coverage.values.items())
+                if key not in by_values:
+                    by_values[key] = coverage
+                    rows.append(coverage)
         if self.include_boundary:
             from utgen.boundary import BoundaryGenerator
 
@@ -106,7 +107,7 @@ class RowAssembler:
     def _defaults(inputs: list) -> dict:
         out = {}
         for leaf in inputs:
-            out[leaf.name] = min(max(0, leaf.ctype.lo), leaf.ctype.hi)
+            out[leaf.name] = 1 if leaf.address_of else min(max(0, leaf.ctype.lo), leaf.ctype.hi)
         return out
 
     @staticmethod

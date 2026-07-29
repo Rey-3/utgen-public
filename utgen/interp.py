@@ -5,9 +5,9 @@ import re
 from dataclasses import dataclass, field
 
 from utgen.model import (And, Assign, Atom, Binop, Break, CallE, Cast, Const,
-                         Decl, DoWhile, ExprStmt, For, If, Index, Inventory,
-                         MemberE, Not, Or, Ref, Return, Switch, Ternary,
-                         TestRow, Unary, While)
+                          Decl, DoWhile, ExprStmt, For, If, Index, Inventory,
+                          MemberE, Not, Or, Ref, Return, Switch, Ternary,
+                          TestRow, Unary, While, atoms_of)
 
 
 _BREAK = object()
@@ -19,7 +19,7 @@ class ExecResult:
     """Observed decision outcomes, outputs, and unknown output names."""
     outcomes: dict[int, bool] = field(default_factory=dict)
     observed: dict[int, set[bool]] = field(default_factory=dict)
-    conditions: dict[int, set[tuple[bool, ...]]] = field(default_factory=dict)
+    conditions: dict[int, set[tuple[bool | None, ...]]] = field(default_factory=dict)
     loops: dict[int, set[bool]] = field(default_factory=dict)
     outputs: dict[str, int] = field(default_factory=dict)
     unknown: set[str] = field(default_factory=set)
@@ -35,8 +35,11 @@ class Interpreter:
         """Execute ``function`` and return its observable result."""
         self.env = {}
         self.aliases = {}
+        self.pointers = set()
         self.constants = function.constants
         self.local_functions = function.local_functions
+        self.decision_expr = {decision.id: decision.expr for decision in function.decisions}
+        self.recording = True
         self.outcomes = {}
         self.observed = {}
         self.conditions = {}
@@ -44,7 +47,7 @@ class Interpreter:
         self.unknown = set()
         self.result = ExecResult()
         for variable in self.inventory.inputs():
-            value = values.get(variable.name, 0)
+            value = values.get(variable.name, 1 if variable.address_of else 0)
             self.env[variable.name] = 0 if value == "NULL" else value
         signal = self._block(function.body)
         if signal and signal[0] == "return":
@@ -74,7 +77,14 @@ class Interpreter:
 
     def _stmt(self, statement):
         if isinstance(statement, Decl):
-            if isinstance(statement.init, CallE) and self._struct_stub(statement.init.name):
+            if statement.static_name:
+                self._bind_static(statement)
+            elif statement.is_pointer:
+                path = self._path(Ref(statement.name, statement.scope))
+                self.pointers.add(path)
+                if not self._set_alias(path, statement.init):
+                    self.env[path] = self._eval(statement.init)
+            elif isinstance(statement.init, CallE) and self._struct_stub(statement.init.name):
                 self.aliases[statement.name] = f"tessy_{statement.init.name}"
             else:
                 self.env[statement.name] = self._eval(statement.init)
@@ -83,6 +93,10 @@ class Interpreter:
             if isinstance(statement.value, CallE) and self._struct_stub(statement.value.name):
                 self.aliases[path] = f"tessy_{statement.value.name}"
                 return None
+            if path in self.pointers and self._set_alias(path, statement.value):
+                return None
+            if path in self.pointers:
+                self.aliases.pop(path, None)
             value = self._eval(statement.value)
             if value is _UNKNOWN:
                 self.unknown.add(path)
@@ -97,12 +111,12 @@ class Interpreter:
         elif isinstance(statement, Switch):
             return self._switch(statement)
         elif isinstance(statement, DoWhile):
-            return self._loop(statement.body, statement.cond, True, loop_id=id(statement))
+            return self._loop(statement.body, self._loop_condition(statement), True, loop_id=id(statement))
         elif isinstance(statement, While):
-            return self._loop(statement.body, statement.cond, False, loop_id=id(statement))
+            return self._loop(statement.body, self._loop_condition(statement), False, loop_id=id(statement))
         elif isinstance(statement, For):
             self._block(statement.init)
-            signal = self._loop(statement.body, statement.cond, False, statement.increment, id(statement))
+            signal = self._loop(statement.body, self._loop_condition(statement), False, statement.increment, id(statement))
             if signal is not None:
                 return signal
         elif isinstance(statement, Break):
@@ -112,6 +126,29 @@ class Interpreter:
         elif isinstance(statement, Return):
             return "return", self._eval(statement.value)
         return None
+
+    def _set_alias(self, path, expression):
+        if isinstance(expression, Unary) and expression.op == "&":
+            target = self._path(expression.x)
+            if target:
+                self.aliases[path] = target
+                return True
+        if isinstance(expression, Ref) and expression.path in self.aliases:
+            self.aliases[path] = self.aliases[expression.path]
+            return True
+        self.aliases.pop(path, None)
+        return False
+
+    @staticmethod
+    def _loop_condition(statement):
+        return statement.runtime_cond if statement.runtime_cond is not None else statement.cond
+
+    def _bind_static(self, declaration):
+        local = self._path(Ref(declaration.name, declaration.scope))
+        for variable in self.inventory.inputs():
+            name = variable.name
+            if name == declaration.static_name or name.startswith((declaration.static_name + ".", declaration.static_name + "[")):
+                self.env[local + name[len(declaration.static_name):]] = self._read(name)
 
     def _eval(self, expression):
         if expression is None:
@@ -129,11 +166,18 @@ class Interpreter:
         if isinstance(expression, CallE):
             helper = self.local_functions.get(expression.name)
             if helper is not None:
-                signal = self._block(helper.body)
+                recording = self.recording
+                self.recording = False
+                try:
+                    signal = self._block(helper.body)
+                finally:
+                    self.recording = recording
                 return 0 if signal is None else signal[1]
             return self.env.get(f"tessy_{expression.name}", 0)
         if isinstance(expression, Ternary):
-            condition = self._eval(expression.c)
+            condition, leaves = self._trace(expression.c)
+            if expression.decision_id:
+                self._record(expression.decision_id, bool(condition), leaves)
             return _UNKNOWN if condition is _UNKNOWN else self._eval(expression.t if condition else expression.f)
         if isinstance(expression, Cast):
             return self._eval(expression.x)
@@ -156,6 +200,8 @@ class Interpreter:
         if isinstance(expression, Not):
             return int(not self._eval(expression.child))
         if isinstance(expression, Unary):
+            if expression.op == "*":
+                return self._read(self._path(expression.x), False)
             value = self._eval(expression.x)
             if value is _UNKNOWN:
                 return _UNKNOWN
@@ -240,23 +286,60 @@ class Interpreter:
         return None
 
     def _record(self, decision_id, outcome, leaves=()):
+        if not self.recording or decision_id not in self.decision_expr:
+            return
         self.outcomes[decision_id] = outcome
         self.observed.setdefault(decision_id, set()).add(outcome)
         if leaves:
-            self.conditions.setdefault(decision_id, set()).add(tuple(leaves))
+            self.conditions.setdefault(decision_id, set()).add(self._pattern(decision_id, leaves))
 
-    def _read(self, path):
+    def _pattern(self, decision_id, leaves):
+        expr = self.decision_expr.get(decision_id)
+        atoms = atoms_of(expr) if expr is not None else ()
+        if not atoms:
+            return tuple(leaves)
+        positions = {id(atom): index for index, atom in enumerate(atoms)}
+        pattern, values = [None] * len(atoms), iter(leaves)
+
+        def trace(node):
+            if isinstance(node, Atom):
+                value = next(values)
+                pattern[positions[id(node)]] = value
+                return value
+            if isinstance(node, Not):
+                return not trace(node.child)
+            if isinstance(node, And):
+                for child in node.children:
+                    if not trace(child):
+                        return False
+                return True
+            if isinstance(node, Or):
+                for child in node.children:
+                    if trace(child):
+                        return True
+                return False
+            return False
+
+        trace(expr)
+        return tuple(pattern)
+
+    def _read(self, path, address=True):
         if path in self.unknown:
             return _UNKNOWN
+        if address:
+            for variable in self.inventory.variables:
+                if variable.address_of == path and variable.name in self.env:
+                    return self.env[variable.name]
         if path in self.env:
             return self.env[path]
         pattern = re.sub(r"\[\d+\]", "[*]", path)
-        for key in self.unknown:
+        names = {variable.name for variable in self.inventory.variables}
+        for key in self.unknown & names:
             if re.sub(r"\[\d+\]", "[*]", key) == pattern:
                 return _UNKNOWN
-        for key, value in self.env.items():
-            if re.sub(r"\[\d+\]", "[*]", key) == pattern:
-                return value
+        for key in names:
+            if key in self.env and re.sub(r"\[\d+\]", "[*]", key) == pattern:
+                return self.env[key]
         return 0
 
     def _legacy_atom(self, atom):

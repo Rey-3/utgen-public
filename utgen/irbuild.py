@@ -36,6 +36,7 @@ class BodyIrBuilder:
         self._decision_map = {}
         self._body_atom_builder = atom_builder
         self._local_scopes = {}
+        self._static_names = {}
         self._macro_values = {}
         for macro in macros or ():
             self._macro_values[macro.name] = macro.value if macro.value is not None else macro.raw
@@ -53,6 +54,7 @@ class BodyIrBuilder:
         self._body_atom_builder = _fresh_atom_builder(self.atom_builder)
         body = _function_body(func_cursor) if func_cursor.kind == CursorKind.FUNCTION_DECL else func_cursor
         self._local_scopes = _local_scopes(body)
+        self._static_names = _static_names(body, func_cursor.spelling)
         return self._block(body) if body is not None else []
 
     def _block(self, cursor: Cursor) -> list:
@@ -105,7 +107,7 @@ class BodyIrBuilder:
             value = Const(0) if init is None and _is_static(child) else self._expr(init)
             scope = self._local_scopes.get(child.get_usr(), "")
             pointer = child.type.get_canonical().kind == TypeKind.POINTER
-            declarations.append(Decl(child.spelling, value, scope, pointer))
+            declarations.append(Decl(child.spelling, value, scope, pointer, self._static_names.get(child.get_usr(), "")))
         return declarations
 
     def _if(self, cursor: Cursor) -> If:
@@ -142,15 +144,15 @@ class BodyIrBuilder:
             init = _for_part(before_body, 0, self)
             increment = _for_part(before_body, 2, self)
             body = self._statement(body_cursor) if body_cursor is not None else []
-            return For(init, self._expr(condition), increment, tuple(body))
+            return For(init, self._boolean(condition), increment, tuple(body), self._expr(condition))
         body = self._statement(body_cursor) if body_cursor is not None else []
-        return While(self._expr(condition), tuple(body))
+        return While(self._boolean(condition), tuple(body), self._expr(condition))
 
     def _do_loop(self, cursor: Cursor) -> DoWhile:
         children = list(cursor.get_children())
         body = self._statement(children[0]) if children else []
         condition = children[1] if len(children) > 1 else None
-        return DoWhile(self._expr(condition), tuple(body))
+        return DoWhile(self._boolean(condition), tuple(body), self._expr(condition))
 
     def _arm(self, cursor: Cursor) -> tuple:
         if cursor is None:
@@ -208,7 +210,7 @@ class BodyIrBuilder:
             children = list(cursor.get_children())
             if len(children) == 3:
                 return Ternary(self._expr(children[0]), self._expr(children[1]),
-                               self._expr(children[2]))
+                               self._expr(children[2]), self._decision_id("if", children[0]))
             return Unknown(_source(cursor))
         if kind == CursorKind.UNARY_OPERATOR:
             children = list(cursor.get_children())
@@ -263,6 +265,23 @@ def _local_scopes(cursor: Cursor | None) -> dict:
             scopes[declaration.get_usr()] = f"scope{next_scope}"
             next_scope += 1
     return scopes
+
+
+def _static_names(cursor: Cursor | None, function: str) -> dict:
+    declarations, counts, names = [], {}, {}
+
+    def collect(current):
+        if current.kind == CursorKind.VAR_DECL and _is_static(current):
+            declarations.append(current)
+        for child in current.get_children():
+            collect(child)
+
+    if cursor is not None:
+        collect(cursor)
+    for declaration in declarations:
+        counts[declaration.spelling] = counts.get(declaration.spelling, 0) + 1
+        names[declaration.get_usr()] = f"{function}::{declaration.spelling}#{counts[declaration.spelling]}"
+    return names
 
 
 def _initializer(cursor: Cursor) -> Cursor | None:

@@ -35,6 +35,7 @@ class CopyPropagation:
     def __init__(self):
         self._bindings: dict[str, Cursor | None] = {}
         self._member_bindings: dict[str, Cursor | None] = {}
+        self._locals: set[str] = set()
         self._loop_written: set[str] = set()
 
     def record(self, stmt_cursor: Cursor) -> None:
@@ -52,6 +53,9 @@ class CopyPropagation:
         if kind == CursorKind.DECL_STMT:
             for child in stmt_cursor.get_children():
                 if child.kind == CursorKind.VAR_DECL:
+                    key = _cursor_key(child)
+                    if key and not _is_static(child):
+                        self._locals.add(key)
                     init = _last_non_type_child(child)
                     if init is not None:
                         self._set(child, init)
@@ -82,6 +86,7 @@ class CopyPropagation:
     def resolve_expr(self, expr_cursor: Cursor, seen: set[str] | None = None):
         """Return the latest source cursor for an expression or ``None``."""
         seen = set() if seen is None else seen
+        expr_cursor = _unwrap(expr_cursor)
         path = _raw_path(expr_cursor)
         if path and path in self._loop_written:
             return None
@@ -90,14 +95,24 @@ class CopyPropagation:
             return self._follow(member_binding, seen)
         key = _cursor_key(expr_cursor)
         if key not in self._bindings:
+            if expr_cursor.kind == CursorKind.UNARY_OPERATOR and _operator(expr_cursor) in ("&", "*"):
+                children = list(expr_cursor.get_children())
+                if children:
+                    return self.resolve_expr(children[0], seen)
             if expr_cursor.kind == CursorKind.MEMBER_REF_EXPR:
                 children = list(expr_cursor.get_children())
                 if children:
                     base = self.resolve_expr(children[0], seen)
-                    if isinstance(base, Cursor):
-                        base_path = _raw_path(base)
-                        if base_path:
-                            return f"{base_path}.{expr_cursor.spelling}"
+                    base_path = _raw_path(base) if isinstance(base, Cursor) else base
+                    if base_path:
+                        return f"{base_path}.{expr_cursor.spelling}"
+            if expr_cursor.kind == CursorKind.ARRAY_SUBSCRIPT_EXPR:
+                children = list(expr_cursor.get_children())
+                if children:
+                    base = self.resolve_expr(children[0], seen)
+                    base_path = _raw_path(base) if isinstance(base, Cursor) else base
+                    if base_path:
+                        return f"{base_path}[*]"
             return expr_cursor
         return self._follow(self._bindings[key], seen)
 
@@ -117,13 +132,35 @@ class CopyPropagation:
             return self._follow(self._bindings[key], seen)
         return value
 
+    def snapshot(self):
+        """Capture bindings before taking a control-flow branch."""
+        return (self._bindings.copy(), self._member_bindings.copy(), self._locals.copy(),
+                self._loop_written.copy())
+
+    def restore(self, state) -> None:
+        """Restore a previously captured binding state."""
+        self._bindings, self._member_bindings, self._locals, self._loop_written = (
+            state[0].copy(), state[1].copy(), state[2].copy(), state[3].copy())
+
+    def merge(self, *states):
+        """Keep only bindings unchanged on every reachable branch."""
+        if not states:
+            return self.snapshot()
+        return (_common_bindings(*(state[0] for state in states)),
+                _common_bindings(*(state[1] for state in states)),
+                set().union(*(state[2] for state in states)),
+                set().union(*(state[3] for state in states)))
+
     def _set(self, lhs: Cursor, rhs: Cursor | None) -> None:
         key = _cursor_key(lhs)
-        if key:
+        if key and not _is_static(lhs):
             self._bindings[key] = rhs
         path = _raw_path(lhs)
-        if path:
+        if path and self._is_local(lhs):
             self._member_bindings[path] = rhs
+
+    def _is_local(self, cursor: Cursor) -> bool:
+        return (_cursor_key(_root(cursor)) or "") in self._locals
 
     def _mark_loop_writes(self, cursor: Cursor) -> None:
         if cursor.kind in (CursorKind.BINARY_OPERATOR, CursorKind.COMPOUND_ASSIGNMENT_OPERATOR):
@@ -219,11 +256,26 @@ class AtomBuilder:
         if left.constant is not None and right.constant is not None:
             result = _compare(left.constant, right.constant, op)
             self.constants[_source(cursor)] = result
+        bit_test = self._bit_relation(cursor, left, right, op)
+        if bit_test is not None:
+            return bit_test
         linear = self._linear(left_cursor)
         if linear is not None and right.constant is not None:
             variable, offset = linear
             return Atom(variable, op, rhs=right.constant - offset, text=_source(cursor))
         return self._unknown(cursor)
+
+    @staticmethod
+    def _bit_relation(cursor: Cursor, left: _Value, right: _Value, op: Op):
+        bit = left.node if isinstance(left.node, Atom) and left.node.op == Op.BITSET else None
+        if bit is None or right.constant is None or bit.rhs is None:
+            return None
+        atom = Atom(bit.var, Op.BITSET, rhs=bit.rhs, text=_source(cursor))
+        if right.constant == bit.rhs:
+            return atom if op == Op.EQ else Not(atom) if op == Op.NE else None
+        if right.constant == 0 and bit.rhs & (bit.rhs - 1) == 0:
+            return Not(atom) if op == Op.EQ else atom if op == Op.NE else None
+        return None
 
     def _value(self, cursor: Cursor) -> _Value:
         original = cursor
@@ -242,7 +294,7 @@ class AtomBuilder:
         if constant is not None:
             return _Value(constant=constant)
         path = _raw_path(cursor)
-        variable = self._find_variable(path)
+        variable = self._find_variable(path, cursor.kind == CursorKind.DECL_REF_EXPR)
         if variable is not None:
             return _Value(variable=variable)
         if cursor.kind == CursorKind.BINARY_OPERATOR:
@@ -281,15 +333,22 @@ class AtomBuilder:
                 return right_linear[0], right_linear[1] + left_constant.constant
         return None
 
-    def _find_variable(self, path: str | None) -> Variable | None:
+    def _find_variable(self, path: str | None, address=False) -> Variable | None:
         if not path:
             return None
+        if address:
+            for variable in self.inventory.variables:
+                if variable.address_of == path:
+                    return variable
         direct = self.inventory.find(path)
         if direct is not None:
             return direct
         normalized = re.sub(r"\[[^\]]*\]", "", path)
         for variable in self.inventory.variables:
             if re.sub(r"\[[^\]]*\]", "", variable.name) == normalized:
+                return variable
+            static = re.sub(r"::([^.#]+)#\d+", r"::\1", variable.name)
+            if re.sub(r"\[[^\]]*\]", "", static).endswith(f"::{normalized}"):
                 return variable
         return None
 
@@ -321,6 +380,34 @@ def _last_non_type_child(cursor: Cursor) -> Cursor | None:
     return None
 
 
+def _root(cursor: Cursor) -> Cursor:
+    cursor = _unwrap(cursor)
+    while cursor.kind in (CursorKind.MEMBER_REF_EXPR, CursorKind.ARRAY_SUBSCRIPT_EXPR):
+        children = list(cursor.get_children())
+        if not children:
+            break
+        cursor = _unwrap(children[0])
+    return cursor
+
+
+def _is_static(cursor: Cursor) -> bool:
+    root = _root(cursor)
+    declaration = root.referenced if root.kind == CursorKind.DECL_REF_EXPR else root
+    storage = getattr(declaration, "storage_class", "")
+    return getattr(storage, "name", str(storage)).lower() == "static"
+
+
+def _common_bindings(*mappings):
+    """Return entries whose cursor binding is identical in every mapping."""
+    if not mappings:
+        return {}
+    common = {}
+    for key, value in mappings[0].items():
+        if all(key in mapping and mapping[key] is value for mapping in mappings[1:]):
+            common[key] = value
+    return common
+
+
 def _cursor_key(cursor: Cursor) -> str | None:
     if cursor.kind == CursorKind.DECL_REF_EXPR and cursor.referenced is not None:
         return cursor.referenced.get_usr()
@@ -340,6 +427,9 @@ def _raw_path(cursor: Cursor) -> str:
     if cursor.kind == CursorKind.ARRAY_SUBSCRIPT_EXPR:
         children = list(cursor.get_children())
         return f"{_raw_path(children[0])}[*]" if children else ""
+    if cursor.kind == CursorKind.UNARY_OPERATOR and _operator(cursor) in ("&", "*"):
+        children = list(cursor.get_children())
+        return _raw_path(children[0]) if children else ""
     if cursor.kind == CursorKind.CALL_EXPR:
         name = _callee_name(cursor)
         return f"tessy_{name}" if name else ""

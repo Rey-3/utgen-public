@@ -31,7 +31,7 @@ if args.rebuild:
         analysis = ModuleIndexer({"defines": args.defines or ("__GHS__",)}).index(source, args.source_root)
         print(f"{module}: writing database ({len(analysis.functions)} functions)", flush=True)
         XmlDbWriter().write(analysis, output / f"db_{module}.xml")
-print("d")
+
 assembler = RowAssembler(Solver(), McdcGenerator(), include_boundary=False, include_fault=False)
 for database in sorted(root.glob("*/db_*.xml")):
     output = database.parent

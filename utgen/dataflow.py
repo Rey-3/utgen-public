@@ -60,7 +60,9 @@ class DataflowEngine:
         if isinstance(statement, Decl):
             result = []
             for state in states:
-                if statement.init is None:
+                if statement.static_name:
+                    state = self._bind_static(state, statement)
+                elif statement.init is None:
                     state = self._poison(state, (self._path(Ref(statement.name, statement.scope)),))
                 else:
                     state = self._assign_lvalue(state, Ref(statement.name, statement.scope), statement.init, "=")
@@ -92,6 +94,14 @@ class DataflowEngine:
             return _Flow(tuple(self._poison(state, ()) for state in states))
         return _Flow(states)
 
+    def _bind_static(self, state, declaration):
+        values = dict(state.values)
+        local = self._path(Ref(declaration.name, declaration.scope))
+        for name in self._leaves:
+            if name == declaration.static_name or name.startswith((declaration.static_name + ".", declaration.static_name + "[")):
+                values[local + name[len(declaration.static_name):]] = Ref(name)
+        return replace(state, values=values)
+
     def _if(self, states, statement):
         point_states = []
         then_states, else_states = [], []
@@ -113,7 +123,7 @@ class DataflowEngine:
 
     def _for(self, states, statement):
         initialized = self._block(states, statement.init)
-        loop = While(statement.cond, statement.body + statement.increment)
+        loop = While(statement.cond, statement.body + statement.increment, statement.runtime_cond)
         return self._loop(initialized.active, loop, self._written(statement.init))
 
     def _loop(self, states, statement, extra_written=()):

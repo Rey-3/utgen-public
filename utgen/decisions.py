@@ -93,15 +93,22 @@ class DecisionExtractor:
         decision = self._decision(condition, "if")
         self._nested_expr(condition)
         depth = len(self._guards)
+        before = self._copy_state()
+        then_state = before
         if then_cursor is not None:
             with self._guard(decision.expr, True):
                 self._statement(then_cursor)
+            then_state = self._copy_state()
+        self._restore_state(before)
         then_returns = then_cursor is not None and self._ends_in_return(then_cursor)
         else_returns = False
+        else_state = before
         if else_cursor is not None:
             with self._guard(decision.expr, False):
                 self._statement(else_cursor)
+            else_state = self._copy_state()
             else_returns = self._ends_in_return(else_cursor)
+        self._restore_state(self._merge_states(then_state, else_state))
         del self._guards[depth:]
         if then_returns and (else_cursor is None or not else_returns):
             self._guards.append(Guard(decision.expr, False))
@@ -123,7 +130,9 @@ class DecisionExtractor:
             if not arm.default:
                 case_atoms.extend(self._case_atoms(subject, arm.labels))
         returning: list[object] = []
+        before, states = self._copy_state(), []
         for arm in arms:
+            self._restore_state(before)
             if arm.default:
                 expr = self._default_expr(_source(subject), case_values, case_atoms)
             else:
@@ -132,8 +141,12 @@ class DecisionExtractor:
             with self._guard(decision.expr, True):
                 for statement in arm.body:
                     self._statement(statement)
+            states.append(self._copy_state())
             if any(self._ends_in_return(statement) for statement in arm.body):
                 returning.append(decision.expr)
+        if not any(arm.default for arm in arms):
+            states.append(before)
+        self._restore_state(self._merge_states(*states))
         for expr in returning:
             self._guards.append(Guard(expr, False))
 
@@ -169,17 +182,38 @@ class DecisionExtractor:
         body = children[-1]
         condition = children[1] if cursor.kind == CursorKind.FOR_STMT and len(children) > 2 else children[0]
         self._nested_expr(condition)
+        before = self._copy_state()
         with self._guard(self._build(condition), True):
             self._statement(body)
+        self._restore_state(before)
         self._record_cursor(cursor)
 
     def _do_loop(self, cursor: Cursor) -> None:
         children = list(cursor.get_children())
+        before = self._copy_state()
         if children:
             self._statement(children[0])
+            self._restore_state(before)
             self._record_cursor(cursor)
         if len(children) > 1:
             self._nested_expr(children[1])
+
+    def _copy_state(self):
+        copyprop = getattr(self.atom_builder, "copyprop", None)
+        return copyprop.snapshot() if copyprop is not None and hasattr(copyprop, "snapshot") else None
+
+    def _restore_state(self, state) -> None:
+        copyprop = getattr(self.atom_builder, "copyprop", None)
+        if state is not None and copyprop is not None and hasattr(copyprop, "restore"):
+            copyprop.restore(state)
+
+    def _merge_states(self, *states):
+        copyprop = getattr(self.atom_builder, "copyprop", None)
+        valid = []
+        for state in states:
+            if state is not None:
+                valid.append(state)
+        return copyprop.merge(*valid) if valid and copyprop is not None and hasattr(copyprop, "merge") else None
 
     def _nested_expr(self, cursor: Cursor) -> None:
         if cursor.kind == CursorKind.CONDITIONAL_OPERATOR:

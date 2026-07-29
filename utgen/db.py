@@ -238,6 +238,8 @@ class XmlDbWriter:
         attrs = {"name": leaf.name, "type": leaf.ctype.name, "bits": str(leaf.ctype.bits),
                  "len": leaf.xml_len, "format": leaf.fmt, "direction": str(leaf.direction),
                  "pointer": str(leaf.is_pointer).lower(), "signed": str(leaf.ctype.signed).lower()}
+        if leaf.address_of:
+            attrs["address_of"] = leaf.address_of
         if leaf.ctype.enum_values:
             attrs["enum"] = _enum_values(leaf.ctype.enum_values)
         ET.SubElement(parent, "Leaf", **attrs)
@@ -255,8 +257,11 @@ class XmlDbWriter:
 
     def _statement(self, parent, statement):
         if isinstance(statement, Decl):
-            element = ET.SubElement(parent, "Decl", name=statement.name,
-                                    scope=statement.scope, pointer=str(statement.is_pointer).lower())
+            attrs = {"name": statement.name, "scope": statement.scope,
+                     "pointer": str(statement.is_pointer).lower()}
+            if statement.static_name:
+                attrs["static"] = statement.static_name
+            element = ET.SubElement(parent, "Decl", **attrs)
             if statement.init is not None:
                 _write_expr(element, statement.init)
             return
@@ -291,6 +296,9 @@ class XmlDbWriter:
             self._block(element, "Init", statement.init)
             condition = ET.SubElement(element, "Condition")
             _write_node(condition, statement.cond)
+            if statement.runtime_cond is not None:
+                runtime = ET.SubElement(element, "RuntimeCondition")
+                _write_expr(runtime, statement.runtime_cond)
             self._block(element, "Body", statement.body)
             self._block(element, "Increment", statement.increment)
             return
@@ -305,6 +313,9 @@ class XmlDbWriter:
             element = ET.SubElement(parent, "DoWhile" if isinstance(statement, DoWhile) else "While")
             condition = ET.SubElement(element, "Condition")
             _write_node(condition, statement.cond)
+            if statement.runtime_cond is not None:
+                runtime = ET.SubElement(element, "RuntimeCondition")
+                _write_expr(runtime, statement.runtime_cond)
             self._block(element, "Body", statement.body)
             return
         if isinstance(statement, ExprStmt):
@@ -600,7 +611,7 @@ def _read_leaf(element):
     ctype = _ctype(element)
     return Variable(element.get("name", ""), ctype, element.get("format", ""),
                     element.get("len", ""), Direction(element.get("direction", "in")),
-                    _bool(element.get("pointer", "false")))
+                    _bool(element.get("pointer", "false")), element.get("address_of", ""))
 
 
 def _read_function(element):
@@ -653,7 +664,7 @@ def _read_statement(element, variables):
     if tag == "Decl":
         init = _read_expr(element[0], variables) if len(element) else None
         return Decl(element.get("name", ""), init, element.get("scope", ""),
-                    _bool(element.get("pointer", "false")))
+                    _bool(element.get("pointer", "false")), element.get("static", ""))
     if tag == "Assign":
         lhs = Ref(element.get("lhs", ""), element.get("scope", "")) if element.get("lhs") is not None else None
         value = None
@@ -678,7 +689,8 @@ def _read_statement(element, variables):
         return For(_read_block(element, "Init", variables),
                    _child_expr(element, "Condition", variables),
                    _read_block(element, "Increment", variables),
-                   _read_block(element, "Body", variables))
+                   _read_block(element, "Body", variables),
+                   _child_expr(element, "RuntimeCondition", variables))
     if tag == "Case":
         body = []
         for child in element:
@@ -687,7 +699,8 @@ def _read_statement(element, variables):
                           _read_values(element.get("labels", "")), _bool(element.get("default", "false")))
     if tag in ("While", "DoWhile"):
         return (DoWhile if tag == "DoWhile" else While)(_child_expr(element, "Condition", variables),
-                                                         tuple(_read_block(element, "Body", variables)))
+                                                          tuple(_read_block(element, "Body", variables)),
+                                                          _child_expr(element, "RuntimeCondition", variables))
     if tag == "ExprStmt":
         return ExprStmt(_read_expr(element[0], variables) if len(element) else None)
     if tag == "Return":
@@ -742,7 +755,8 @@ def _write_expr(parent, expression):
             _write_expr(item, argument)
         return
     if isinstance(expression, Ternary):
-        element = ET.SubElement(parent, "Ternary")
+        attrs = {"decision": str(expression.decision_id)} if expression.decision_id else {}
+        element = ET.SubElement(parent, "Ternary", **attrs)
         for tag, value in (("Condition", expression.c), ("Then", expression.t), ("Else", expression.f)):
             item = ET.SubElement(element, tag)
             _write_expr(item, value)
@@ -824,7 +838,8 @@ def _read_node(element, variables):
     if tag == "Ternary":
         return Ternary(_read_child_node(element, "Condition", variables),
                        _read_child_node(element, "Then", variables),
-                       _read_child_node(element, "Else", variables))
+                       _read_child_node(element, "Else", variables),
+                       int(element.get("decision", "0")))
     if tag == "Cast":
         return Cast(element.get("type", ""), _read_node(element[0], variables) if len(element) else None)
     if tag == "Index":

@@ -134,7 +134,7 @@ class AtomConstraints:
         op = atom.op if outcome else NEGATE[atom.op]
         value = atom.rhs
         if atom.rhs_var is not None:
-            value = (atom.rhs_var.ctype.lo + atom.rhs_var.ctype.hi) // 2
+            value = atom.rhs_var.ctype.hi if op in (Op.LT, Op.LE) else atom.rhs_var.ctype.lo
             return [Constraint(atom.var, op, value), Constraint(atom.rhs_var, Op.EQ, value)]
         return [Constraint(atom.var, op, value)]
 

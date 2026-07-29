@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from clang.cindex import Cursor, CursorKind, TypeKind
 
-from utgen.model import Direction, Inventory
+from utgen.model import CType, Direction, Inventory, Variable
 from utgen.stubs import DEFAULT_NO_STUB, StubFinder
 from utgen.typegraph import LeafDeriver, TypeGraph
 
@@ -31,6 +31,9 @@ class InventoryBuilder:
 
         variables = []
         for param in func_cursor.get_arguments():
+            address = self._pointer_address(param)
+            if address is not None:
+                variables.append(address)
             member = self.type_graph.describe(param.type, param.spelling)
             variables.extend(self.deriver.leaves(member, Direction.IN))
         result_type = func_cursor.result_type
@@ -40,9 +43,37 @@ class InventoryBuilder:
         for decl, direction in self._globals(func_cursor):
             member = self.type_graph.describe(decl.type, decl.spelling)
             variables.extend(self.deriver.leaves(member, direction))
+        for decl, name in self._statics(func_cursor):
+            member = self.type_graph.describe(decl.type, name)
+            variables.extend(self.deriver.leaves(member, Direction.IN))
         stubs, stub_vars = self.stub_finder.find(func_cursor)
         variables.extend(stub_vars)
         return Inventory(variables, stubs)
+
+    @staticmethod
+    def _pointer_address(param) -> Variable | None:
+        canonical = param.type.get_canonical()
+        if canonical.kind != TypeKind.POINTER or canonical.get_pointee().get_canonical().kind in (
+                TypeKind.FUNCTIONPROTO, TypeKind.FUNCTIONNOPROTO):
+            return None
+        return Variable(f"@{param.spelling}", CType("pointer", 1, False), "pointer", "1",
+                        Direction.IN, True, param.spelling)
+
+    @staticmethod
+    def _statics(func_cursor: Cursor) -> list:
+        declarations, counts, result = [], {}, []
+
+        def collect(cursor):
+            if cursor.kind == CursorKind.VAR_DECL and _is_static(cursor):
+                declarations.append(cursor)
+            for child in cursor.get_children():
+                collect(child)
+
+        collect(func_cursor)
+        for declaration in declarations:
+            counts[declaration.spelling] = counts.get(declaration.spelling, 0) + 1
+            result.append((declaration, f"{func_cursor.spelling}::{declaration.spelling}#{counts[declaration.spelling]}"))
+        return result
 
     # --- directions from usage ---
 
@@ -134,3 +165,8 @@ class InventoryBuilder:
         for tok in cur.get_tokens():
             return tok.spelling
         return ""
+
+
+def _is_static(cursor: Cursor) -> bool:
+    storage = getattr(cursor, "storage_class", "")
+    return getattr(storage, "name", str(storage)).lower() == "static"

@@ -58,6 +58,7 @@ class Variable:
     xml_len: str
     direction: Direction
     is_pointer: bool = False
+    address_of: str = ""
 
 
 @dataclass(frozen=True)
@@ -279,6 +280,7 @@ class Ternary:
     c: object
     t: object
     f: object
+    decision_id: int = 0
 
 
 @dataclass(frozen=True)
@@ -361,6 +363,7 @@ class Decl:
     init: object = None
     scope: str = ""
     is_pointer: bool = False
+    static_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -401,6 +404,7 @@ class While:
     """while loop: guard-only, condition kept as a boolean Node (A14)."""
     cond: object
     body: tuple = ()
+    runtime_cond: object | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -410,6 +414,7 @@ class For:
     cond: object = None
     increment: tuple = ()
     body: tuple = ()
+    runtime_cond: object | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -417,6 +422,7 @@ class DoWhile:
     """do-while loop: body executes at least once, condition unguards it (A15)."""
     cond: object
     body: tuple = ()
+    runtime_cond: object | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -456,7 +462,7 @@ class FunctionIR:
     body: tuple = ()                # Stmt items
     dataflow: DataflowResult | None = None
     constants: dict = field(default_factory=dict)
-    local_functions: dict = field(default_factory=dict)
+    local_functions: dict = field(default_factory=dict, compare=False, repr=False)
 
 
 @dataclass
