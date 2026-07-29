@@ -12,13 +12,12 @@ class RowAssembler:
     """Combine MC/DC recipes, guards, and solver results into test rows."""
 
     def __init__(self, solver: Solver, mcdc: McdcGenerator, fault_overrides: dict | None = None,
-                 include_boundary=True, include_fault=True, coverage_max_candidates=2048) -> None:
+                 include_boundary=True, include_fault=True) -> None:
         self.solver = solver
         self.mcdc = mcdc
         self.fault_overrides = fault_overrides or {}
         self.include_boundary = include_boundary
         self.include_fault = include_fault
-        self.coverage_max_candidates = coverage_max_candidates
 
     def assemble(self, function: FunctionIR) -> tuple[list[TestRow], list[str]]:
         """Return deterministic rows and notes for one function's decisions."""
@@ -31,8 +30,7 @@ class RowAssembler:
         by_values = {}
         from utgen.coverage import CoverageGenerator
 
-        concrete = CoverageGenerator(max_candidates=self.coverage_max_candidates)
-        reported_exhaustion = False
+        concrete = CoverageGenerator()
         for decision in function.decisions:
             if any(atom.var is None for atom in atoms_of(decision.expr)):
                 notes.append(f"decision {decision.id}: uncontrollable or degenerate condition")
@@ -71,9 +69,6 @@ class RowAssembler:
                 if key not in by_values:
                     by_values[key] = coverage
                     rows.append(coverage)
-            if concrete.exhausted and not reported_exhaustion:
-                notes.append(f"decision {decision.id}: concrete coverage search budget exhausted")
-                reported_exhaustion = True
         if self.include_boundary:
             from utgen.boundary import BoundaryGenerator
 
