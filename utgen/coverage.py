@@ -17,6 +17,7 @@ class CoverageGenerator:
         self.max_rounds = max_rounds
         self.max_rows = max_rows
         self._function = None
+        self._inputs = ()
         self._results = {}
 
     def rows(self, function: FunctionIR, existing: list[TestRow], decision_ids=None) -> list[TestRow]:
@@ -24,19 +25,26 @@ class CoverageGenerator:
         if not inputs or not function.body:
             return []
         interpreter = Interpreter(Inventory(function.leaves, function.stubs))
-        if function is not self._function:
-            self._function, self._results = function, {}
+        self._set_function(function)
         targets = self._targets(function, decision_ids)
         relevant, needs_combinations = self._decision_inputs(function, inputs, decision_ids)
         index_values = self._index_values(function.body)
-        queue = [row.values.copy() for row in existing]
+        queue, seen = [], set()
+        for row in existing:
+            values = row.values.copy()
+            key = self._key(values)
+            if key in seen:
+                continue
+            seen.add(key)
+            queue.append(values)
         if not queue:
             queue.append(self._defaults(inputs))
-        seen, results, rows = set(), [], []
+            seen.add(self._key(queue[0]))
+        rows, state = [], self._state(function)
         for values in queue:
-            seen.add(self._key(values))
-            results.append(self._run(interpreter, function, values))
-        covered = self._covered(results, function) & targets
+            key = self._key(values)
+            state.add(self._run(interpreter, function, values, key))
+        covered = state.covered & targets
         if targets <= covered:
             return []
         rounds = max(self.max_rounds, max((len(atoms_of(decision.expr)) for decision in function.decisions), default=0))
@@ -54,15 +62,15 @@ class CoverageGenerator:
                         if key in seen:
                             continue
                         seen.add(key)
-                        result = self._run(interpreter, function, candidate)
-                        gained = (self._covered(results + [result], function) & targets) - covered
+                        result = self._run(interpreter, function, candidate, key)
+                        gained = (state.gained(result) & targets) - covered
                         if not gained:
                             if needs_combinations and leaf.name in relevant and neutral < self.max_rows * 32:
                                 queue.append(candidate)
                                 neutral += 1
                             continue
+                        state.add(result)
                         covered.update(gained)
-                        results.append(result)
                         rows.append(TestRow(candidate, "Coverage", self._description(gained)))
                         queue.append(candidate)
                         if len(rows) >= self.max_rows or targets <= covered:
@@ -71,11 +79,22 @@ class CoverageGenerator:
                 break
         return rows
 
-    def _run(self, interpreter, function, values):
-        key = self._key(values)
+    def _run(self, interpreter, function, values, key=None):
+        self._set_function(function)
+        key = self._key(values) if key is None else key
         if key not in self._results:
             self._results[key] = interpreter.run(function, values)
         return self._results[key]
+
+    def _set_function(self, function):
+        if function is self._function:
+            return
+        self._function, self._results = function, {}
+        self._inputs = tuple(leaf for leaf in function.leaves if leaf.direction in (Direction.IN, Direction.INOUT))
+
+    @staticmethod
+    def _state(function):
+        return _CoverageState(function)
 
     @staticmethod
     def _targets(function: FunctionIR, decision_ids=None) -> set[tuple]:
@@ -257,11 +276,91 @@ class CoverageGenerator:
         visit(value)
         return values
 
-    @staticmethod
-    def _key(values: dict) -> tuple:
-        return tuple(sorted(values.items()))
+    def _key(self, values: dict) -> tuple:
+        key = []
+        for leaf in self._inputs:
+            value = values.get(leaf.name, 1 if leaf.address_of else 0)
+            key.append((leaf.name, 0 if value == "NULL" else value))
+        return tuple(key)
 
     @staticmethod
     def _description(gained: set[tuple]) -> str:
         decision = next((item for item in gained if len(item) == 2), None)
         return "concrete condition combination" if decision is None else f"concrete decision {decision[0]} = {decision[1]}"
+
+
+class _CoverageState:
+    def __init__(self, function):
+        self.decisions = {decision.id: decision for decision in function.decisions}
+        self.atoms, self.positions, self.patterns, self.pattern_sets = {}, {}, {}, {}
+        self.covered, self._outcomes, self._pairs = set(), {}, {}
+        for decision in function.decisions:
+            atoms = tuple(atoms_of(decision.expr))
+            self.atoms[decision.id] = atoms
+            self.positions[decision.id] = {id(atom): index for index, atom in enumerate(atoms)}
+            self.patterns[decision.id], self.pattern_sets[decision.id] = [], set()
+
+    def add(self, result):
+        return self._changes(result, True)
+
+    def gained(self, result):
+        return self._changes(result, False)
+
+    def _changes(self, result, commit):
+        gained, additions = set(), {}
+        for decision_id, outcomes in result.observed.items():
+            for outcome in outcomes:
+                if (decision_id, outcome) not in self.covered:
+                    gained.add((decision_id, outcome))
+        for decision_id, values in result.conditions.items():
+            if decision_id not in self.decisions:
+                continue
+            additions[decision_id] = []
+            known = self.pattern_sets[decision_id]
+            for pattern in values:
+                if pattern not in known and pattern not in additions[decision_id]:
+                    additions[decision_id].append(pattern)
+        for decision_id, new_patterns in additions.items():
+            decision, atoms = self.decisions[decision_id], self.atoms[decision_id]
+            patterns = list(self.patterns[decision_id])
+            for pattern in new_patterns:
+                for atom, outcome in zip(atoms, pattern):
+                    if outcome is not None:
+                        gained.add((decision_id, atom.text, outcome))
+                for index in range(len(atoms)):
+                    target = decision_id, "mcdc", index
+                    if target in self.covered or target in gained:
+                        continue
+                    for previous in patterns:
+                        if self._independent(decision, index, pattern, previous):
+                            gained.add(target)
+                            break
+                patterns.append(pattern)
+        if commit:
+            self.covered.update(gained)
+            for decision_id, new_patterns in additions.items():
+                self.patterns[decision_id].extend(new_patterns)
+                self.pattern_sets[decision_id].update(new_patterns)
+        return gained
+
+    def _independent(self, decision, index, left, right):
+        key = decision.id, index, frozenset((left, right))
+        if key not in self._pairs:
+            left_outcome = self._outcome(decision, left)
+            right_outcome = self._outcome(decision, right)
+            independent = left_outcome is not None and right_outcome is not None
+            independent = independent and left[index] is not None and right[index] is not None
+            independent = independent and left_outcome != right_outcome and left[index] != right[index]
+            if independent:
+                for position in range(len(self.atoms[decision.id])):
+                    if position != index and left[position] is not None and right[position] is not None and left[position] != right[position]:
+                        independent = False
+                        break
+            self._pairs[key] = independent
+        return self._pairs[key]
+
+    def _outcome(self, decision, pattern):
+        key = decision.id, pattern
+        if key not in self._outcomes:
+            self._outcomes[key] = CoverageGenerator._outcome(decision.expr, pattern, self.positions[decision.id])
+        return self._outcomes[key]

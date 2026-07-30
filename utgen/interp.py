@@ -12,6 +12,9 @@ from utgen.model import (And, Assign, Atom, Binop, Break, CallE, Cast, Const,
 
 _BREAK = object()
 _UNKNOWN = object()
+_INDEX_PATH = re.compile(r"\[\d+\]")
+_LEGACY_ATOM = re.compile(r"\s*(\w+)\s*(<=|>=|==|!=|<|>)\s*(?:\([^)]*\)\s*)?(\w+|\d+)\s*")
+_ARRAY_INDEX = re.compile(r"\[(\d+)\]")
 
 
 @dataclass
@@ -30,6 +33,13 @@ class Interpreter:
 
     def __init__(self, inventory: Inventory) -> None:
         self.inventory = inventory
+        self._variable_names, self._normalized_names, self._address_names = set(), {}, {}
+        self._path_cache = {}
+        for variable in inventory.variables:
+            self._variable_names.add(variable.name)
+            self._normalized_names[variable.name] = _INDEX_PATH.sub("[*]", variable.name)
+            if variable.address_of:
+                self._address_names.setdefault(variable.address_of, []).append(variable.name)
 
     def run(self, function, values: dict) -> ExecResult:
         """Execute ``function`` and return its observable result."""
@@ -265,10 +275,11 @@ class Interpreter:
 
     def _loop(self, body, condition, do_first=False, increment=(), loop_id=None):
         ran = False
+        outcomes = self.loops.setdefault(loop_id, set())
         for _ in range(1024):
             if not do_first or ran:
                 outcome = bool(self._eval(condition))
-                self.loops.setdefault(loop_id, set()).add(outcome)
+                outcomes.add(outcome)
                 if not outcome:
                     return None
             ran = True
@@ -327,23 +338,27 @@ class Interpreter:
         if path in self.unknown:
             return _UNKNOWN
         if address:
-            for variable in self.inventory.variables:
-                if variable.address_of == path and variable.name in self.env:
-                    return self.env[variable.name]
+            for name in self._address_names.get(path, ()):
+                if name in self.env:
+                    return self.env[name]
         if path in self.env:
             return self.env[path]
-        pattern = re.sub(r"\[\d+\]", "[*]", path)
-        names = {variable.name for variable in self.inventory.variables}
-        for key in self.unknown & names:
-            if re.sub(r"\[\d+\]", "[*]", key) == pattern:
+        pattern = self._normalized_path(path)
+        for key in self.unknown & self._variable_names:
+            if self._normalized_names[key] == pattern:
                 return _UNKNOWN
-        for key in names:
-            if key in self.env and re.sub(r"\[\d+\]", "[*]", key) == pattern:
+        for key in self._variable_names:
+            if key in self.env and self._normalized_names[key] == pattern:
                 return self.env[key]
         return 0
 
+    def _normalized_path(self, path):
+        if path not in self._path_cache:
+            self._path_cache[path] = _INDEX_PATH.sub("[*]", path)
+        return self._path_cache[path]
+
     def _legacy_atom(self, atom):
-        match = re.fullmatch(r"\s*(\w+)\s*(<=|>=|==|!=|<|>)\s*(?:\([^)]*\)\s*)?(\w+|\d+)\s*", atom.text)
+        match = _LEGACY_ATOM.fullmatch(atom.text)
         if match is None:
             return 0
         left_name, operator, right_name = match.groups()
@@ -359,7 +374,7 @@ class Interpreter:
     def _array_bound(self):
         bound = 0
         for variable in self.inventory.inputs():
-            for value in re.findall(r"\[(\d+)\]", variable.name):
+            for value in _ARRAY_INDEX.findall(variable.name):
                 bound = max(bound, int(value))
         return bound
 
@@ -426,13 +441,22 @@ class Interpreter:
 
     @staticmethod
     def _binop(op, left, right):
-        operations = {"+": lambda: left + right, "-": lambda: left - right, "*": lambda: left * right,
-                      "/": lambda: Interpreter._divide(left, right), "%": lambda: Interpreter._mod(left, right),
-                      "&": lambda: left & right, "|": lambda: left | right, "^": lambda: left ^ right,
-                      "<<": lambda: left << right, ">>": lambda: left >> right, "==": lambda: int(left == right),
-                      "!=": lambda: int(left != right), ">": lambda: int(left > right),
-                      ">=": lambda: int(left >= right), "<": lambda: int(left < right), "<=": lambda: int(left <= right)}
-        return operations[op]() if op in operations else 0
+        if op == "+": return left + right
+        if op == "-": return left - right
+        if op == "*": return left * right
+        if op == "/": return Interpreter._divide(left, right)
+        if op == "%": return Interpreter._mod(left, right)
+        if op == "&": return left & right
+        if op == "|": return left | right
+        if op == "^": return left ^ right
+        if op == "<<": return left << right
+        if op == ">>": return left >> right
+        if op == "==": return int(left == right)
+        if op == "!=": return int(left != right)
+        if op == ">": return int(left > right)
+        if op == ">=": return int(left >= right)
+        if op == "<": return int(left < right)
+        return int(left <= right) if op == "<=" else 0
 
     @staticmethod
     def _assign(op, old, value):
@@ -440,11 +464,14 @@ class Interpreter:
 
     @staticmethod
     def _atom(op, left, right):
-        operations = {"truthy": lambda: int(bool(left)), "bitset": lambda: int(bool(left & right)),
-                      "==": lambda: int(left == right), "!=": lambda: int(left != right),
-                      ">": lambda: int(left > right), ">=": lambda: int(left >= right),
-                      "<": lambda: int(left < right), "<=": lambda: int(left <= right)}
-        return operations[op]() if op in operations else 0
+        if op == "truthy": return int(bool(left))
+        if op == "bitset": return int(bool(left & right))
+        if op == "==": return int(left == right)
+        if op == "!=": return int(left != right)
+        if op == ">": return int(left > right)
+        if op == ">=": return int(left >= right)
+        if op == "<": return int(left < right)
+        return int(left <= right) if op == "<=" else 0
 
     @staticmethod
     def _divide(left, right):

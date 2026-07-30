@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from functools import cache
 
 
 class Direction(StrEnum):
@@ -96,16 +97,39 @@ class Not:
 Node = Atom | And | Or | Not
 
 
-def atoms_of(node: object) -> list:
-    """Flatten a boolean tree into its atoms, left-to-right, duplicates kept."""
+_ATOM_NODES = {}
+
+
+@cache
+def _cached_atoms(node_id: int) -> tuple:
+    node = _ATOM_NODES[node_id]
     if isinstance(node, Atom):
-        return [node]
+        return node,
     if isinstance(node, Not):
-        return atoms_of(node.child)
+        return _atoms_of(node.child)
     out = []
     for child in node.children:
-        out.extend(atoms_of(child))
-    return out
+        out.extend(_atoms_of(child))
+    return tuple(out)
+
+
+def _atoms_of(node: object) -> tuple:
+    _ATOM_NODES[id(node)] = node
+    return _cached_atoms(id(node))
+
+
+def _clear_atoms() -> None:
+    _ATOM_NODES.clear()
+    _cached_atoms.cache_clear()
+
+
+_atoms_of.cache_clear = _clear_atoms
+_atoms_of.cache_info = _cached_atoms.cache_info
+
+
+def atoms_of(node: object) -> list:
+    """Flatten a boolean tree into its atoms, left-to-right, duplicates kept."""
+    return list(_atoms_of(node))
 
 
 @dataclass(frozen=True)
