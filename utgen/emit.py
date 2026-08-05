@@ -12,7 +12,8 @@ from utgen.model import CallE, Direction, FunctionIR, TestRow
 class ValueXmlWriter:
     """Write row-aligned injectable and observable function arguments."""
 
-    def write(self, function: FunctionIR, rows: list[TestRow], path: str | Path) -> None:
+    def write(self, function: FunctionIR, rows: list[TestRow], path: str | Path,
+              default_range: str | None = None) -> None:
         """Write a TESSY-compatible value XML file for ``function``."""
         root = ET.Element("function", name=function.name, file=_source(function))
         addresses = {leaf.address_of: leaf for leaf in function.leaves if leaf.address_of}
@@ -22,15 +23,17 @@ class ValueXmlWriter:
             attrs = {"name": leaf.name, "len": _validation_len(leaf), "format": leaf.fmt,
                      "direction": leaf.direction.value, "pointer": _bool(leaf.is_pointer)}
             address = _pointer_address(leaf.name, addresses)
-            if address is not None:
-                attrs["address"] = ",".join(
-                    "NULL" if row.values.get(address.name, 1) in (0, "NULL") else f"tessy_{address.address_of}"
-                    for row in rows)
             if leaf.direction in (Direction.IN, Direction.INOUT):
-                values = []
-                for row in rows:
-                    values.append(_render(leaf, row.values.get(leaf.name, 0)))
-                attrs["range"] = ",".join(values)
+                if default_range is None:
+                    values = []
+                    for row in rows:
+                        value = row.values.get(leaf.name, 0)
+                        values.append("NULL" if address is not None and
+                                      row.values.get(address.name, 1) in (0, "NULL") else
+                                      _render(leaf, value))
+                    attrs["range"] = ",".join(values)
+                else:
+                    attrs["range"] = default_range
                 attrs["testmethod"] = "decision"
             ET.SubElement(root, "argument", **attrs)
         _write_xml(root, path)
@@ -44,21 +47,28 @@ def _pointer_address(name, addresses):
 
 
 class StubXmlWriter:
-    """Write the existing TESSY called-function and argument schema."""
+    """Write the TESSY called-function and argument schema."""
 
     def write(self, function: FunctionIR, path: str | Path) -> None:
         """Write one stub XML file for ``function``."""
-        root = ET.Element("function_analysis")
-        called = ET.SubElement(root, "called_functions")
+        root = ET.Element("function_analysis", function_name=function.name,
+                          file=_stub_path(_source(function)), line=str(function.line))
+        called = ET.SubElement(root, "called_functions", count=str(len(function.stubs)))
         for stub in function.stubs:
-            element = ET.SubElement(called, "function", name=stub.name)
-            if stub.ret_ctype is not None or stub.ret_struct:
-                return_type = stub.ret_ctype.name if stub.ret_ctype is not None else stub.ret_struct
-                ET.SubElement(element, "return", type=return_type, name=stub.name)
-            arguments = ET.SubElement(element, "arguments")
-            for type_name, name in stub.params:
-                ET.SubElement(arguments, "argument", type=type_name, name=name)
-        _write_xml(root, path)
+            element = ET.SubElement(called, "function", name=stub.name,
+                                    file=_stub_path(getattr(stub, "file", "")),
+                                    line=str(getattr(stub, "line", "")))
+            return_type = stub.ret_ctype.name if stub.ret_ctype is not None else stub.ret_struct or "void"
+            return_element = ET.SubElement(element, "return")
+            ET.SubElement(return_element, "type").text = return_type
+            ET.SubElement(return_element, "name").text = f"tessy_{stub.name}"
+            if stub.params:
+                arguments = ET.SubElement(element, "arguments")
+                for index, (type_name, _) in enumerate(stub.params):
+                    argument = ET.SubElement(arguments, "argument")
+                    ET.SubElement(argument, "type").text = type_name
+                    ET.SubElement(argument, "name").text = f"tessy_{stub.name}__Arg{index}"
+        _write_stub_xml(root, path)
 
 
 class ReportWriter:
@@ -90,6 +100,22 @@ class ReportWriter:
 
 def _source(function: FunctionIR) -> str:
     return str(getattr(function, "file", "") or getattr(function, "source_file", ""))
+
+
+def _stub_path(value: str) -> str:
+    parts = str(value or "").replace("\\", "/").split("/")
+    for index, part in enumerate(parts):
+        if part.lower() == "app_source":
+            return "/".join(parts[index:])
+    return "/".join(parts)
+
+
+def _write_stub_xml(root, path: str | Path) -> None:
+    ET.indent(root, space="  ")
+    payload = ET.tostring(root, encoding="utf-8")
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"<?xml version='1.0' encoding='utf-8'?>\n" + payload + b"\n")
 
 
 def _bool(value: bool) -> str:

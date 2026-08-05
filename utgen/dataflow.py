@@ -209,38 +209,38 @@ class DataflowEngine:
         constraint = PathConstraint(decision_id, condition, outcome)
         return replace(state, path=state.path + (constraint,), condition=None)
 
-    def _condition(self, expression, state):
+    def _condition(self, expression, state, seen=()):
         if expression is None:
             return None
         if isinstance(expression, (Atom, And, Not, Or)):
-            result = self._node_expr(expression, state)
+            result = self._node_expr(expression, state, seen)
         else:
-            result = self._substitute(expression, state)
+            result = self._substitute(expression, state, seen)
         result = self._fold(result)
         return None if self._has_unknown(result) else result
 
-    def _node_expr(self, node, state):
+    def _node_expr(self, node, state, seen=()):
         if isinstance(node, Atom):
             if node.var is None:
                 return Unknown(node.text)
-            left = self._substitute(Ref(node.var.name), state)
+            left = self._substitute(Ref(node.var.name), state, seen)
             if node.op == Op.TRUTHY:
                 return Binop("!=", left, Const(0))
             if node.op == Op.BITSET:
                 return Binop("!=", Binop("&", left, Const(node.rhs)), Const(0))
             right = Ref(node.rhs_var.name) if node.rhs_var is not None else Const(node.rhs)
-            return Binop(str(node.op), left, self._substitute(right, state))
+            return Binop(str(node.op), left, self._substitute(right, state, seen))
         if isinstance(node, Not):
-            return Unary("!", self._node_expr(node.child, state))
+            return Unary("!", self._node_expr(node.child, state, seen))
         if isinstance(node, And):
             terms = []
             for child in node.children:
-                terms.append(self._node_expr(child, state))
+                terms.append(self._node_expr(child, state, seen))
             return Binop("&&", terms[0], terms[1]) if len(terms) == 2 else And(tuple(terms))
         if isinstance(node, Or):
             terms = []
             for child in node.children:
-                terms.append(self._node_expr(child, state))
+                terms.append(self._node_expr(child, state, seen))
             return Binop("||", terms[0], terms[1]) if len(terms) == 2 else Or(tuple(terms))
         return Unknown(str(node))
 
@@ -295,19 +295,19 @@ class DataflowEngine:
         path = self._path(expression)
         return (path,) if path else None
 
-    def _pointer_targets(self, expression, state):
+    def _pointer_targets(self, expression, state, seen=()):
         if isinstance(expression, Unary):
             if expression.op == "&":
                 if isinstance(expression.x, (MemberE, Index)):
-                    targets = self._member_targets(expression.x, state) if isinstance(expression.x, MemberE) else self._index_targets(expression.x, state)
+                    targets = self._member_targets(expression.x, state, seen) if isinstance(expression.x, MemberE) else self._index_targets(expression.x, state, seen)
                     if targets is not None:
                         return targets
                 if isinstance(expression.x, Unary) and expression.x.op == "*":
-                    return self._pointer_targets(expression.x.x, state)
+                    return self._pointer_targets(expression.x.x, state, seen)
                 path = self._path(expression.x)
                 return (path,) if path else None
             if expression.op == "*":
-                targets = self._pointer_targets(expression.x, state)
+                targets = self._pointer_targets(expression.x, state, seen)
                 if targets is None:
                     return None
                 result = []
@@ -322,16 +322,16 @@ class DataflowEngine:
             key = self._path(expression)
             return state.aliases[key] if key in state.aliases else None
         if isinstance(expression, MemberE):
-            targets = self._member_targets(expression, state)
+            targets = self._member_targets(expression, state, seen)
             return targets
         if isinstance(expression, Index):
-            return self._index_targets(expression, state)
+            return self._index_targets(expression, state, seen)
         if isinstance(expression, Const) and expression.value == 0:
             return ()
         return None
 
-    def _member_targets(self, expression, state):
-        targets = self._pointer_targets(expression.base, state)
+    def _member_targets(self, expression, state, seen=()):
+        targets = self._pointer_targets(expression.base, state, seen)
         if targets is None:
             return None
         result = []
@@ -339,11 +339,11 @@ class DataflowEngine:
             result.append(f"{target}.{expression.name}")
         return tuple(result)
 
-    def _index_targets(self, expression, state):
-        targets = self._pointer_targets(expression.base, state)
+    def _index_targets(self, expression, state, seen=()):
+        targets = self._pointer_targets(expression.base, state, seen)
         if targets is None:
             return None
-        index = self._const_int(self._substitute(expression.idx, state))
+        index = self._const_int(self._substitute(expression.idx, state, seen))
         result = []
         for target in targets:
             result.append(self._add_index(target, index))
@@ -360,63 +360,138 @@ class DataflowEngine:
                 pass
         return f"{target}[{index}]"
 
-    def _load_targets(self, targets, state):
+    def _load_targets(self, targets, state, seen=()):
         if targets is None:
             return Unknown("unknown pointer target")
         if len(targets) != 1:
             return Unknown("ambiguous pointer target")
-        return self._substitute(Ref(targets[0]), state)
+        return self._substitute(Ref(targets[0]), state, seen)
 
     def _substitute(self, expression, state, seen=()):
-        if expression is None or isinstance(expression, (Const, Unknown)):
-            return expression
-        if isinstance(expression, Ref):
-            key = self._path(expression)
-            if key in state.unknown:
-                return Unknown(key)
-            value = state.values.get(key)
-            if value is None or key in seen:
-                return expression
-            return self._substitute(value, state, seen + (key,))
-        if isinstance(expression, Unary) and expression.op == "*":
-            return self._load_targets(self._pointer_targets(expression.x, state), state)
-        if isinstance(expression, MemberE):
-            targets = self._member_targets(expression, state)
-            if targets is not None:
-                return self._load_targets(targets, state)
-        if isinstance(expression, Index):
-            targets = self._index_targets(expression, state)
-            if targets is not None:
-                return self._load_targets(targets, state)
-        path = self._path(expression)
-        if path and (path in self._leaves or path in state.values):
-            return self._substitute(Ref(path), state)
-        if isinstance(expression, CallE):
-            return CallE(expression.name, tuple(self._substitute(arg, state) for arg in expression.args))
-        if isinstance(expression, Unary):
-            return self._fold(Unary(expression.op, self._substitute(expression.x, state)))
-        if isinstance(expression, MemberE):
-            return MemberE(self._substitute(expression.base, state), expression.name)
-        if isinstance(expression, Index):
-            return Index(self._substitute(expression.base, state), self._substitute(expression.idx, state))
-        if isinstance(expression, Binop):
-            return self._fold(Binop(expression.op, self._substitute(expression.l, state), self._substitute(expression.r, state)))
-        if isinstance(expression, Cast):
-            return Cast(expression.type_name, self._substitute(expression.x, state))
-        if isinstance(expression, Ternary):
-            condition = self._condition(expression.c, state)
-            selected = expression.t if self._const_bool(condition) else expression.f
-            return self._substitute(selected, state) if self._const_bool(condition) is not None else Ternary(condition, self._substitute(expression.t, state), self._substitute(expression.f, state))
-        if isinstance(expression, Phi):
-            condition = self._condition(expression.condition, state)
-            if self._const_bool(condition) is True:
-                return self._substitute(expression.when_true, state)
-            if self._const_bool(condition) is False:
-                return self._substitute(expression.when_false, state)
-            return Phi(condition, self._substitute(expression.when_true, state), self._substitute(expression.when_false, state))
-        if isinstance(expression, (And, Or, Not, Atom)):
-            return self._condition(expression, state)
-        return expression
+        stack = [("eval", expression, seen)]
+        values = []
+        while stack:
+            frame = stack.pop()
+            kind = frame[0]
+            if kind == "build_call":
+                name, count = frame[1], frame[2]
+                args = tuple(values[-count:]) if count else ()
+                if count:
+                    del values[-count:]
+                values.append(CallE(name, args))
+                continue
+            if kind == "build_unary":
+                values.append(self._fold(Unary(frame[1], values.pop())))
+                continue
+            if kind == "build_member":
+                values.append(MemberE(values.pop(), frame[1]))
+                continue
+            if kind == "build_index":
+                index, base = values.pop(), values.pop()
+                values.append(Index(base, index))
+                continue
+            if kind == "build_binop":
+                right, left = values.pop(), values.pop()
+                values.append(self._fold(Binop(frame[1], left, right)))
+                continue
+            if kind == "build_cast":
+                values.append(Cast(frame[1], values.pop()))
+                continue
+            if kind == "build_ternary":
+                false, true = values.pop(), values.pop()
+                values.append(Ternary(frame[1], true, false))
+                continue
+            if kind == "build_phi":
+                false, true = values.pop(), values.pop()
+                values.append(Phi(frame[1], true, false))
+                continue
+
+            current, current_seen = frame[1], frame[2]
+            if current is None or isinstance(current, (Const, Unknown)):
+                values.append(current)
+                continue
+            if isinstance(current, Ref):
+                key = self._path(current)
+                if key in state.unknown:
+                    values.append(Unknown(key))
+                    continue
+                value = state.values.get(key)
+                if value is None or key in current_seen:
+                    values.append(current)
+                else:
+                    stack.append(("eval", value, current_seen + (key,)))
+                continue
+            if isinstance(current, Unary) and current.op == "*":
+                values.append(self._load_targets(self._pointer_targets(current.x, state, current_seen), state, current_seen))
+                continue
+            if isinstance(current, MemberE):
+                targets = self._member_targets(current, state, current_seen)
+                if targets is not None:
+                    values.append(self._load_targets(targets, state, current_seen))
+                    continue
+            if isinstance(current, Index):
+                targets = self._index_targets(current, state, current_seen)
+                if targets is not None:
+                    values.append(self._load_targets(targets, state, current_seen))
+                    continue
+            path = self._path(current)
+            if path and (path in self._leaves or path in state.values):
+                stack.append(("eval", Ref(path), current_seen))
+                continue
+            if isinstance(current, CallE):
+                stack.append(("build_call", current.name, len(current.args)))
+                for arg in reversed(current.args):
+                    stack.append(("eval", arg, current_seen))
+                continue
+            if isinstance(current, Unary):
+                stack.append(("build_unary", current.op))
+                stack.append(("eval", current.x, current_seen))
+                continue
+            if isinstance(current, MemberE):
+                stack.append(("build_member", current.name))
+                stack.append(("eval", current.base, current_seen))
+                continue
+            if isinstance(current, Index):
+                stack.append(("build_index",))
+                stack.append(("eval", current.idx, current_seen))
+                stack.append(("eval", current.base, current_seen))
+                continue
+            if isinstance(current, Binop):
+                stack.append(("build_binop", current.op))
+                stack.append(("eval", current.r, current_seen))
+                stack.append(("eval", current.l, current_seen))
+                continue
+            if isinstance(current, Cast):
+                stack.append(("build_cast", current.type_name))
+                stack.append(("eval", current.x, current_seen))
+                continue
+            if isinstance(current, Ternary):
+                condition = self._condition(current.c, state, current_seen)
+                outcome = self._const_bool(condition)
+                if outcome is not None:
+                    stack.append(("eval", current.t if outcome else current.f, current_seen))
+                else:
+                    stack.append(("build_ternary", condition))
+                    stack.append(("eval", current.f, current_seen))
+                    stack.append(("eval", current.t, current_seen))
+                continue
+            if isinstance(current, Phi):
+                condition = self._condition(current.condition, state, current_seen)
+                outcome = self._const_bool(condition)
+                if outcome is True:
+                    stack.append(("eval", current.when_true, current_seen))
+                elif outcome is False:
+                    stack.append(("eval", current.when_false, current_seen))
+                else:
+                    stack.append(("build_phi", condition))
+                    stack.append(("eval", current.when_false, current_seen))
+                    stack.append(("eval", current.when_true, current_seen))
+                continue
+            if isinstance(current, (And, Or, Not, Atom)):
+                values.append(self._condition(current, state, current_seen))
+                continue
+            values.append(current)
+        return values.pop()
 
     def _path(self, expression):
         if isinstance(expression, Ref):

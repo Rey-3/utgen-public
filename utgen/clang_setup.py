@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from clang.cindex import Config
@@ -20,7 +21,11 @@ def configure_libclang(path: str | None = None) -> None:
     global _configured
     if _configured:
         return
-    candidate = Path(path or os.environ.get("LIBCLANG_PATH") or DEFAULT_LIBCLANG)
+    bundle_dir = getattr(sys, "_MEIPASS", None)
+    bundled = [] if not bundle_dir else [Path(bundle_dir) / "clang" / "bin" / "libclang.dll",
+                                          Path(bundle_dir) / "libclang.dll"]
+    candidate = Path(path or next((item for item in bundled if item.exists()),
+                                  os.environ.get("LIBCLANG_PATH") or DEFAULT_LIBCLANG))
     if candidate.is_dir():
         candidate = candidate / "libclang.dll"
     if not candidate.exists():

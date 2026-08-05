@@ -15,7 +15,7 @@ import os
 from clang.cindex import Cursor, CursorKind, TypeKind
 
 from utgen.model import CType, Direction, StubInfo, Variable
-from utgen.typegraph import LeafDeriver, TypeGraph
+from utgen.typegraph import LeafDeriver, TypeGraph, clean_name
 
 DEFAULT_NO_STUB = ("memcpy", "memset", "memcmp", "abs")
 
@@ -78,7 +78,7 @@ class StubFinder:
         ret_ctype, ret_struct = self._return_of(callee)
         params = []
         for param in callee.get_arguments():
-            params.append((param.type.spelling, param.spelling))
+            params.append((self._stub_type_name(param.type), param.spelling))
         return StubInfo(name, ret_ctype, ret_struct, params)
 
     def _return_of(self, callee: Cursor) -> tuple[CType | None, str | None]:
@@ -88,8 +88,15 @@ class StubFinder:
         if member.kind in ("scalar", "enum", "pointer"):
             enum = self.graph.enums.get(member.type_name)
             values = enum.values if enum else ()
-            return CType(member.type_name, member.len_bits, member.signed, values), None
+            name = clean_name(callee.result_type.get_canonical().spelling) if member.kind == "scalar" else member.type_name
+            return CType(name, member.len_bits, member.signed, values), None
         return None, None                       # void / unsupported
+
+    def _stub_type_name(self, ctype) -> str:
+        member = self.graph.describe(ctype, "")
+        if member.kind == "scalar":
+            return clean_name(ctype.get_canonical().spelling)
+        return ctype.spelling
 
     def _tessy_leaves(self, name: str, callee: Cursor) -> list:
         if callee.result_type.get_canonical().kind == TypeKind.VOID:
