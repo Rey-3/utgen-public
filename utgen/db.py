@@ -165,8 +165,8 @@ class XmlDbWriter:
             self._global(root, variable)
         for function in analysis.functions:
             self._function(root, function)
-        ET.indent(root, space="    ")
-        payload = ET.tostring(root, encoding="utf-8")
+        _indent_xml(root, space="    ")
+        payload = _serialize_xml(root)
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b'<?xml version="1.0" encoding="utf-8"?>\n' + payload + b"\n")
@@ -726,146 +726,346 @@ def _child_expr(parent, tag, variables):
 
 
 def _write_expr(parent, expression):
-    if expression is None:
-        ET.SubElement(parent, "None")
-        return
-    if isinstance(expression, Ref):
-        attrs = {"path": expression.path}
-        if expression.scope:
-            attrs["scope"] = expression.scope
-        ET.SubElement(parent, "Ref", **attrs)
-        return
-    if isinstance(expression, Const):
-        ET.SubElement(parent, "Const", value=str(expression.value),
-                      type=expression.type_name or ("str" if isinstance(expression.value, str) else "int"))
-        return
-    if isinstance(expression, Unary):
-        element = ET.SubElement(parent, "Unary", op=expression.op)
-        _write_expr(element, expression.x)
-        return
-    if isinstance(expression, Binop):
-        element = ET.SubElement(parent, "Binop", op=expression.op)
-        _write_expr(element, expression.l)
-        _write_expr(element, expression.r)
-        return
-    if isinstance(expression, CallE):
-        element = ET.SubElement(parent, "Call", name=expression.name)
-        for argument in expression.args:
-            item = ET.SubElement(element, "Arg")
-            _write_expr(item, argument)
-        return
-    if isinstance(expression, Ternary):
-        attrs = {"decision": str(expression.decision_id)} if expression.decision_id else {}
-        element = ET.SubElement(parent, "Ternary", **attrs)
-        for tag, value in (("Condition", expression.c), ("Then", expression.t), ("Else", expression.f)):
-            item = ET.SubElement(element, tag)
-            _write_expr(item, value)
-        return
-    if isinstance(expression, Cast):
-        element = ET.SubElement(parent, "Cast", type=expression.type_name)
-        _write_expr(element, expression.x)
-        return
-    if isinstance(expression, Index):
-        element = ET.SubElement(parent, "Index")
-        for tag, value in (("Base", expression.base), ("Index", expression.idx)):
-            item = ET.SubElement(element, tag)
-            _write_expr(item, value)
-        return
-    if isinstance(expression, MemberE):
-        element = ET.SubElement(parent, "Member", name=expression.name)
-        _write_expr(element, expression.base)
-        return
-    if isinstance(expression, Phi):
-        element = ET.SubElement(parent, "Phi")
-        for tag, value in (("Condition", expression.condition), ("True", expression.when_true),
-                           ("False", expression.when_false)):
-            item = ET.SubElement(element, tag)
-            _write_node(item, value)
-        return
-    ET.SubElement(parent, "Unknown", text=getattr(expression, "text", str(expression)))
+    """Write an expression without recursive Python calls."""
+    _write_node(parent, expression)
 
 
 def _write_node(parent, node):
-    if node is None:
-        ET.SubElement(parent, "None")
-        return
-    if isinstance(node, (Atom, And, Or, Not)):
-        if isinstance(node, Atom):
-            attrs = {"op": str(node.op), "text": node.text}
-            if node.var is not None:
-                attrs["var"] = node.var.name
-            if node.rhs is not None:
-                attrs["rhs"] = str(node.rhs)
-            if node.rhs_var is not None:
-                attrs["rhs_var"] = node.rhs_var.name
-            ET.SubElement(parent, "Atom", **attrs)
-            return
-        tag = "And" if isinstance(node, And) else "Or" if isinstance(node, Or) else "Not"
-        element = ET.SubElement(parent, tag)
-        children = node.children if isinstance(node, (And, Or)) else (node.child,)
-        for child in children:
-            _write_node(element, child)
-        return
-    _write_expr(parent, node)
+    """Write a node iteratively so deeply nested expressions are supported."""
+    stack = [(parent, node)]
 
+    while stack:
+        current_parent, current = stack.pop()
+
+        if current is None:
+            ET.SubElement(current_parent, "None")
+            continue
+
+        if isinstance(current, Atom):
+            attrs = {"op": str(current.op), "text": current.text}
+            if current.var is not None:
+                attrs["var"] = current.var.name
+            if current.rhs is not None:
+                attrs["rhs"] = str(current.rhs)
+            if current.rhs_var is not None:
+                attrs["rhs_var"] = current.rhs_var.name
+            ET.SubElement(current_parent, "Atom", **attrs)
+            continue
+
+        if isinstance(current, (And, Or, Not)):
+            tag = "And" if isinstance(current, And) else "Or" if isinstance(current, Or) else "Not"
+            element = ET.SubElement(current_parent, tag)
+            children = current.children if isinstance(current, (And, Or)) else (current.child,)
+            for child in reversed(children):
+                stack.append((element, child))
+            continue
+
+        if isinstance(current, Ref):
+            attrs = {"path": current.path}
+            if current.scope:
+                attrs["scope"] = current.scope
+            ET.SubElement(current_parent, "Ref", **attrs)
+            continue
+
+        if isinstance(current, Const):
+            ET.SubElement(
+                current_parent,
+                "Const",
+                value=str(current.value),
+                type=current.type_name or ("str" if isinstance(current.value, str) else "int"),
+            )
+            continue
+
+        if isinstance(current, Unary):
+            element = ET.SubElement(current_parent, "Unary", op=current.op)
+            stack.append((element, current.x))
+            continue
+
+        if isinstance(current, Binop):
+            element = ET.SubElement(current_parent, "Binop", op=current.op)
+            # Stack is LIFO, so push right before left to preserve XML order.
+            stack.append((element, current.r))
+            stack.append((element, current.l))
+            continue
+
+        if isinstance(current, CallE):
+            element = ET.SubElement(current_parent, "Call", name=current.name)
+            items = [ET.SubElement(element, "Arg") for _ in current.args]
+            for item, argument in reversed(list(zip(items, current.args))):
+                stack.append((item, argument))
+            continue
+
+        if isinstance(current, Ternary):
+            attrs = {"decision": str(current.decision_id)} if current.decision_id else {}
+            element = ET.SubElement(current_parent, "Ternary", **attrs)
+            values = (
+                (ET.SubElement(element, "Condition"), current.c),
+                (ET.SubElement(element, "Then"), current.t),
+                (ET.SubElement(element, "Else"), current.f),
+            )
+            for item, value in reversed(values):
+                stack.append((item, value))
+            continue
+
+        if isinstance(current, Cast):
+            element = ET.SubElement(current_parent, "Cast", type=current.type_name)
+            stack.append((element, current.x))
+            continue
+
+        if isinstance(current, Index):
+            element = ET.SubElement(current_parent, "Index")
+            base = ET.SubElement(element, "Base")
+            index = ET.SubElement(element, "Index")
+            stack.append((index, current.idx))
+            stack.append((base, current.base))
+            continue
+
+        if isinstance(current, MemberE):
+            element = ET.SubElement(current_parent, "Member", name=current.name)
+            stack.append((element, current.base))
+            continue
+
+        if isinstance(current, Phi):
+            element = ET.SubElement(current_parent, "Phi")
+            values = (
+                (ET.SubElement(element, "Condition"), current.condition),
+                (ET.SubElement(element, "True"), current.when_true),
+                (ET.SubElement(element, "False"), current.when_false),
+            )
+            for item, value in reversed(values):
+                stack.append((item, value))
+            continue
+
+        # Avoid str(current): dataclass repr/str can itself recurse on a deep tree.
+        ET.SubElement(
+            current_parent,
+            "Unknown",
+            text=getattr(current, "text", type(current).__name__),
+        )
+
+
+def _indent_xml(root, space="    ", max_depth=20):
+    """Indent an ElementTree iteratively instead of using recursive ET.indent."""
+    stack = [(root, 0)]
+
+    while stack:
+        element, level = stack.pop()
+        children = list(element)
+        if not children:
+            continue
+
+        child_indent = "\n" + space * min(level + 1, max_depth)
+        closing_indent = "\n" + space * min(level, max_depth)
+
+        if not element.text or not element.text.strip():
+            element.text = child_indent
+
+        for child in children[:-1]:
+            if not child.tail or not child.tail.strip():
+                child.tail = child_indent
+
+        last = children[-1]
+        if not last.tail or not last.tail.strip():
+            last.tail = closing_indent
+
+        for child in reversed(children):
+            stack.append((child, level + 1))
+
+
+def _escape_xml_text(value):
+    text = str(value)
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _escape_xml_attr(value):
+    text = _escape_xml_text(value)
+    return (text.replace('"', "&quot;")
+                .replace("\t", "&#09;")
+                .replace("\n", "&#10;")
+                .replace("\r", "&#13;"))
+
+
+def _serialize_xml(root):
+    """Serialize XML iteratively, avoiding ElementTree's recursive serializer."""
+    parts = []
+    stack = [("start", root)]
+
+    while stack:
+        action, element = stack.pop()
+
+        if action == "end":
+            parts.append(f"</{element.tag}>")
+            if element.tail:
+                parts.append(_escape_xml_text(element.tail))
+            continue
+
+        attrs = "".join(
+            f' {name}="{_escape_xml_attr(value)}"'
+            for name, value in element.attrib.items()
+        )
+        children = list(element)
+        text = element.text or ""
+
+        if not children and not text:
+            parts.append(f"<{element.tag}{attrs} />")
+            if element.tail:
+                parts.append(_escape_xml_text(element.tail))
+            continue
+
+        parts.append(f"<{element.tag}{attrs}>")
+        if text:
+            parts.append(_escape_xml_text(text))
+
+        stack.append(("end", element))
+        for child in reversed(children):
+            stack.append(("start", child))
+
+    return "".join(parts).encode("utf-8")
 
 def _read_expr(element, variables):
     return _read_node(element, variables)
 
 
+def _xml_child_node(parent, tag):
+    wrapper = parent.find(tag)
+    return wrapper[0] if wrapper is not None and len(wrapper) else None
+
+
+def _node_children(element):
+    """Return the actual child-node elements, excluding XML wrapper tags."""
+    tag = element.tag
+
+    if tag in ("Unary", "Cast", "Member", "Not"):
+        return [element[0]] if len(element) else []
+
+    if tag == "Binop":
+        return list(element[:2])
+
+    if tag == "Call":
+        return [item[0] for item in element.findall("Arg") if len(item)]
+
+    if tag == "Ternary":
+        return [
+            child for child in (
+                _xml_child_node(element, "Condition"),
+                _xml_child_node(element, "Then"),
+                _xml_child_node(element, "Else"),
+            ) if child is not None
+        ]
+
+    if tag == "Index":
+        return [
+            child for child in (
+                _xml_child_node(element, "Base"),
+                _xml_child_node(element, "Index"),
+            ) if child is not None
+        ]
+
+    if tag == "Phi":
+        return [
+            child for child in (
+                _xml_child_node(element, "Condition"),
+                _xml_child_node(element, "True"),
+                _xml_child_node(element, "False"),
+            ) if child is not None
+        ]
+
+    if tag in ("And", "Or"):
+        return list(element)
+
+    return []
+
+
 def _read_node(element, variables):
+    """Read a node iteratively so deeply nested XML expressions are supported."""
     if element is None:
         return None
-    tag = element.tag
-    if tag == "None":
-        return None
-    if tag == "Ref":
-        return Ref(element.get("path", ""), element.get("scope", ""))
-    if tag == "Const":
-        value = element.get("value", "")
-        kind = element.get("type", "int")
-        return Const(value if kind == "str" else int(value), "" if kind in ("int", "str") else kind)
-    if tag == "Unary":
-        return Unary(element.get("op", ""), _read_node(element[0], variables) if len(element) else None)
-    if tag == "Binop":
-        return Binop(element.get("op", ""), _read_node(element[0], variables),
-                     _read_node(element[1], variables))
-    if tag == "Call":
-        args = []
-        for item in element.findall("Arg"):
-            args.append(_read_node(item[0], variables) if len(item) else None)
-        return CallE(element.get("name", ""), tuple(args))
-    if tag == "Ternary":
-        return Ternary(_read_child_node(element, "Condition", variables),
-                       _read_child_node(element, "Then", variables),
-                       _read_child_node(element, "Else", variables),
-                       int(element.get("decision", "0")))
-    if tag == "Cast":
-        return Cast(element.get("type", ""), _read_node(element[0], variables) if len(element) else None)
-    if tag == "Index":
-        return Index(_read_child_node(element, "Base", variables),
-                     _read_child_node(element, "Index", variables))
-    if tag == "Member":
-        return MemberE(_read_node(element[0], variables) if len(element) else None,
-                       element.get("name", ""))
-    if tag == "Phi":
-        return Phi(_read_child_node(element, "Condition", variables),
-                   _read_child_node(element, "True", variables),
-                   _read_child_node(element, "False", variables))
-    if tag == "Atom":
-        rhs = element.get("rhs")
-        rhs_var = variables.get(element.get("rhs_var", ""))
-        return Atom(variables.get(element.get("var", "")), Op(element.get("op", "truthy")),
-                    int(rhs) if rhs is not None else None, rhs_var, element.get("text", ""))
-    if tag in ("And", "Or"):
-        children = []
-        for child in element:
-            children.append(_read_node(child, variables))
-        return And(tuple(children)) if tag == "And" else Or(tuple(children))
-    if tag == "Not":
-        return Not(_read_node(element[0], variables) if len(element) else None)
-    return Unknown(element.get("text", ""))
 
+    built = {}
+    stack = [(element, False)]
+
+    def value(child):
+        return built.get(id(child)) if child is not None else None
+
+    while stack:
+        current, ready = stack.pop()
+
+        if not ready:
+            stack.append((current, True))
+            for child in reversed(_node_children(current)):
+                stack.append((child, False))
+            continue
+
+        tag = current.tag
+
+        if tag == "None":
+            result = None
+        elif tag == "Ref":
+            result = Ref(current.get("path", ""), current.get("scope", ""))
+        elif tag == "Const":
+            raw = current.get("value", "")
+            kind = current.get("type", "int")
+            result = Const(raw if kind == "str" else int(raw),
+                           "" if kind in ("int", "str") else kind)
+        elif tag == "Unary":
+            child = current[0] if len(current) else None
+            result = Unary(current.get("op", ""), value(child))
+        elif tag == "Binop":
+            left = current[0] if len(current) > 0 else None
+            right = current[1] if len(current) > 1 else None
+            result = Binop(current.get("op", ""), value(left), value(right))
+        elif tag == "Call":
+            args = []
+            for item in current.findall("Arg"):
+                child = item[0] if len(item) else None
+                args.append(value(child))
+            result = CallE(current.get("name", ""), tuple(args))
+        elif tag == "Ternary":
+            result = Ternary(
+                value(_xml_child_node(current, "Condition")),
+                value(_xml_child_node(current, "Then")),
+                value(_xml_child_node(current, "Else")),
+                int(current.get("decision", "0")),
+            )
+        elif tag == "Cast":
+            child = current[0] if len(current) else None
+            result = Cast(current.get("type", ""), value(child))
+        elif tag == "Index":
+            result = Index(
+                value(_xml_child_node(current, "Base")),
+                value(_xml_child_node(current, "Index")),
+            )
+        elif tag == "Member":
+            child = current[0] if len(current) else None
+            result = MemberE(value(child), current.get("name", ""))
+        elif tag == "Phi":
+            result = Phi(
+                value(_xml_child_node(current, "Condition")),
+                value(_xml_child_node(current, "True")),
+                value(_xml_child_node(current, "False")),
+            )
+        elif tag == "Atom":
+            rhs = current.get("rhs")
+            rhs_var = variables.get(current.get("rhs_var", ""))
+            result = Atom(
+                variables.get(current.get("var", "")),
+                Op(current.get("op", "truthy")),
+                int(rhs) if rhs is not None else None,
+                rhs_var,
+                current.get("text", ""),
+            )
+        elif tag in ("And", "Or"):
+            children = tuple(value(child) for child in current)
+            result = And(children) if tag == "And" else Or(children)
+        elif tag == "Not":
+            child = current[0] if len(current) else None
+            result = Not(value(child))
+        else:
+            result = Unknown(current.get("text", ""))
+
+        built[id(current)] = result
+
+    return built[id(element)]
 
 def _read_child_node(parent, tag, variables):
     item = parent.find(tag)

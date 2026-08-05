@@ -46,7 +46,7 @@ class Interpreter:
         self.env = {}
         self.aliases = {}
         self.pointers = set()
-        self.constants = function.constants
+        self.constants = getattr(function, "constants", {}) or {}
         self.local_functions = function.local_functions
         self.decision_expr = {decision.id: decision.expr for decision in function.decisions}
         self.recording = True
@@ -164,7 +164,15 @@ class Interpreter:
         if expression is None:
             return 0
         if isinstance(expression, Const):
-            return expression.value
+            value = expression.value
+
+            # Enum names and object-like macro names may be persisted as
+            # strings in the XML database. Resolve them before evaluating
+            # arithmetic or bitwise expressions.
+            if isinstance(value, str) and value in self.constants:
+                return self.constants[value]
+
+            return value
         if isinstance(expression, Ref):
             path = self._path(expression)
             return self._read(path)
@@ -215,6 +223,11 @@ class Interpreter:
             value = self._eval(expression.x)
             if value is _UNKNOWN:
                 return _UNKNOWN
+            if (
+                expression.op in ("++", "--", "-", "~")
+                and not isinstance(value, int)
+            ):
+                return _UNKNOWN
             if expression.op in ("++", "--"):
                 value += 1 if expression.op == "++" else -1
                 self.env[self._path(expression.x)] = self._wrap(self._path(expression.x), value)
@@ -236,6 +249,15 @@ class Interpreter:
                 return 1 if left else self._truth(self._eval(expression.r))
             right = self._eval(expression.r)
             if right is _UNKNOWN or expression.op in ("/", "%") and not right:
+                return _UNKNOWN
+            if (
+                expression.op
+                in ("+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>")
+                and (
+                    not isinstance(left, int)
+                    or not isinstance(right, int)
+                )
+            ):
                 return _UNKNOWN
             return self._binop(expression.op, left, right)
         return 0
@@ -310,26 +332,45 @@ class Interpreter:
         if not atoms:
             return tuple(leaves)
         positions = {id(atom): index for index, atom in enumerate(atoms)}
-        pattern, values = [None] * len(atoms), iter(leaves)
+        pattern = [None] * len(atoms)
+        values = iter(leaves)
+        missing = object()
 
         def trace(node):
             if isinstance(node, Atom):
-                value = next(values)
+                # The runtime condition and the extracted decision expression
+                # are not always structurally identical. When fewer observed
+                # leaf outcomes are available, keep the remaining positions
+                # as None rather than raising StopIteration.
+                value = next(values, missing)
+                if value is missing:
+                    return None
                 pattern[positions[id(node)]] = value
                 return value
+
             if isinstance(node, Not):
-                return not trace(node.child)
+                value = trace(node.child)
+                return None if value is None else not value
+
             if isinstance(node, And):
                 for child in node.children:
-                    if not trace(child):
+                    value = trace(child)
+                    if value is None:
+                        return None
+                    if not value:
                         return False
                 return True
+
             if isinstance(node, Or):
                 for child in node.children:
-                    if trace(child):
+                    value = trace(child)
+                    if value is None:
+                        return None
+                    if value:
                         return True
                 return False
-            return False
+
+            return None
 
         trace(expr)
         return tuple(pattern)
