@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import product
@@ -13,6 +14,8 @@ XLS_VARIABLES_PER_SHEET = 98
 _DIRECTIONS = {"in", "out", "inout"}
 _C_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _DIMENSION = re.compile(r"\[([^]]*)\]")
+_C_BODY_FORBIDDEN = re.compile(r"[\r\n;{}]")
+_STORAGE_QUALIFIERS = {"auto", "extern", "register", "static", "typedef", "_Thread_local"}
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,14 @@ class _ValueSpec:
     function: str
     arguments: tuple[_ValueArgument, ...]
     row_count: int
+
+
+@dataclass(frozen=True)
+class _StubSpec:
+    name: str
+    return_type: str
+    return_name: str
+    argument_types: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -98,6 +109,119 @@ def _parse_value(path: Path) -> _ValueSpec:
         arguments.append(_ValueArgument(name, length, fmt, direction,
                                         pointer_text == "true", values))
     return _ValueSpec(path, function, tuple(arguments), row_count or 1)
+
+
+def _stub_text(element, path: Path, label: str) -> str:
+    text = element.text
+    if text is None or not text.strip():
+        raise ValueError(f"{path}: {label} is required")
+    if _C_BODY_FORBIDDEN.search(text):
+        raise ValueError(f"{path}: {label} contains invalid C body characters")
+    return text.strip()
+
+
+def _stub_identifier(value: str, path: Path, label: str) -> str:
+    if _C_BODY_FORBIDDEN.search(value) or not _C_IDENTIFIER.fullmatch(value):
+        raise ValueError(f"{path}: {label} must be a valid C identifier")
+    return value
+
+
+def _stub_attribute(element, name: str, path: Path, label: str) -> str:
+    value = element.get(name)
+    if value is None or not value.strip():
+        raise ValueError(f"{path}: {label} is required")
+    return _stub_identifier(value, path, label)
+
+
+def _parse_stub_file(path: Path) -> tuple[_StubSpec, ...]:
+    try:
+        root = ET.parse(path).getroot()
+    except (ET.ParseError, OSError) as error:
+        raise ValueError(f"{path}: cannot parse stub XML: {error}") from error
+    if root.tag != "function_analysis":
+        raise ValueError(f"{path}: root tag must be function_analysis")
+    called = root.find("called_functions")
+    if called is None:
+        raise ValueError(f"{path}: called_functions is required")
+    try:
+        expected_count = int(_attribute(called, "count", path))
+    except ValueError as error:
+        raise ValueError(f"{path}: called_functions count must be an integer") from error
+    functions = list(called)
+    if expected_count != len(functions):
+        raise ValueError(f"{path}: declares {expected_count} called functions but contains {len(functions)}")
+    stubs = []
+    for function in functions:
+        if function.tag != "function":
+            raise ValueError(f"{path}: called_functions child must be function")
+        name = _stub_attribute(function, "name", path, "stub name")
+        returns = []
+        arguments = []
+        for child in function:
+            if child.tag == "return":
+                returns.append(child)
+            elif child.tag == "arguments":
+                arguments.append(child)
+            else:
+                raise ValueError(f"{path}: function child must be return or arguments")
+        if len(returns) > 1 or len(arguments) > 1:
+            raise ValueError(f"{path}: duplicate stub return or arguments")
+        return_type = ""
+        return_name = ""
+        if returns:
+            return_element = returns[0]
+            type_element = return_element.find("type")
+            name_element = return_element.find("name")
+            if type_element is None or name_element is None:
+                raise ValueError(f"{path}: stub return definition is incomplete")
+            return_type = _stub_text(type_element, path, "stub return type")
+            return_name = _stub_identifier(_stub_text(name_element, path, "stub return name"), path,
+                                           "stub return name")
+        else:
+            warnings.warn(f"{path}: stub {name} is missing return data", RuntimeWarning)
+        argument_types = []
+        if arguments:
+            for argument in arguments[0]:
+                if argument.tag != "argument":
+                    raise ValueError(f"{path}: arguments child must be argument")
+                type_element = argument.find("type")
+                name_element = argument.find("name")
+                if type_element is None or name_element is None:
+                    raise ValueError(f"{path}: stub argument definition is incomplete")
+                argument_types.append(_stub_text(type_element, path, "stub argument type"))
+                _stub_text(name_element, path, "stub argument name")
+        stubs.append(_StubSpec(name, return_type, return_name, tuple(argument_types)))
+    return tuple(stubs)
+
+
+def _stub_catalog(paths: Sequence[Path]) -> tuple[_StubSpec, ...]:
+    catalog = []
+    by_name = {}
+    for path in paths:
+        for stub in _parse_stub_file(path):
+            previous = by_name.get(stub.name)
+            if previous is None:
+                by_name[stub.name] = stub
+                catalog.append(stub)
+            elif previous != stub:
+                raise ValueError(f"{path}: conflicting stub definition for {stub.name}")
+    return tuple(catalog)
+
+
+def _is_void(return_type: str) -> bool:
+    words = return_type.split()
+    while words and words[0] in _STORAGE_QUALIFIERS:
+        words.pop(0)
+    return words == ["void"]
+
+
+def _stub_body(stub: _StubSpec, value: _ValueSpec) -> str:
+    if not stub.return_type or _is_void(stub.return_type):
+        return ""
+    for argument in value.arguments:
+        if argument.name == stub.return_name or argument.name.startswith(f"{stub.return_name}.") or argument.name.startswith(f"{stub.return_name}["):
+            return f"extern {stub.return_type} {stub.return_name};\rreturn {stub.return_name};\r"
+    return f"{stub.return_type} temp = {{0}};\rreturn temp;\r"
 
 
 def _expanded_names(name: str) -> tuple[str, ...]:
