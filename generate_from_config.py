@@ -27,7 +27,10 @@ def projects_from_config():
     tessy_include = config.get("Tessy", {}).get("include", ())
     if isinstance(tessy_include, str):
         tessy_include = (tessy_include,)
-    return config["projects"], tessy_include
+    generate_excel = config.get("settings", {}).get("generate_excel", True)
+    if not isinstance(generate_excel, bool):
+        raise TypeError("settings.generate_excel must be a Boolean")
+    return config["projects"], tessy_include, generate_excel
 
 
 def elapsed(start):
@@ -100,7 +103,7 @@ def run_function(function, name, output, context):
 
 
 def run():
-    projects, include_dirs = projects_from_config()
+    projects, include_dirs, generate_excel = projects_from_config()
     TIME_LOG_PATH.write_text("", encoding="utf-8")
     indexer = ModuleIndexer({"defines": ("__GHS__",), "includes": include_dirs})
     context = mp.get_context("spawn")

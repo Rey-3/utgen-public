@@ -2,3 +2,5 @@ clang
 PyYAML
 chardet
 pytest
+openpyxl
+pywin32
