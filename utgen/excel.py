@@ -18,6 +18,9 @@ DEFAULT_TEMPLATE_PATH = Path(r"D:\TestTeamAssets\common_tools\v2\template.xlsx")
 XLSX_VARIABLE_LIMIT = 14_000
 XLS_VARIABLES_PER_SHEET = 98
 XLSX_ROW_LIMIT = 1_048_576
+XLS_ROW_LIMIT = 65_536
+XLSX_COLUMN_LIMIT = 16_384
+XLS_SHEET_NAME_LIMIT = 31
 _REQUIRED_SHEETS = ("General", "Properties", "User Code", "Stubs", "Call Trace", "Values", "Fault Injections")
 _DIRECTIONS = {"in", "out", "inout"}
 _C_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -408,13 +411,86 @@ def _validate_template(path: Path) -> None:
 
 
 def _validate_limits(spec: _ValueSpec, columns: Sequence[_Column], stubs: Sequence[_StubSpec]) -> None:
-    if len(columns) > XLSX_VARIABLE_LIMIT:
-        raise ValueError(f"{spec.path}: has {len(columns)} variables; xlsx limit is {XLSX_VARIABLE_LIMIT}")
-    testcase_limit = XLSX_ROW_LIMIT - 4
+    is_xls = len(columns) > XLSX_VARIABLE_LIMIT
+    if not is_xls and len(columns) + 1 > XLSX_COLUMN_LIMIT:
+        raise ValueError(f"{spec.path}: has {len(columns)} variables; xlsx column limit is {XLSX_COLUMN_LIMIT - 1}")
+    if is_xls:
+        names = tuple(f"Value {index}" for index, _ in enumerate(_partition_columns(columns), 1))
+        if len(set(names)) != len(names) or any(len(name) > XLS_SHEET_NAME_LIMIT for name in names):
+            raise ValueError(f"{spec.path}: xls Value sheet names must be unique and at most {XLS_SHEET_NAME_LIMIT} characters")
+    testcase_limit = (XLS_ROW_LIMIT if is_xls else XLSX_ROW_LIMIT) - 4
+    format_name = "xls" if is_xls else "xlsx"
     if spec.row_count > testcase_limit:
-        raise ValueError(f"{spec.path}: has {spec.row_count} test cases; xlsx limit is {testcase_limit}")
-    if len(stubs) > XLSX_ROW_LIMIT - 4:
-        raise ValueError(f"module has {len(stubs)} stubs; xlsx limit is {XLSX_ROW_LIMIT - 4}")
+        raise ValueError(f"{spec.path}: has {spec.row_count} test cases; {format_name} limit is {testcase_limit}")
+    if len(stubs) > testcase_limit:
+        raise ValueError(f"module has {len(stubs)} stubs; {format_name} limit is {testcase_limit}")
+
+
+def _excel_com():
+    import pythoncom
+    from win32com import client
+
+    return pythoncom, client
+
+
+def _convert_to_xls(source: Path, destination: Path) -> None:
+    source = Path(source)
+    destination = Path(destination)
+    converted = False
+    pythoncom = None
+    try:
+        pythoncom, client = _excel_com()
+        pythoncom.CoInitialize()
+        try:
+            application = None
+            workbook = None
+            try:
+                application = client.DispatchEx("Excel.Application")
+                application.Visible = False
+                application.DisplayAlerts = False
+                workbook = application.Workbooks.Open(str(source), UpdateLinks=0, ReadOnly=False)
+                workbook.SaveAs(str(destination), FileFormat=56)
+                if not destination.is_file() or not destination.stat().st_size:
+                    raise RuntimeError(f"Excel did not create a non-empty xls file: {destination}")
+                converted = True
+            finally:
+                try:
+                    if workbook is not None:
+                        workbook.Close(False)
+                finally:
+                    del workbook
+                    try:
+                        if application is not None:
+                            application.Quit()
+                    finally:
+                        del application
+        finally:
+            pythoncom.CoUninitialize()
+    finally:
+        source.unlink(missing_ok=True)
+        if not converted:
+            destination.unlink(missing_ok=True)
+
+
+def _write_values(sheet, columns: Sequence[_Column], row_count: int) -> None:
+    _extend_dimensions(sheet, 1, row_count + 2, 1, len(columns) + 1, 3, 2)
+    for index, column in enumerate(columns, 2):
+        _write_cell(sheet, 1, index, column.name, 1, 2)
+        _write_cell(sheet, 2, index, column.declaration, 2, 2)
+        for row, value in enumerate(column.values, 3):
+            _write_cell(sheet, row, index, value or None, 3, 2)
+    for row in range(3, row_count + 3):
+        _write_cell(sheet, row, 1, f"tc{row - 2}.1", 3, 2)
+
+
+def _copy_value_sheet(workbook, source, title: str):
+    sheet = workbook.copy_worksheet(source)
+    sheet.title = title
+    sheet.views = copy(source.views)
+    sheet.freeze_panes = source.freeze_panes
+    sheet.page_setup = copy(source.page_setup)
+    sheet.print_options = copy(source.print_options)
+    return sheet
 
 
 class ExcelWriter:
@@ -436,7 +512,7 @@ class ExcelWriter:
         for suffix, path in values.items():
             spec = _parse_value(path)
             columns = _plan_columns(spec)
-            destination = Path(output_directory) / f"{spec.function}.xlsx"
+            destination = Path(output_directory) / f"{spec.function}{_extension(len(columns))}"
             if destination.name in names:
                 raise RuntimeError(f"duplicate output name {destination.name}")
             names.add(destination.name)
@@ -465,21 +541,28 @@ class ExcelWriter:
 
     def _write_workbook(self, spec: _ValueSpec, columns: Sequence[_Column], stubs: Sequence[_StubSpec],
                         destination: Path) -> None:
-        temporary = None
+        temporary_xlsx = None
+        temporary_xls = None
         workbook = None
         try:
             workbook = load_workbook(self.template_path)
             values = workbook["Values"]
             properties = workbook["Properties"]
             stub_sheet = workbook["Stubs"]
-            _extend_dimensions(values, 1, spec.row_count + 2, 1, len(columns) + 1, 3, 2)
-            for index, column in enumerate(columns, 2):
-                _write_cell(values, 1, index, column.name, 1, 2)
-                _write_cell(values, 2, index, column.declaration, 2, 2)
-                for row, value in enumerate(column.values, 3):
-                    _write_cell(values, row, index, value or None, 3, 2)
-            for row in range(3, spec.row_count + 3):
-                _write_cell(values, row, 1, f"tc{row - 2}.1", 3, 2)
+            if len(columns) > XLSX_VARIABLE_LIMIT:
+                parts = _partition_columns(columns)
+                titles = tuple(f"Value {index}" for index in range(1, len(parts) + 1))
+                occupied = set(workbook.sheetnames) - {"Values"}
+                if len(set(titles)) != len(titles) or any(len(title) > XLS_SHEET_NAME_LIMIT for title in titles) or occupied.intersection(titles):
+                    raise ValueError("xls Value sheet names must be unique and at most 31 characters")
+                values.title = titles[0]
+                value_sheets = [values]
+                for title in titles[1:]:
+                    value_sheets.append(_copy_value_sheet(workbook, values, title))
+                for sheet, part in zip(value_sheets, parts):
+                    _write_values(sheet, part, spec.row_count)
+            else:
+                _write_values(values, columns, spec.row_count)
             _extend_dimensions(properties, 5, spec.row_count + 4, 1, 5, 5, 1)
             for row in range(5, spec.row_count + 5):
                 testcase = row - 4
@@ -495,16 +578,30 @@ class ExcelWriter:
                 _write_cell(stub_sheet, row, 3, stub.name, 5, 3)
                 _write_cell(stub_sheet, row, 4, _stub_body(stub, spec) or None, 5, 4)
             with tempfile.NamedTemporaryFile(dir=destination.parent, suffix=".tmp.xlsx", delete=False) as file:
-                temporary = Path(file.name)
-            workbook.save(temporary)
+                temporary_xlsx = Path(file.name)
+            workbook.save(temporary_xlsx)
             workbook.close()
             workbook = None
-            checked = load_workbook(temporary)
+            checked = load_workbook(temporary_xlsx)
             checked.close()
-            os.replace(temporary, destination)
-            temporary = None
+            if destination.suffix == ".xls":
+                with tempfile.NamedTemporaryFile(dir=destination.parent, suffix=".tmp.xls", delete=False) as file:
+                    temporary_xls = Path(file.name)
+                temporary_xls.unlink()
+                _convert_to_xls(temporary_xlsx, temporary_xls)
+                temporary_xlsx.unlink(missing_ok=True)
+                temporary_xlsx = None
+                if not temporary_xls.is_file() or not temporary_xls.stat().st_size:
+                    raise RuntimeError(f"Excel did not create a non-empty xls file: {temporary_xls}")
+                os.replace(temporary_xls, destination)
+                temporary_xls = None
+            else:
+                os.replace(temporary_xlsx, destination)
+                temporary_xlsx = None
         finally:
             if workbook is not None:
                 workbook.close()
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
+            if temporary_xlsx is not None:
+                temporary_xlsx.unlink(missing_ok=True)
+            if temporary_xls is not None:
+                temporary_xls.unlink(missing_ok=True)
