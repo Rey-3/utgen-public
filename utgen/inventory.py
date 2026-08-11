@@ -6,11 +6,30 @@ entities become leaves and with which direction.
 """
 from __future__ import annotations
 
+import re
+
 from clang.cindex import Cursor, CursorKind, TypeKind
 
 from utgen.model import CType, Direction, Inventory, Variable
 from utgen.stubs import DEFAULT_NO_STUB, StubFinder
 from utgen.typegraph import LeafDeriver, TypeGraph
+
+
+_INDEX = re.compile(r"\[[^\]]*\]")
+
+
+class _Inventory(Inventory):
+    """Inventory whose declared array leaves can be found by concrete index."""
+
+    def find(self, name: str) -> Variable | None:
+        variable = super().find(name)
+        if variable is not None:
+            return variable
+        normalized = _INDEX.sub("", name)
+        for variable in self.variables:
+            if _INDEX.sub("", variable.name) == normalized:
+                return variable
+        return None
 
 
 class InventoryBuilder:
@@ -48,7 +67,7 @@ class InventoryBuilder:
             variables.extend(self.deriver.leaves(member, Direction.IN))
         stubs, stub_vars = self.stub_finder.find(func_cursor)
         variables.extend(stub_vars)
-        return Inventory(variables, stubs)
+        return _Inventory(variables, stubs)
 
     @staticmethod
     def _pointer_address(param) -> Variable | None:

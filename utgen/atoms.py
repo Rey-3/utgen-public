@@ -37,6 +37,7 @@ class CopyPropagation:
         self._member_bindings: dict[str, Cursor | None] = {}
         self._locals: set[str] = set()
         self._loop_written: set[str] = set()
+        self._static_member_paths: set[str] = set()
 
     def record(self, stmt_cursor: Cursor) -> None:
         """Record declarations and assignments appearing before a condition."""
@@ -54,7 +55,7 @@ class CopyPropagation:
             for child in stmt_cursor.get_children():
                 if child.kind == CursorKind.VAR_DECL:
                     key = _cursor_key(child)
-                    if key and not _is_static(child):
+                    if key:
                         self._locals.add(key)
                     init = _last_non_type_child(child)
                     if init is not None:
@@ -135,21 +136,27 @@ class CopyPropagation:
     def snapshot(self):
         """Capture bindings before taking a control-flow branch."""
         return (self._bindings.copy(), self._member_bindings.copy(), self._locals.copy(),
-                self._loop_written.copy())
+                self._loop_written.copy(), self._static_member_paths.copy())
 
     def restore(self, state) -> None:
         """Restore a previously captured binding state."""
         self._bindings, self._member_bindings, self._locals, self._loop_written = (
             state[0].copy(), state[1].copy(), state[2].copy(), state[3].copy())
+        self._static_member_paths = state[4].copy()
 
     def merge(self, *states):
         """Keep only bindings unchanged on every reachable branch."""
         if not states:
             return self.snapshot()
-        return (_common_bindings(*(state[0] for state in states)),
-                _common_bindings(*(state[1] for state in states)),
-                set().union(*(state[2] for state in states)),
-                set().union(*(state[3] for state in states)))
+        bindings = _common_bindings(*(state[0] for state in states))
+        members = _common_bindings(*(state[1] for state in states))
+        static_paths = set().union(*(state[4] for state in states))
+        for state in states:
+            for path in static_paths:
+                if path in state[1]:
+                    members.setdefault(path, state[1][path])
+        return (bindings, members, set().union(*(state[2] for state in states)),
+                set().union(*(state[3] for state in states)), static_paths)
 
     def _set(self, lhs: Cursor, rhs: Cursor | None) -> None:
         key = _cursor_key(lhs)
@@ -158,6 +165,8 @@ class CopyPropagation:
         path = _raw_path(lhs)
         if path and self._is_local(lhs):
             self._member_bindings[path] = rhs
+            if _is_static(lhs):
+                self._static_member_paths.add(path)
 
     def _is_local(self, cursor: Cursor) -> bool:
         return (_cursor_key(_root(cursor)) or "") in self._locals
