@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<function name="CanApp_DTCTimeoutHandling" file="">
+    <argument name="CAN_DTCInfo[3].TimeoutCnt" len="17" format="DTC_Timeout_t[3]" direction="inout" pointer="false" range="0,65535,0,0,0,0,1,0" testmethod="decision" />
+    <argument name="CAN_DTCInfo[3].RecoverCnt" len="17" format="DTC_Timeout_t[3]" direction="inout" pointer="false" range="0,0,0,65535,0,0,0,0" testmethod="decision" />
+    <argument name="CAN_DTCInfo[3].TimeoutStat" len="9" format="DTC_Timeout_t[3]" direction="inout" pointer="false" range="0,0,0,0,1,0,0,1" testmethod="decision" />
+    <argument name="CanRxPeriod[3]" len="16" format="unsigned" direction="in" pointer="false" range="0,0,1,1,1,1,1,65535" testmethod="decision" />
+    <argument name="CanRxRecoveryPeriodTolerance[3]" len="16" format="unsigned" direction="in" pointer="false" range="0,0,0,0,0,0,0,0" testmethod="decision" />
+    <argument name="CanRxTimeoutTime[3]" len="16" format="unsigned" direction="in" pointer="false" range="0,0,0,0,0,65535,0,0" testmethod="decision" />
+</function>

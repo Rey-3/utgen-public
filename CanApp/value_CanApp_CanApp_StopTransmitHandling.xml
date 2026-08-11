@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<function name="CanApp_StopTransmitHandling" file="">
+    <argument name="CAN_KL30CAN_VoltageAbnormal" len="8" format="unsigned" direction="in" pointer="false" range="0,0,0,0,1,0,0,0" testmethod="decision" />
+    <argument name="CAN_BUSOFF_RecoverMode" len="2" format="CANRecoverMode_e" direction="in" pointer="false" range="CAN_BUSOFF_NOW_NORMAL_MODE,CAN_BUSOFF_NOW_NORMAL_MODE,CAN_BUSOFF_NOW_NORMAL_MODE,CAN_BUSOFF_NOW_NORMAL_MODE,CAN_BUSOFF_NOW_NORMAL_MODE,CAN_BUSOFF_NOW_FAST_RECOVERY_MODE,CAN_BUSOFF_NOW_NORMAL_MODE,CAN_BUSOFF_NOW_NORMAL_MODE" testmethod="decision" />
+    <argument name="CanApp_StopTransmitHandling::CAN_AckTimeoutTimer#1" len="8" format="unsigned" direction="in" pointer="false" range="0,0,255,255,0,0,0,255" testmethod="decision" />
+    <argument name="CanApp_StopTransmitHandling::CAN_AckRecoverTimer#1" len="8" format="unsigned" direction="in" pointer="false" range="0,0,0,0,0,0,149,149" testmethod="decision" />
+    <argument name="tessy_can_getProtocolStatus" len="32" format="unsigned" direction="in" pointer="false" range="0,1024,1024,0,0,0,0,1024" testmethod="decision" />
+    <argument name="tessy_can_getProtocolStatus__Arg0" len="2" format="CAN_CHANNEL_TYPE" direction="out" pointer="false" />
+</function>

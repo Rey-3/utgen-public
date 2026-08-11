@@ -1,0 +1,14 @@
+<?xml version='1.0' encoding='utf-8'?>
+<function_analysis function_name="CanApp_Init" file="" line="94">
+  <called_functions count="2">
+    <function name="GetFunction" file="" line="" />
+    <function name="RTE_SET_TIMEOUTMONITOR_ENABLE" file="" line="">
+      <arguments>
+        <argument type="uint8" name="handler">
+          <type>uint8</type>
+          <name>tessy_RTE_SET_TIMEOUTMONITOR_ENABLE__Arg0</name>
+        </argument>
+      </arguments>
+    </function>
+  </called_functions>
+</function_analysis>

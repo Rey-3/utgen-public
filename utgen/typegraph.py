@@ -107,6 +107,8 @@ class TypeGraph:
         members = []
         for field in canon.get_fields():
             width = field.get_bitfield_width() if field.is_bitfield() else None
+            if field.is_bitfield() and not field.spelling:
+                continue                              # unnamed padding bitfield
             # Anonymous members carry clang's "(anonymous at ...)" spelling —
             # normalize to "" so the deriver skips the path level (D8).
             field_name = field.spelling

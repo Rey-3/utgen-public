@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<function name="CanApp_Init" file="">
+    <argument name="CAN_BussOffCnt" len="8" format="unsigned" direction="out" pointer="false" />
+    <argument name="CAN_DTCInfo[3].TimeoutCnt" len="17" format="DTC_Timeout_t[3]" direction="out" pointer="false" />
+    <argument name="CAN_DTCInfo[3].RecoverCnt" len="17" format="DTC_Timeout_t[3]" direction="out" pointer="false" />
+    <argument name="CAN_DTCInfo[3].TimeoutStat" len="9" format="DTC_Timeout_t[3]" direction="out" pointer="false" />
+    <argument name="CAN_PrevRxEnabled" len="8" format="unsigned" direction="out" pointer="false" />
+    <argument name="CAN_PrevTxEnabled" len="8" format="unsigned" direction="out" pointer="false" />
+    <argument name="CAN_BUSOFF_FastToSlowCounter" len="8" format="unsigned" direction="out" pointer="false" />
+    <argument name="CAN_BUSOFF_RecoverTime" len="16" format="unsigned" direction="out" pointer="false" />
+    <argument name="CAN_BufOff_RecoverDebounceCnt" len="16" format="unsigned" direction="out" pointer="false" />
+    <argument name="CAN_KL30CAN_VoltageAbnormal" len="8" format="unsigned" direction="out" pointer="false" />
+    <argument name="CAN_AppTxDelayCnt" len="8" format="unsigned" direction="out" pointer="false" />
+</function>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<function name="AppM_main_1ms" file="">
+    <argument name="tessy_Rte_Public_HwAbs_SystemTimerInfo_GetMsg.Timer_1ms" len="2" format="HwAbs_SystemTimer_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_Public_HwAbs_SystemTimerInfo_GetMsg.Timer_10ms" len="2" format="HwAbs_SystemTimer_t" direction="in" pointer="false" range="0,1" testmethod="decision" />
+    <argument name="tessy_Rte_Public_HwAbs_SystemTimerInfo_GetMsg.Timer_100ms" len="2" format="HwAbs_SystemTimer_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_Public_HwAbs_SystemTimerInfo_GetMsg.Timer_1s" len="2" format="HwAbs_SystemTimer_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+</function>

@@ -1,0 +1,25 @@
+<?xml version='1.0' encoding='utf-8'?>
+<function_analysis function_name="CanApp_CANTransmit" file="" line="229">
+  <called_functions count="1">
+    <function name="can_transmit" file="" line="">
+      <return type="Std_ReturnType" name="can_transmit">
+        <type>Std_ReturnType</type>
+        <name>tessy_can_transmit</name>
+      </return>
+      <arguments>
+        <argument type="CAN_CHANNEL_TYPE" name="ch">
+          <type>CAN_CHANNEL_TYPE</type>
+          <name>tessy_can_transmit__Arg0</name>
+        </argument>
+        <argument type="CAN_MSG_PAYLOAD_TYPE *" name="payload">
+          <type>CAN_MSG_PAYLOAD_TYPE *</type>
+          <name>tessy_can_transmit__Arg1</name>
+        </argument>
+        <argument type="CAN_TX_CALLBACK" name="IntCallback">
+          <type>CAN_TX_CALLBACK</type>
+          <name>tessy_can_transmit__Arg2</name>
+        </argument>
+      </arguments>
+    </function>
+  </called_functions>
+</function_analysis>

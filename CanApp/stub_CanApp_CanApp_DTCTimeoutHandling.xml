@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<function_analysis function_name="CanApp_DTCTimeoutHandling" file="" line="308">
+  <called_functions count="2">
+    <function name="GetFunction" file="" line="" />
+    <function name="RxCallback" file="" line="" />
+  </called_functions>
+</function_analysis>

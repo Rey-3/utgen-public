@@ -1,0 +1,38 @@
+<?xml version='1.0' encoding='utf-8'?>
+<function_analysis function_name="CanAppBusOffHandling" file="" line="445">
+  <called_functions count="4">
+    <function name="can_setMode" file="" line="">
+      <arguments>
+        <argument type="CAN_CHANNEL_TYPE" name="ch">
+          <type>CAN_CHANNEL_TYPE</type>
+          <name>tessy_can_setMode__Arg0</name>
+        </argument>
+        <argument type="CAN_MODE_TYPE" name="mode">
+          <type>CAN_MODE_TYPE</type>
+          <name>tessy_can_setMode__Arg1</name>
+        </argument>
+      </arguments>
+    </function>
+    <function name="can_getBusOffStatus" file="" line="">
+      <return type="uint8" name="can_getBusOffStatus">
+        <type>uint8</type>
+        <name>tessy_can_getBusOffStatus</name>
+      </return>
+      <arguments>
+        <argument type="CAN_CHANNEL_TYPE" name="ch">
+          <type>CAN_CHANNEL_TYPE</type>
+          <name>tessy_can_getBusOffStatus__Arg0</name>
+        </argument>
+      </arguments>
+    </function>
+    <function name="CanApp_RollingCounterRecalculate" file="" line="" />
+    <function name="can_busoffReset" file="" line="">
+      <arguments>
+        <argument type="CAN_CHANNEL_TYPE" name="ch">
+          <type>CAN_CHANNEL_TYPE</type>
+          <name>tessy_can_busoffReset__Arg0</name>
+        </argument>
+      </arguments>
+    </function>
+  </called_functions>
+</function_analysis>

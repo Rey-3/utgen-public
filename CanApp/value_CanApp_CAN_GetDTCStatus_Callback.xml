@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<function name="CAN_GetDTCStatus_Callback" file="">
+    <argument name="MsgIndex" len="16" format="unsigned" direction="in" pointer="false" range="0" testmethod="decision" />
+    <argument name="CAN_GetDTCStatus_Callback()" len="8" format="unsigned" direction="out" pointer="false" />
+    <argument name="CAN_DTCInfo[3].TimeoutCnt" len="17" format="DTC_Timeout_t[3]" direction="in" pointer="false" range="0" testmethod="decision" />
+    <argument name="CAN_DTCInfo[3].RecoverCnt" len="17" format="DTC_Timeout_t[3]" direction="in" pointer="false" range="0" testmethod="decision" />
+    <argument name="CAN_DTCInfo[3].TimeoutStat" len="9" format="DTC_Timeout_t[3]" direction="in" pointer="false" range="0" testmethod="decision" />
+</function>

@@ -1,0 +1,32 @@
+<?xml version='1.0' encoding='utf-8'?>
+<function_analysis function_name="CanApp_CommunicationControlHandling" file="" line="244">
+  <called_functions count="9">
+    <function name="RTE_CAN_RxControl_DisableApp" file="" line="" />
+    <function name="RTE_CAN_RxControl_DisableErrorHandling" file="" line="" />
+    <function name="RTE_CAN_RxControl_EnableApp" file="" line="" />
+    <function name="RTE_CAN_RxControl_EnableErrorHandling" file="" line="" />
+    <function name="RTE_CAN_GET_TIMEOUTSTAT" file="" line="">
+      <return type="uint8" name="RTE_CAN_GET_TIMEOUTSTAT">
+        <type>uint8</type>
+        <name>tessy_RTE_CAN_GET_TIMEOUTSTAT</name>
+      </return>
+      <arguments>
+        <argument type="uint8" name="MsgIndex">
+          <type>uint8</type>
+          <name>tessy_RTE_CAN_GET_TIMEOUTSTAT__Arg0</name>
+        </argument>
+      </arguments>
+    </function>
+    <function name="RTE_CAN_RESET_TIMEOUT_STATUS" file="" line="">
+      <arguments>
+        <argument type="uint8" name="MsgIndex">
+          <type>uint8</type>
+          <name>tessy_RTE_CAN_RESET_TIMEOUT_STATUS__Arg0</name>
+        </argument>
+      </arguments>
+    </function>
+    <function name="RTE_CAN_TxControl_EnableApp" file="" line="" />
+    <function name="CanApp_Transmit_BufferUpdate" file="" line="" />
+    <function name="RTE_CAN_TxControl_DisableApp" file="" line="" />
+  </called_functions>
+</function_analysis>

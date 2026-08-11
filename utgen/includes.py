@@ -78,7 +78,7 @@ class IncludeScanner:
                         continue
                     include_path = match.group(1).replace("\\", os.sep)
                     names.append(os.path.basename(include_path))
-                    if os.sep in include_path:
+                    if "/" in include_path or "\\" in include_path:
                         self.include_full_paths.append(include_path)
         except OSError as e:
             print(f"Error parsing {source_file}: {e}")

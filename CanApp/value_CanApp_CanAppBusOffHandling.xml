@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<function name="CanAppBusOffHandling" file="">
+    <argument name="CAN_BussOffCnt" len="8" format="unsigned" direction="inout" pointer="false" range="0,255,0,0,0,0,0,0,0,0,0,0,0,0,0" testmethod="decision" />
+    <argument name="CAN_BUSOFF_RecoverMode" len="2" format="CANRecoverMode_e" direction="inout" pointer="false" range="CAN_BUSOFF_NOW_NORMAL_MODE,CAN_BUSOFF_NOW_NORMAL_MODE,CAN_BUSOFF_NOW_FAST_RECOVERY_MODE,CAN_BUSOFF_NOW_FAST_RECOVERY_MODE,CAN_BUSOFF_NOW_FAST_RECOVERY_MODE,CAN_BUSOFF_NOW_FAST_RECOVERY_MODE,CAN_BUSOFF_NOW_FAST_RECOVERY_MODE,CAN_BUSOFF_NOW_SLOW_RECOVERY_MODE,CAN_BUSOFF_NOW_SLOW_RECOVERY_MODE,CAN_BUSOFF_NOW_SLOW_RECOVERY_MODE,CAN_BUSOFF_NOW_SLOW_RECOVERY_MODE,CAN_BUSOFF_NOW_NORMAL_MODE,CAN_BUSOFF_NOW_NORMAL_MODE,CAN_BUSOFF_NOW_NORMAL_MODE,CAN_BUSOFF_NOW_NORMAL_MODE" testmethod="decision" />
+    <argument name="CAN_BUSOFF_RecoverTime" len="16" format="unsigned" direction="inout" pointer="false" range="0,0,0,1,0,15,16,0,1,15,16,0,0,0,0" testmethod="decision" />
+    <argument name="CAN_BUSOFF_FastToSlowCounter" len="8" format="unsigned" direction="inout" pointer="false" range="0,0,0,0,1,0,0,0,0,0,0,0,1,0,0" testmethod="decision" />
+    <argument name="CAN_BusOffEndFlag" len="8" format="unsigned" direction="out" pointer="false" />
+    <argument name="CAN_BufOff_RecoverDebounceCnt" len="16" format="unsigned" direction="inout" pointer="false" range="0,0,0,0,0,0,0,0,0,0,0,0,0,1,2" testmethod="decision" />
+    <argument name="tessy_can_getBusOffStatus" len="8" format="unsigned" direction="in" pointer="false" range="0,0,0,0,0,0,0,0,0,0,0,1,1,0,0" testmethod="decision" />
+    <argument name="tessy_can_getBusOffStatus__Arg0" len="2" format="CAN_CHANNEL_TYPE" direction="out" pointer="false" />
+</function>

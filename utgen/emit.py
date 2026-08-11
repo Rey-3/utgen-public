@@ -59,11 +59,9 @@ class StubXmlWriter:
                                     file=_stub_path(getattr(stub, "file", "")),
                                     line=str(getattr(stub, "line", "")))
             return_type = stub.ret_ctype.name if stub.ret_ctype is not None else stub.ret_struct or "void"
-            if return_type != "void":
-                return_element = ET.SubElement(element, "return", type=return_type,
-                                               name=stub.name)
-                ET.SubElement(return_element, "type").text = return_type
-                ET.SubElement(return_element, "name").text = f"tessy_{stub.name}"
+            return_element = ET.SubElement(element, "return")
+            ET.SubElement(return_element, "type").text = return_type
+            ET.SubElement(return_element, "name").text = f"tessy_{stub.name}"
             if stub.params:
                 arguments = ET.SubElement(element, "arguments")
                 for index, (type_name, param_name) in enumerate(stub.params):
