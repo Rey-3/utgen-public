@@ -88,14 +88,16 @@ class StubFinder:
         if member.kind in ("scalar", "enum", "pointer"):
             enum = self.graph.enums.get(member.type_name)
             values = enum.values if enum else ()
-            name = clean_name(callee.result_type.get_canonical().spelling) if member.kind == "scalar" else member.type_name
+            name = member.type_name
+            if member.kind == "pointer":
+                name = clean_name(callee.result_type.spelling)
             return CType(name, member.len_bits, member.signed, values), None
         return None, None                       # void / unsupported
 
     def _stub_type_name(self, ctype) -> str:
         member = self.graph.describe(ctype, "")
         if member.kind == "scalar":
-            return clean_name(ctype.get_canonical().spelling)
+            return clean_name(ctype.spelling)
         return ctype.spelling
 
     def _tessy_leaves(self, name: str, callee: Cursor) -> list:

@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<function_analysis function_name="PDM_MOS_Core0_LightInd_StuckCloseSlfDiag" file="" line="2990">
+  <called_functions count="4">
+    <function name="Rte_PDMMOS_1_DiagApp_DTCEnableFlagCore0ASILB_Event_GetMsg" file="" line="">
+      <return>
+        <type>unsigned char</type>
+        <name>tessy_Rte_PDMMOS_1_DiagApp_DTCEnableFlagCore0ASILB_Event_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_IoHwAn_KL30VoltCore0ASILB_1ms_GetMsg" file="" line="">
+      <return>
+        <type>IoHw_KL30Volt_Type</type>
+        <name>tessy_Rte_PDMMOS_1_IoHwAn_KL30VoltCore0ASILB_1ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_IoHwAn_LoadVoltCore0ASILB_1ms_GetMsg" file="" line="">
+      <return>
+        <type>IoHw_LoadVolt_Type</type>
+        <name>tessy_Rte_PDMMOS_1_IoHwAn_LoadVoltCore0ASILB_1ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_IoHwSig_PMICResetReasonInfoCore0ASILB_1ms_GetMsg" file="" line="">
+      <return>
+        <type>IoHwSig_PMICFaultCheck_Type</type>
+        <name>tessy_Rte_PDMMOS_1_IoHwSig_PMICResetReasonInfoCore0ASILB_1ms_GetMsg</name>
+      </return>
+    </function>
+  </called_functions>
+</function_analysis>

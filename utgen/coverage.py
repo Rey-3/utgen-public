@@ -200,9 +200,8 @@ class CoverageGenerator:
 
     @staticmethod
     def _decision_inputs(function, inputs, decision_ids) -> tuple[set[str], bool]:
-        if decision_ids is None:
-            return {leaf.name for leaf in inputs}, False
-        selected = set(decision_ids)
+        selected = ({decision.id for decision in function.decisions}
+                    if decision_ids is None else set(decision_ids))
         names = set()
         for decision in function.decisions:
             if decision.id not in selected:

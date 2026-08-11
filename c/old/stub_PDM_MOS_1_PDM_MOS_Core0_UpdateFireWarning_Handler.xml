@@ -1,0 +1,101 @@
+<?xml version='1.0' encoding='utf-8'?>
+<function_analysis function_name="PDM_MOS_Core0_UpdateFireWarning_Handler" file="app_source/AppSWC/PDM/PDM_MOS_1.c" line="1131">
+  <called_functions count="14">
+    <function name="Rte_PDMMOS_1_IoHwAn_KL30VoltCore0ASILB_1ms_GetMsg" file="app_source/RTE/Rte_If/Rte_IoHwAn_PDMMOS_1.c" line="121">
+      <return>
+        <type>IoHw_KL30Volt_Type</type>
+        <name>tessy_Rte_PDMMOS_1_IoHwAn_KL30VoltCore0ASILB_1ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_IoHwAn_LoadCurrentCore0ASILB_1ms_GetMsg" file="app_source/RTE/Rte_If/Rte_IoHwAn_PDMMOS_1.c" line="233">
+      <return>
+        <type>IoHw_LoadCurrent_Type</type>
+        <name>tessy_Rte_PDMMOS_1_IoHwAn_LoadCurrentCore0ASILB_1ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_DtcApp_PDMDtcClrEventCore0ASILB_Event_GetMsg" file="app_source/RTE/Rte_If/Rte_DtcApp_PDMMOS_1.c" line="167">
+      <return>
+        <type>DtcApp_PDMDtcClearEvent_t</type>
+        <name>tessy_Rte_PDMMOS_1_DtcApp_PDMDtcClrEventCore0ASILB_Event_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_PDMMOS_2_PZCUB2FireWarningStatCore0ASILB_1ms_GetMsg" file="app_source/RTE/Rte_If/Rte_PDMMOS_2_PDMMOS_1.c" line="94">
+      <return>
+        <type>PDM_FireWarnPZCUB2Stat_Type</type>
+        <name>tessy_Rte_PDMMOS_1_PDMMOS_2_PZCUB2FireWarningStatCore0ASILB_1ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_PDMProtectionCtrl_1_PZCUFireWarnStsCore0ASILB_1ms_GetMsg" file="app_source/RTE/Rte_If/Rte_PDMProtectionCtrl_1_PDMMOS_1.c" line="177">
+      <return>
+        <type>PDM_FireWarnStat_Type</type>
+        <name>tessy_Rte_PDMMOS_1_PDMProtectionCtrl_1_PZCUFireWarnStsCore0ASILB_1ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_PDMProtectionCtrl_2_PZCUFireWarnStsCore0ASILB_1ms_GetMsg" file="app_source/RTE/Rte_If/Rte_PDMProtectionCtrl_2_PDMMOS_1.c" line="94">
+      <return>
+        <type>PDM_FireWarnStat_Type</type>
+        <name>tessy_Rte_PDMMOS_1_PDMProtectionCtrl_2_PZCUFireWarnStsCore0ASILB_1ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_PDCModeManager_SysPowerModeCore0ASILB_1ms_GetMsg" file="app_source/RTE/Rte_If/Rte_PDCModeManager_PDMMOS_1.c" line="141">
+      <return>
+        <type>PDCModeManager_SysPwrMode_Type</type>
+        <name>tessy_Rte_PDMMOS_1_PDCModeManager_SysPowerModeCore0ASILB_1ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_PDCModeManager_HwPowerModeCore0ASILB_1ms_GetMsg" file="app_source/RTE/Rte_If/Rte_PDCModeManager_PDMMOS_1.c" line="365">
+      <return>
+        <type>PDCModeManager_SysPwrMode_Type</type>
+        <name>tessy_Rte_PDMMOS_1_PDCModeManager_HwPowerModeCore0ASILB_1ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_HwAbsCANSig_PZCUVehStsCore0ASILB_1ms_GetMsg" file="app_source/RTE/Rte_If/Rte_HwAbsCANSig_PDMMOS_1.c" line="233">
+      <return>
+        <type>CANSig_PDM_PZCUVehSts_Type</type>
+        <name>tessy_Rte_PDMMOS_1_HwAbsCANSig_PZCUVehStsCore0ASILB_1ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_HwAbsCANSig_PZCUNodeLostFltCore0ASILB_1ms_GetMsg" file="app_source/RTE/Rte_If/Rte_HwAbsCANSig_PDMMOS_1.c" line="121">
+      <return>
+        <type>CANSig_PDM_BMSFault_Type</type>
+        <name>tessy_Rte_PDMMOS_1_HwAbsCANSig_PZCUNodeLostFltCore0ASILB_1ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_HwAbsCANSig_RearMotorSpeedCore0ASILB_1ms_GetMsg" file="app_source/RTE/Rte_If/Rte_HwAbsCANSig_PDMMOS_1.c" line="177">
+      <return>
+        <type>CANSig_PDM_MCURSysSts1_Type</type>
+        <name>tessy_Rte_PDMMOS_1_HwAbsCANSig_RearMotorSpeedCore0ASILB_1ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_Comm_CANBusOffStsCore0ASILB_Event_GetMsg" file="app_source/RTE/Rte_If/Rte_Comm_PDMMOS_1.c" line="101">
+      <return>
+        <type>Comm_BusOffState_Type</type>
+        <name>tessy_Rte_PDMMOS_1_Comm_CANBusOffStsCore0ASILB_Event_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_PDMProtectionCtrl_1_PZCUFireWarnStsCore0ASILB_1ms_SendMsg" file="app_source/RTE/Rte_If/Rte_PDMMOS_1_PDMProtectionCtrl_1.c" line="64">
+      <return>
+        <type>void</type>
+        <name>tessy_Rte_PDMMOS_1_PDMProtectionCtrl_1_PZCUFireWarnStsCore0ASILB_1ms_SendMsg</name>
+      </return>
+      <arguments>
+        <argument>
+          <type>PDM_FireWarnStat_Type</type>
+          <name>tessy_Rte_PDMMOS_1_PDMProtectionCtrl_1_PZCUFireWarnStsCore0ASILB_1ms_SendMsg__Arg0</name>
+        </argument>
+      </arguments>
+    </function>
+    <function name="Rte_PDMMOS_1_PDMProtectionCtrl_2_PZCUFireWarnStsCore0ASILB_1ms_SendMsg" file="app_source/RTE/Rte_If/Rte_PDMMOS_1_PDMProtectionCtrl_2.c" line="69">
+      <return>
+        <type>void</type>
+        <name>tessy_Rte_PDMMOS_1_PDMProtectionCtrl_2_PZCUFireWarnStsCore0ASILB_1ms_SendMsg</name>
+      </return>
+      <arguments>
+        <argument>
+          <type>PDM_FireWarnStat_Type</type>
+          <name>tessy_Rte_PDMMOS_1_PDMProtectionCtrl_2_PZCUFireWarnStsCore0ASILB_1ms_SendMsg__Arg0</name>
+        </argument>
+      </arguments>
+    </function>
+  </called_functions>
+</function_analysis>

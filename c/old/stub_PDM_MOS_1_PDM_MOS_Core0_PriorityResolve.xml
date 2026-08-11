@@ -1,0 +1,125 @@
+<?xml version='1.0' encoding='utf-8'?>
+<function_analysis function_name="PDM_MOS_Core0_PriorityResolve" file="app_source/AppSWC/PDM/PDM_MOS_1.c" line="907">
+  <called_functions count="15">
+    <function name="Rte_PDMMOS_1_DiagApp_Srvc31_PDMMOSCtrlCore0ASILB_Event_GetMsg" file="app_source/RTE/Rte_If/Rte_DiagApp_PDMMOS_1.c" line="405">
+      <return>
+        <type>DiagApp_MOSCtrlStat_t</type>
+        <name>tessy_Rte_PDMMOS_1_DiagApp_Srvc31_PDMMOSCtrlCore0ASILB_Event_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_DiagApp_Srvc2F_PDMMOSCtrlCore0ASILB_Event_GetMsg" file="app_source/RTE/Rte_If/Rte_DiagApp_PDMMOS_1.c" line="237">
+      <return>
+        <type>DiagApp_MOSCtrlStat_t</type>
+        <name>tessy_Rte_PDMMOS_1_DiagApp_Srvc2F_PDMMOSCtrlCore0ASILB_Event_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_DiagApp_SIDBE_PDMMosControlCore0ASILB_Event_GetMsg" file="app_source/RTE/Rte_If/Rte_DiagApp_PDMMOS_1.c" line="293">
+      <return>
+        <type>DiagApp_MOSCtrlStat_t</type>
+        <name>tessy_Rte_PDMMOS_1_DiagApp_SIDBE_PDMMosControlCore0ASILB_Event_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_DiagApp_SIDBE_IndicatorControlCore0ASILB_Event_GetMsg" file="app_source/RTE/Rte_If/Rte_DiagApp_PDMMOS_1.c" line="349">
+      <return>
+        <type>DiagApp_SrvBE_PDMLghtControl_Type</type>
+        <name>tessy_Rte_PDMMOS_1_DiagApp_SIDBE_IndicatorControlCore0ASILB_Event_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_PDMProtectionCtrl_1_ProtectionCtrlReqCore0ASILB_1ms_GetMsg" file="app_source/RTE/Rte_If/Rte_PDMProtectionCtrl_1_PDMMOS_1.c" line="121">
+      <return>
+        <type>PDM_ProtectionCtrlStat_Type</type>
+        <name>tessy_Rte_PDMMOS_1_PDMProtectionCtrl_1_ProtectionCtrlReqCore0ASILB_1ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_PDMCANCtrl_1_CANCtrlReqCore0ASILB_10ms_GetMsg" file="app_source/RTE/Rte_If/Rte_PDMCANCtrl_1_PDMMOS_1.c" line="101">
+      <return>
+        <type>PDM_CANCtrlStat_Type</type>
+        <name>tessy_Rte_PDMMOS_1_PDMCANCtrl_1_CANCtrlReqCore0ASILB_10ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_PDMLocalCtrl_1_LocalCtrlReqCore0ASILB_100ms_GetMsg" file="app_source/RTE/Rte_If/Rte_PDMLocalCtrl_1_PDMMOS_1.c" line="121">
+      <return>
+        <type>PDM_LocalCtrlStat_Type</type>
+        <name>tessy_Rte_PDMMOS_1_PDMLocalCtrl_1_LocalCtrlReqCore0ASILB_100ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_PDCModeManager_LogisticLZCUMosReqCore0ASILB_1ms_GetMsg" file="app_source/RTE/Rte_If/Rte_PDCModeManager_PDMMOS_1.c" line="197">
+      <return>
+        <type>unsigned char</type>
+        <name>tessy_Rte_PDMMOS_1_PDCModeManager_LogisticLZCUMosReqCore0ASILB_1ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_PDCModeManager_LogisticPDMMosReqCore0ASILB_1ms_GetMsg" file="app_source/RTE/Rte_If/Rte_PDCModeManager_PDMMOS_1.c" line="253">
+      <return>
+        <type>unsigned char</type>
+        <name>tessy_Rte_PDMMOS_1_PDCModeManager_LogisticPDMMosReqCore0ASILB_1ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_PDMLocalCtrl_1_IndicatorStateCore0ASILB_1ms_GetMsg" file="app_source/RTE/Rte_If/Rte_PDMLocalCtrl_1_PDMMOS_1.c" line="233">
+      <return>
+        <type>PDM_IndOperationStat_Type</type>
+        <name>tessy_Rte_PDMMOS_1_PDMLocalCtrl_1_IndicatorStateCore0ASILB_1ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_IoHwSig_LoadMosCtrlCore0ASILB_1ms_SendMsg" file="app_source/RTE/Rte_If/Rte_PDMMOS_1_IoHwSig.c" line="64">
+      <return>
+        <type>void</type>
+        <name>tessy_Rte_PDMMOS_1_IoHwSig_LoadMosCtrlCore0ASILB_1ms_SendMsg</name>
+      </return>
+      <arguments>
+        <argument>
+          <type>PDM_LoadMosType</type>
+          <name>tessy_Rte_PDMMOS_1_IoHwSig_LoadMosCtrlCore0ASILB_1ms_SendMsg__Arg0</name>
+        </argument>
+      </arguments>
+    </function>
+    <function name="Rte_PDMMOS_1_IoHwAn_LoadMosCtrlCore0ASILB_1ms_SendMsg" file="app_source/RTE/Rte_If/Rte_PDMMOS_1_IoHwAn.c" line="64">
+      <return>
+        <type>void</type>
+        <name>tessy_Rte_PDMMOS_1_IoHwAn_LoadMosCtrlCore0ASILB_1ms_SendMsg</name>
+      </return>
+      <arguments>
+        <argument>
+          <type>PDM_LoadMosType</type>
+          <name>tessy_Rte_PDMMOS_1_IoHwAn_LoadMosCtrlCore0ASILB_1ms_SendMsg__Arg0</name>
+        </argument>
+      </arguments>
+    </function>
+    <function name="Rte_PDMMOS_1_DiagApp_LoadMosCtrlCore0ASILB_1ms_SendMsg" file="app_source/RTE/Rte_If/Rte_PDMMOS_1_DiagApp.c" line="196">
+      <return>
+        <type>void</type>
+        <name>tessy_Rte_PDMMOS_1_DiagApp_LoadMosCtrlCore0ASILB_1ms_SendMsg</name>
+      </return>
+      <arguments>
+        <argument>
+          <type>PDM_LoadMosType</type>
+          <name>tessy_Rte_PDMMOS_1_DiagApp_LoadMosCtrlCore0ASILB_1ms_SendMsg__Arg0</name>
+        </argument>
+      </arguments>
+    </function>
+    <function name="Rte_PDMMOS_1_HwAbsCANSig_LoadMosCtrlCore0ASILB_1ms_SendMsg" file="app_source/RTE/Rte_If/Rte_PDMMOS_1_HwAbsCANSig.c" line="114">
+      <return>
+        <type>void</type>
+        <name>tessy_Rte_PDMMOS_1_HwAbsCANSig_LoadMosCtrlCore0ASILB_1ms_SendMsg</name>
+      </return>
+      <arguments>
+        <argument>
+          <type>PDM_LoadMosType</type>
+          <name>tessy_Rte_PDMMOS_1_HwAbsCANSig_LoadMosCtrlCore0ASILB_1ms_SendMsg__Arg0</name>
+        </argument>
+      </arguments>
+    </function>
+    <function name="Rte_PDMMOS_1_PDMLocalCtrl_1_LoadMosCtrlCore0ASILB_1ms_SendMsg" file="app_source/RTE/Rte_If/Rte_PDMMOS_1_PDMLocalCtrl_1.c" line="206">
+      <return>
+        <type>void</type>
+        <name>tessy_Rte_PDMMOS_1_PDMLocalCtrl_1_LoadMosCtrlCore0ASILB_1ms_SendMsg</name>
+      </return>
+      <arguments>
+        <argument>
+          <type>PDM_LoadMosType</type>
+          <name>tessy_Rte_PDMMOS_1_PDMLocalCtrl_1_LoadMosCtrlCore0ASILB_1ms_SendMsg__Arg0</name>
+        </argument>
+      </arguments>
+    </function>
+  </called_functions>
+</function_analysis>

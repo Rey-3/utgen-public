@@ -1,0 +1,17 @@
+<?xml version='1.0' encoding='utf-8'?>
+<function_analysis function_name="PDM_MOS_Core0_LightInd_FaultBusOffBlink" file="app_source/AppSWC/PDM/PDM_MOS_1.c" line="3512">
+  <called_functions count="2">
+    <function name="Rte_PDMMOS_1_DtcApp_CANDtcInfoCore0ASILB_1ms_GetMsg" file="app_source/RTE/Rte_If/Rte_DtcApp_PDMMOS_1.c" line="111">
+      <return>
+        <type>DtcApp_LBMSDiagDtcStat_t</type>
+        <name>tessy_Rte_PDMMOS_1_DtcApp_CANDtcInfoCore0ASILB_1ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_IoHwAn_KL30VoltCore0ASILB_1ms_GetMsg" file="app_source/RTE/Rte_If/Rte_IoHwAn_PDMMOS_1.c" line="121">
+      <return>
+        <type>IoHw_KL30Volt_Type</type>
+        <name>tessy_Rte_PDMMOS_1_IoHwAn_KL30VoltCore0ASILB_1ms_GetMsg</name>
+      </return>
+    </function>
+  </called_functions>
+</function_analysis>

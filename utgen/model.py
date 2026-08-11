@@ -406,6 +406,13 @@ class If:
     els: tuple = ()
     condition: object = None
 
+    def __post_init__(self):
+        """Accept the legacy ``If(condition, then, else, decision_id)`` order."""
+        if not isinstance(self.decision_id, int) and isinstance(self.condition, int):
+            condition, decision_id = self.decision_id, self.condition
+            object.__setattr__(self, "decision_id", decision_id)
+            object.__setattr__(self, "condition", condition)
+
 
 @dataclass(frozen=True)
 class SwitchCase:

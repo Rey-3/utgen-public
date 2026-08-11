@@ -1,0 +1,65 @@
+<?xml version='1.0' encoding='utf-8'?>
+<function_analysis function_name="PDM_MOS_Core0_SyncNvm" file="app_source/AppSWC/PDM/PDM_MOS_1.c" line="3391">
+  <called_functions count="8">
+    <function name="Rte_PDMMOS_1_NvmApp_PDM3NvmInfoCore0ASILB_Event_GetMsg" file="app_source/RTE/Rte_If/Rte_NvmApp_PDMMOS_1.c" line="233">
+      <return>
+        <type>NvmApp_PDM3Info_Type</type>
+        <name>tessy_Rte_PDMMOS_1_NvmApp_PDM3NvmInfoCore0ASILB_Event_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_DiagApp_DiagResetEventCore0ASILB_Event_GetMsg" file="app_source/RTE/Rte_If/Rte_DiagApp_PDMMOS_1.c" line="517">
+      <return>
+        <type>unsigned char</type>
+        <name>tessy_Rte_PDMMOS_1_DiagApp_DiagResetEventCore0ASILB_Event_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_IoHwSig_PwrRstStatCore0ASILB_Event_GetMsg" file="app_source/RTE/Rte_If/Rte_IoHwSig_PDMMOS_1.c" line="309">
+      <return>
+        <type>unsigned char</type>
+        <name>tessy_Rte_PDMMOS_1_IoHwSig_PwrRstStatCore0ASILB_Event_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_DiagApp_ResetCodeInfoCore0ASILB_Event_GetMsg" file="app_source/RTE/Rte_If/Rte_DiagApp_PDMMOS_1.c" line="573">
+      <return>
+        <type>Diagm_ResetVerifyCode_t</type>
+        <name>tessy_Rte_PDMMOS_1_DiagApp_ResetCodeInfoCore0ASILB_Event_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_IoHwSig_MCUResetReasonInfoCore0ASILB_Event_GetMsg" file="app_source/RTE/Rte_If/Rte_IoHwSig_PDMMOS_1.c" line="253">
+      <return>
+        <type>unsigned long</type>
+        <name>tessy_Rte_PDMMOS_1_IoHwSig_MCUResetReasonInfoCore0ASILB_Event_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_IoHwSig_PMICResetReasonInfoCore0ASILB_1ms_GetMsg" file="app_source/RTE/Rte_If/Rte_IoHwSig_PDMMOS_1.c" line="365">
+      <return>
+        <type>IoHwSig_PMICFaultCheck_Type</type>
+        <name>tessy_Rte_PDMMOS_1_IoHwSig_PMICResetReasonInfoCore0ASILB_1ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_NvmApp_PDM3NvmInfoCore0ASILB_1ms_SendMsg" file="app_source/RTE/Rte_If/Rte_PDMMOS_1_NvmApp.c" line="64">
+      <return>
+        <type>void</type>
+        <name>tessy_Rte_PDMMOS_1_NvmApp_PDM3NvmInfoCore0ASILB_1ms_SendMsg</name>
+      </return>
+      <arguments>
+        <argument>
+          <type>NvmApp_PDM3Info_Type</type>
+          <name>tessy_Rte_PDMMOS_1_NvmApp_PDM3NvmInfoCore0ASILB_1ms_SendMsg__Arg0</name>
+        </argument>
+      </arguments>
+    </function>
+    <function name="Rte_PDMMOS_1_HwAbsCANSig_PDMMOSOpenCntCore0ASILB_1ms_SendMsg" file="app_source/RTE/Rte_If/Rte_PDMMOS_1_HwAbsCANSig.c" line="394">
+      <return>
+        <type>void</type>
+        <name>tessy_Rte_PDMMOS_1_HwAbsCANSig_PDMMOSOpenCntCore0ASILB_1ms_SendMsg</name>
+      </return>
+      <arguments>
+        <argument>
+          <type>NvmApp_PDM3Info_Type</type>
+          <name>tessy_Rte_PDMMOS_1_HwAbsCANSig_PDMMOSOpenCntCore0ASILB_1ms_SendMsg__Arg0</name>
+        </argument>
+      </arguments>
+    </function>
+  </called_functions>
+</function_analysis>

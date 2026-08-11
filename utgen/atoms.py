@@ -151,10 +151,12 @@ class CopyPropagation:
         bindings = _common_bindings(*(state[0] for state in states))
         members = _common_bindings(*(state[1] for state in states))
         static_paths = set().union(*(state[4] for state in states))
-        for state in states:
-            for path in static_paths:
-                if path in state[1]:
-                    members.setdefault(path, state[1][path])
+        for path in static_paths:
+            sources = [state[1][path] for state in states if path in state[1]]
+            if sources and all(source is sources[0] for source in sources):
+                members[path] = sources[0]
+            else:
+                members.pop(path, None)
         return (bindings, members, set().union(*(state[2] for state in states)),
                 set().union(*(state[3] for state in states)), static_paths)
 

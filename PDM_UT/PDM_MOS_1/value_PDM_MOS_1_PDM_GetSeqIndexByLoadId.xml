@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<function name="PDM_GetSeqIndexByLoadId" file="">
+    <argument name="LoadIndex" len="8" format="unsigned" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="PDM_GetSeqIndexByLoadId()" len="8" format="unsigned" direction="out" pointer="false" />
+    <argument name="PDM_Core0_SequentialCloseStat[3].Load_id" len="9" format="PDM_SequentialCloseStat_Type[3]" direction="in" pointer="false" range="1,0" testmethod="decision" />
+    <argument name="PDM_Core0_SequentialCloseStat[3].Load_id_Other1" len="9" format="PDM_SequentialCloseStat_Type[3]" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SequentialCloseStat[3].Load_id_Other2" len="9" format="PDM_SequentialCloseStat_Type[3]" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SequentialCloseStat[3].ChangeToCloseTimer" len="9" format="PDM_SequentialCloseStat_Type[3]" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SequentialCloseStat[3].ChangeToCloseTimeFlg" len="9" format="PDM_SequentialCloseStat_Type[3]" direction="in" pointer="false" range="0,0" testmethod="decision" />
+</function>

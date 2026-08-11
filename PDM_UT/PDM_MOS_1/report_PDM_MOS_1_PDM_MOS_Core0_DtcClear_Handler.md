@@ -1,0 +1,32 @@
+# UTGen report: PDM_MOS_Core0_DtcClear_Handler
+
+- Function: `PDM_MOS_Core0_DtcClear_Handler`
+- File: ``
+- Test cases: 14
+- Coverage: 13 decisions; MC/DC=14
+
+| id | kind | description | expected outputs |
+|---:|---|---|---|
+| 1 | MC/DC | decision 1 = False; decision 1 = True; decision 2 = False; decision 4 = True; decision 7 = False; decision 8 = False | PDM_Core0_PrevPDMDtcClrEvent_DriverFaultCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckCloseCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckOpenCnt[13]=0, PDM_IndFaultConfig[6].Load_id=0, PDM_IndFaultConfig[6].IdleTime=0, PDM_Core0_PrevPDMDtcClrEvent_IndShortCircuitCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndStuckCloseCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndOpenCircuitCnt[6]=0 |
+| 2 | MC/DC | decision 2 = True; decision 3 = False | PDM_Core0_PrevPDMDtcClrEvent_DriverFaultCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckCloseCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckOpenCnt[13]=0, PDM_IndFaultConfig[6].Load_id=0, PDM_IndFaultConfig[6].IdleTime=0, PDM_Core0_PrevPDMDtcClrEvent_IndShortCircuitCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndStuckCloseCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndOpenCircuitCnt[6]=0 |
+| 3 | MC/DC | decision 3 = True | PDM_Core0_PrevPDMDtcClrEvent_DriverFaultCnt[13]=1, PDM_Core0_PrevPDMDtcClrEvent_StuckCloseCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckOpenCnt[13]=0, PDM_IndFaultConfig[6].Load_id=0, PDM_IndFaultConfig[6].IdleTime=0, PDM_Core0_PrevPDMDtcClrEvent_IndShortCircuitCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndStuckCloseCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndOpenCircuitCnt[6]=0 |
+| 4 | MC/DC | decision 4 = False; decision 8 = True; decision 9 = False; decision 10 = False; decision 11 = False | PDM_Core0_PrevPDMDtcClrEvent_DriverFaultCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckCloseCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckOpenCnt[13]=0, PDM_IndFaultConfig[6].Load_id=0, PDM_IndFaultConfig[6].IdleTime=0, PDM_Core0_PrevPDMDtcClrEvent_IndShortCircuitCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndStuckCloseCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndOpenCircuitCnt[6]=0 |
+| 5 | MC/DC | decision 4 = True; decision 5 = False; decision 6 = False | PDM_Core0_PrevPDMDtcClrEvent_DriverFaultCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckCloseCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckOpenCnt[13]=0, PDM_IndFaultConfig[6].Load_id=0, PDM_IndFaultConfig[6].IdleTime=0, PDM_Core0_PrevPDMDtcClrEvent_IndShortCircuitCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndStuckCloseCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndOpenCircuitCnt[6]=0 |
+| 6 | MC/DC | decision 5 = True | PDM_Core0_PrevPDMDtcClrEvent_DriverFaultCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckCloseCnt[13]=1, PDM_Core0_PrevPDMDtcClrEvent_StuckOpenCnt[13]=0, PDM_IndFaultConfig[6].Load_id=0, PDM_IndFaultConfig[6].IdleTime=0, PDM_Core0_PrevPDMDtcClrEvent_IndShortCircuitCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndStuckCloseCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndOpenCircuitCnt[6]=0 |
+| 7 | MC/DC | decision 6 = True | PDM_Core0_PrevPDMDtcClrEvent_DriverFaultCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckCloseCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckOpenCnt[13]=1, PDM_IndFaultConfig[6].Load_id=0, PDM_IndFaultConfig[6].IdleTime=0, PDM_Core0_PrevPDMDtcClrEvent_IndShortCircuitCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndStuckCloseCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndOpenCircuitCnt[6]=0 |
+| 8 | MC/DC | decision 7 = True | PDM_Core0_PrevPDMDtcClrEvent_DriverFaultCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckCloseCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckOpenCnt[13]=0, PDM_IndFaultConfig[6].Load_id=13, PDM_IndFaultConfig[6].IdleTime=0, PDM_Core0_PrevPDMDtcClrEvent_IndShortCircuitCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndStuckCloseCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndOpenCircuitCnt[6]=0 |
+| 9 | MC/DC | decision 8 = True | PDM_Core0_PrevPDMDtcClrEvent_DriverFaultCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckCloseCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckOpenCnt[13]=0, PDM_IndFaultConfig[6].Load_id=0, PDM_IndFaultConfig[6].IdleTime=0, PDM_Core0_PrevPDMDtcClrEvent_IndShortCircuitCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndStuckCloseCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndOpenCircuitCnt[6]=0 |
+| 10 | MC/DC | decision 9 = True | PDM_Core0_PrevPDMDtcClrEvent_DriverFaultCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckCloseCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckOpenCnt[13]=0, PDM_IndFaultConfig[6].Load_id=0, PDM_IndFaultConfig[6].IdleTime=0, PDM_Core0_PrevPDMDtcClrEvent_IndShortCircuitCnt[6]=1, PDM_Core0_PrevPDMDtcClrEvent_IndStuckCloseCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndOpenCircuitCnt[6]=0 |
+| 11 | MC/DC | decision 10 = True | PDM_Core0_PrevPDMDtcClrEvent_DriverFaultCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckCloseCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckOpenCnt[13]=0, PDM_IndFaultConfig[6].Load_id=0, PDM_IndFaultConfig[6].IdleTime=0, PDM_Core0_PrevPDMDtcClrEvent_IndShortCircuitCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndStuckCloseCnt[6]=1, PDM_Core0_PrevPDMDtcClrEvent_IndOpenCircuitCnt[6]=0 |
+| 12 | MC/DC | decision 11 = True; decision 12 = False; decision 13 = False | PDM_Core0_PrevPDMDtcClrEvent_DriverFaultCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckCloseCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckOpenCnt[13]=0, PDM_IndFaultConfig[6].Load_id=0, PDM_IndFaultConfig[6].IdleTime=0, PDM_Core0_PrevPDMDtcClrEvent_IndShortCircuitCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndStuckCloseCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndOpenCircuitCnt[6]=1 |
+| 13 | MC/DC | decision 12 = True | PDM_Core0_PrevPDMDtcClrEvent_DriverFaultCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckCloseCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckOpenCnt[13]=0, PDM_IndFaultConfig[6].Load_id=4, PDM_IndFaultConfig[6].IdleTime=0, PDM_Core0_PrevPDMDtcClrEvent_IndShortCircuitCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndStuckCloseCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndOpenCircuitCnt[6]=1 |
+| 14 | MC/DC | decision 13 = True | PDM_Core0_PrevPDMDtcClrEvent_DriverFaultCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckCloseCnt[13]=0, PDM_Core0_PrevPDMDtcClrEvent_StuckOpenCnt[13]=0, PDM_IndFaultConfig[6].Load_id=6, PDM_IndFaultConfig[6].IdleTime=0, PDM_Core0_PrevPDMDtcClrEvent_IndShortCircuitCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndStuckCloseCnt[6]=0, PDM_Core0_PrevPDMDtcClrEvent_IndOpenCircuitCnt[6]=1 |
+
+## Infeasible pairs
+None.
+
+## Uncontrollable conditions
+- decision 1: uncontrollable or degenerate condition
+
+## Manual actions
+None.

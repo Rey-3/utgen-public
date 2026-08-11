@@ -4,6 +4,7 @@ import os
 import re
 import tempfile
 import warnings
+import zipfile
 from collections.abc import Sequence
 from copy import copy
 from dataclasses import dataclass
@@ -396,6 +397,25 @@ def _write_cell(sheet, row: int, column: int, value, anchor_row: int, anchor_col
     cell.value = value
 
 
+def _preserve_xlsx_carriage_returns(path: Path) -> None:
+    """Keep C-style CR separators after openpyxl serializes worksheet text."""
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, suffix=".cr.xlsx", delete=False) as file:
+            temporary = Path(file.name)
+        with zipfile.ZipFile(path) as source, zipfile.ZipFile(temporary, "w") as target:
+            for info in source.infolist():
+                data = source.read(info)
+                if info.filename.startswith("xl/") and info.filename.endswith(".xml"):
+                    data = data.replace(b"\r", b"&#13;")
+                target.writestr(info, data)
+        os.replace(temporary, path)
+        temporary = None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def _validate_template(path: Path, value_sheet_names: Sequence[str] = ()) -> None:
     if not path.is_file():
         raise RuntimeError(f"template does not exist: {path}")
@@ -593,6 +613,7 @@ class ExcelWriter:
             workbook.save(temporary_xlsx)
             workbook.close()
             workbook = None
+            _preserve_xlsx_carriage_returns(temporary_xlsx)
             checked = load_workbook(temporary_xlsx)
             checked.close()
             if destination.suffix == ".xls":

@@ -26,8 +26,10 @@ class _Inventory(Inventory):
         if variable is not None:
             return variable
         normalized = _INDEX.sub("", name)
+        rank = len(_INDEX.findall(name))
         for variable in self.variables:
-            if _INDEX.sub("", variable.name) == normalized:
+            if (len(_INDEX.findall(variable.name)) == rank and
+                    _INDEX.sub("", variable.name) == normalized):
                 return variable
         return None
 

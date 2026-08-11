@@ -1,0 +1,4 @@
+<?xml version='1.0' encoding='utf-8'?>
+<function_analysis function_name="PDM_MOS_Core0_NotifyPDMLocal" file="app_source/AppSWC/PDM/PDM_MOS_1.c" line="3649">
+  <called_functions count="0" />
+</function_analysis>

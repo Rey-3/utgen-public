@@ -65,6 +65,7 @@ def write_timeout_outputs(function, name, output):
 def write_module_excels(name, output, value_paths, stub_paths, enabled):
     if not enabled:
         return []
+    print(f"generated: {output}")
     return ExcelWriter().write_module(name, value_paths, stub_paths, output)
 
 

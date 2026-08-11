@@ -1,0 +1,3809 @@
+UTGEN FULL PROCESS
+==================
+
+This describes the current implementation in the workspace.
+
+The real entry point is generate_from_config.py. The design document mentions
+cli.py and pipeline.py, but those files are not present in the current code.
+
+
+1. OVERALL CALL ORDER
+---------------------
+
+generate_from_config.py
+  __main__
+    mp.freeze_support()
+    run()
+      projects_from_config()
+      ModuleIndexer.index()
+        IncludeScanner
+        configure_libclang()
+        ClangParser.parse()
+        function_definitions()
+        for every function:
+          InventoryBuilder.build()
+          AtomBuilder
+          DecisionExtractor.extract()
+          BodyIrBuilder.build()
+          DataflowEngine.analyze()
+      XmlDbWriter.write()
+      for every FunctionIR:
+        run_function()
+          child process: generate_function()
+            RowAssembler.assemble()
+              McdcGenerator
+              Solver
+              CoverageGenerator
+              optional BoundaryGenerator
+              optional FaultGenerator
+            Verifier.check()
+              Interpreter.run()
+            ValueXmlWriter.write()
+            StubXmlWriter.write()
+            ReportWriter.write()
+
+
+There is also a database-only path in regenerate_pdm_ut.py:
+
+regenerate()
+  optional ModuleIndexer.index()       only with --rebuild
+  XmlDbReader.read()
+  RowAssembler.assemble()
+  Verifier.check()
+  ValueXmlWriter.write()
+  StubXmlWriter.write()
+  ReportWriter.write()
+
+
+2. PHASE 1: SOURCE INDEXING
+---------------------------
+
+2.1 Read configuration
+
+projects_from_config() reads config.yaml.
+
+Input example:
+
+  projects:
+  - name: PDM_UT
+    root_path: D:\\SW\\liauto_pdc\\Application
+    modules:
+    - module_name: PDM_MOS_1
+      source_file: D:\\SW\\...\\PDM_MOS_1.c
+      excel_input_dir: D:\\TestTeamAssets\\common_tools\\v2\\PDM_UT\\PDM_MOS_1
+
+Output:
+
+  projects, include_dirs
+
+The batch creates a ModuleIndexer with compiler defines and include paths.
+
+
+2.2 Resolve includes
+
+ModuleIndexer.index() creates an IncludeScanner.
+
+IncludeScanner responsibilities:
+
+  - Find every #include.
+  - Search recursively under the project root.
+  - Handle case-insensitive filenames.
+  - Build unique clang -I directories.
+  - Record resolved headers and missing headers.
+
+Main methods:
+
+  IncludeScanner.__init__()
+    Starts recursive include scanning.
+
+  get_unique_include_dirs()
+    Returns the include directories passed to Clang.
+
+  _walk()
+    Recursively visits headers.
+
+  _includes_of()
+    Extracts include names from one source file.
+
+  _encoding_of()
+    Detects file encoding.
+
+  _find_file()
+    Recursively searches for a header.
+
+Example output:
+
+  include_dirs = ["D:\\SW\\include", "C:\\MinGW\\include"]
+  headers = [("Rte.h", "D:\\SW\\include\\Rte.h", sha256)]
+
+
+2.3 Configure and run Clang
+
+configure_libclang() loads libclang.dll once.
+
+ClangParser.parse() creates the Clang translation unit using:
+
+  -x c
+  -I<include directory>
+  -D<define>
+  detailed preprocessing records
+
+function_definitions() returns only functions defined in the target .c file.
+Static functions in the .c file are included. Functions defined in headers are
+ignored.
+
+ParseError represents fatal Clang diagnostics.
+
+
+2.4 Collect macros and global types
+
+ModuleIndexer._macros() scans the translation unit for macros.
+
+Object-like numeric macros are folded:
+
+  #define LIMIT 10
+
+becomes:
+
+  MacroDef(name="LIMIT", kind="object", raw="10", value=10)
+
+Function-like macros are recorded as raw text.
+
+_register_globals() registers global enums, structs, unions, and variables in
+the type graph before functions are processed.
+
+
+3. PER-FUNCTION INDEXING
+------------------------
+
+For every function, ModuleIndexer._function() calls these in order:
+
+  1. InventoryBuilder.build()
+  2. AtomBuilder(...)
+  3. DecisionExtractor.extract()
+  4. BodyIrBuilder.build()
+  5. DataflowEngine.analyze()
+
+
+3.1 Build the inventory
+
+InventoryBuilder.build() identifies all controllable and observable values:
+
+  - Function parameters
+  - Return value
+  - Referenced globals
+  - Written globals
+  - Static locals
+  - Pointer addresses
+  - Stub return values
+  - Stub argument captures
+
+Example:
+
+  uint8 testfunc(uint8 num, mystruct test)
+
+Produces:
+
+  num                 IN
+  test.isvalid        IN
+  test.code           IN
+  testfunc()          OUT
+
+Global directions are determined by usage:
+
+  read only       -> IN
+  written only    -> OUT
+  read and write  -> INOUT
+
+Important functions:
+
+  build()
+    Builds the complete Inventory.
+
+  _scan()
+    Scans reads and writes.
+
+  _record_ref()
+    Records a parameter or global reference.
+
+  _direction_of()
+    Calculates IN, OUT, or INOUT.
+
+  _globals()
+    Returns used globals.
+
+  _statics()
+    Finds static locals.
+
+  _pointer_address()
+    Creates address leaves such as @p.
+
+  _is_assign()
+    Detects assignment operators.
+
+
+3.2 Build the type graph and leaves
+
+TypeGraph stores:
+
+  - Struct definitions
+  - Union definitions
+  - Enum definitions
+  - Member types
+  - Array dimensions
+  - Bitfield widths
+  - Pointer types
+  - Function-pointer types
+
+LeafDeriver converts complex types into injectable leaves.
+
+Example:
+
+  typedef struct {
+      uint8 isvalid;
+      uint8 code;
+  } mystruct;
+
+becomes:
+
+  test.isvalid
+  test.code
+
+Deep arrays and structures keep their dimensions:
+
+  cfg.abc[4].ded[5]
+
+Function-pointer members are stored in the graph but are not emitted as input
+leaves.
+
+Important functions:
+
+  TypeGraph.describe()
+    Classifies a Clang type.
+
+  TypeGraph.register()
+    Registers a struct, union, or enum.
+
+  _register_record()
+    Registers struct or union members.
+
+  _register_enum()
+    Registers enum values.
+
+  LeafDeriver.leaves()
+    Starts leaf derivation.
+
+  LeafDeriver._emit()
+    Recursively explodes members.
+
+  clean_name()
+    Removes struct, union, enum, const, and volatile spelling.
+
+  dims_suffix()
+    Formats dimensions such as [4][5].
+
+
+3.3 Find external stubs
+
+StubFinder.find() scans function calls.
+
+Example:
+
+  mystruct lol = get_lol_msg();
+
+Produces:
+
+  Stub:
+    get_lol_msg() returns mystruct
+
+  Input leaves:
+    tessy_get_lol_msg.isvalid
+    tessy_get_lol_msg.code
+
+Same-module helper calls are not stubbed. Void stubs have no injectable return
+leaves.
+
+Important functions:
+
+  find()
+    Finds all external calls.
+
+  _walk()
+    Recursively scans expressions.
+
+  _record()
+    Adds one unique stub.
+
+  _is_local_definition()
+    Detects same-module helpers.
+
+  _stub_info()
+    Builds StubInfo.
+
+  _return_of()
+    Resolves the return type.
+
+  _tessy_leaves()
+    Creates tessy_* leaves.
+
+Default functions not stubbed:
+
+  memcpy, memset, memcmp, abs
+
+
+3.4 Convert conditions into atoms
+
+AtomBuilder converts C conditions into a boolean tree.
+
+Example:
+
+  if (x > 10 && flags & 0x02)
+
+becomes conceptually:
+
+  And((
+      Atom(x, Op.GT, rhs=10),
+      Atom(flags, Op.BITSET, rhs=2),
+  ))
+
+Mappings:
+
+  x       -> TRUTHY
+  x == 1  -> EQ
+  x != 1  -> NE
+  x < 1   -> LT
+  x <= 1  -> LE
+  x > 1   -> GT
+  x >= 1  -> GE
+  x & 2   -> BITSET
+
+CopyPropagation resolves locals:
+
+  uint8 flag = x > y;
+  if (flag)
+
+is mapped back to x > y.
+
+Important functions:
+
+  AtomBuilder.build()
+    Builds an atom tree.
+
+  build_case()
+    Builds a switch-case equality.
+
+  _node()
+    Dispatches condition expressions.
+
+  _relation()
+    Builds relational atoms.
+
+  _value()
+    Resolves variables and constants.
+
+  _linear()
+    Handles expressions such as x + 3.
+
+  _find_variable()
+    Maps source paths to inventory leaves.
+
+  _unknown()
+    Marks an uncontrollable condition.
+
+  CopyPropagation.record()
+    Records declarations and assignments.
+
+  resolve_expr()
+    Resolves a local variable to its source expression.
+
+  snapshot(), restore()
+    Save and restore branch state.
+
+  merge()
+    Merges branch states.
+
+
+3.5 Extract decisions and guards
+
+DecisionExtractor.extract() assigns decision IDs in source order.
+
+Example:
+
+  if (a > 10) {
+      if (b > 5) {
+      }
+  }
+
+Produces:
+
+  Decision 1: a > 10
+  Decision 2: b > 5
+  Guard for decision 2: Decision 1 == TRUE
+
+It handles if, else-if, switch, case, default, ternary operators, early
+returns, nested conditions, and loop traversal.
+
+Switch default is modeled as:
+
+  not(case1) && not(case2) && not(case3)
+
+Important functions:
+
+  extract()
+    Starts decision extraction.
+
+  _statement()
+    Dispatches statement types.
+
+  _if()
+    Extracts if and else paths.
+
+  _switch()
+    Extracts case/default decisions.
+
+  _loop()
+    Traverses loop body under a guard.
+
+  _nested_expr()
+    Finds ternary decisions.
+
+  _record()
+    Creates a Decision.
+
+  _guard()
+    Pushes and pops FILO guard state.
+
+  _case_expr()
+    Builds case equality expressions.
+
+  _default_expr()
+    Builds the default expression.
+
+  _ends_in_return()
+    Detects guard clauses.
+
+
+3.6 Build the body IR
+
+BodyIrBuilder converts the Clang AST into a Clang-free intermediate
+representation.
+
+Example:
+
+  uint8 ret = 0;
+  if (num > 10) {
+      ret = 13;
+  }
+  return ret;
+
+becomes conceptually:
+
+  Decl("ret", Const(0))
+  If(
+      decision_id=1,
+      condition=Binop(">", Ref("num"), Const(10)),
+      then=(Assign(Ref("ret"), Const(13)),),
+  )
+  Return(Ref("ret"))
+
+Statement IR classes:
+
+  Decl, Assign, If, Switch, SwitchCase, While, For, DoWhile, ExprStmt,
+  Return, Break, Unknown
+
+Expression IR classes:
+
+  Ref, Const, Unary, Binop, CallE, Ternary, Cast, Index, MemberE, Phi
+
+Important functions:
+
+  build()
+    Builds the complete function IR.
+
+  _statement()
+    Converts one statement.
+
+  _declarations()
+    Converts local declarations.
+
+  _if(), _switch(), _loop(), _do_loop()
+    Build control-flow IR nodes.
+
+  _expr()
+    Converts expressions.
+
+  _decision_id()
+    Links IR branches to extracted decisions.
+
+  _local_scopes()
+    Handles shadowed locals.
+
+  _static_names()
+    Names static locals.
+
+  _initializer()
+    Finds declaration initializers.
+
+  _literal()
+    Converts constants and macros.
+
+  _call_arguments()
+    Extracts function-call arguments.
+
+
+3.7 Run symbolic data-flow
+
+DataflowEngine.analyze() tracks symbolic values through every path.
+
+Example:
+
+  x = get_x_msg().value;
+  a = x + 1;
+  b = a * 2;
+  if (b > 8) {
+  }
+
+The condition becomes:
+
+  (tessy_get_x_msg.value + 1) * 2 > 8
+
+It records DataflowPoint, DataflowState, PathConstraint, return states, and
+global writes.
+
+Important methods:
+
+  analyze()
+    Starts symbolic execution.
+
+  _block(), _statement()
+    Process IR blocks and statements.
+
+  _if(), _loop(), _switch()
+    Fork and merge control-flow states.
+
+  _branch()
+    Adds a path constraint.
+
+  _condition()
+    Resolves a condition.
+
+  _assign_lvalue()
+    Tracks assignments.
+
+  _pointer_targets(), _member_targets(), _index_targets()
+    Resolve pointer/member/array targets.
+
+  _substitute()
+    Recursively substitutes symbolic values.
+
+  _call_effect()
+    Marks values affected by an external call as unknown.
+
+  _invalidate()
+    Invalidates loop-written values.
+
+  _merge()
+    Merges states when there are too many paths.
+
+The result is attached to function.dataflow.
+
+
+4. WRITE THE MODULE DATABASE
+----------------------------
+
+XmlDbWriter.write() serializes ModuleAnalysis into:
+
+  db_<module>.xml
+
+The XML contains:
+
+  - Source path and sha256
+  - Include directories and headers
+  - Macros
+  - Enums
+  - Structs/unions
+  - Globals
+  - Functions
+  - Parameters
+  - Stubs
+  - Leaves
+  - Decisions
+  - Body IR
+  - Data-flow states
+
+XmlDbWriter methods:
+
+  write(), _macro(), _enum(), _struct(), _member(), _global(), _function(),
+  _stub(), _leaf(), _decision(), _statement(), _dataflow()
+
+XmlDbReader.read() reconstructs the same dataclasses from XML.
+
+Reader/helper functions include:
+
+  _read_function(), _read_statement(), _read_expr(), _read_node(),
+  _read_dataflow(), _read_state(), _read_decision(), _read_stub(),
+  _read_leaf(), _read_struct(), _read_enum(), _read_global(),
+  _set_constants(), _set_local_functions(), _link_local_call_stubs(),
+  _sha256(), _walk(), _nodes()
+
+
+5. PHASE 2: GENERATE TEST ROWS
+------------------------------
+
+RowAssembler.assemble(function) performs:
+
+  1. Find input leaves.
+  2. Create default values.
+  3. Process every decision.
+  4. Generate MC/DC assignments.
+  5. Apply outer guard assignments.
+  6. Convert assignments into numeric constraints.
+  7. Solve the constraints.
+  8. Run concrete coverage search.
+  9. Optionally generate boundary rows.
+  10. Optionally generate fault rows.
+  11. Deduplicate rows.
+
+The normal batch creates RowAssembler with:
+
+  include_boundary=False
+  include_fault=False
+
+Direct RowAssembler usage defaults to both enabled.
+
+
+5.1 MC/DC generation
+
+For:
+
+  if (a && b)
+
+McdcGenerator produces:
+
+  a=true,  b=true
+  a=false, b=true
+  a=true,  b=false
+
+These are atom assignments, not final numbers.
+
+Main functions:
+
+  eval_expr()
+    Evaluates a boolean tree.
+
+  MaskingRecipes.make()
+    Creates a canonical true/false assignment.
+
+  McdcGenerator.pairs()
+    Finds independence pairs.
+
+  McdcGenerator.rows()
+    Deduplicates assignments.
+
+  _context()
+    Finds the masking context.
+
+  _fallback_pair()
+    Uses a truth-table search for difficult expressions.
+
+
+5.2 Apply guards and solve
+
+For:
+
+  if (a && b) {
+      if (num > 10) {
+          ret = 13;
+      }
+  }
+
+The inner row gets constraints for:
+
+  a == true
+  b == true
+  num > 10
+
+AtomConstraints.for_outcome() translates conditions to constraints.
+
+Example:
+
+  num > 10       -> Constraint(num, GT, 10)
+  not(num > 10)   -> Constraint(num, LE, 10)
+
+Solver.solve() intersects all constraints.
+
+Example input:
+
+  num > 10
+  num <= 20
+  num != 11
+
+Example output:
+
+  {"num": 12}
+
+Domain handles signed/unsigned values, enums, bit requirements, forbidden
+bits, banned values, and empty domains.
+
+
+5.3 Concrete coverage search
+
+CoverageGenerator uses Interpreter to check whether symbolic rows really reach:
+
+  - Decision true
+  - Decision false
+  - Each condition true/false
+  - MC/DC independence pairs
+
+It is useful for local variables, stub-return members, dynamic indexes,
+previous branches, and pointer data flow.
+
+
+5.4 Boundary rows
+
+BoundaryGenerator handles relational atoms.
+
+For:
+
+  if (x > 10)
+
+It tries:
+
+  x = 9
+  x = 10
+  x = 11
+
+Values are clamped to the C type range.
+
+
+5.5 Fault rows
+
+FaultGenerator uses:
+
+  unsigned input -> 0 and maximum
+  signed input   -> minimum and maximum
+  enum input     -> enum_max + 1
+  pointer input  -> NULL
+
+Type overrides are supported, for example:
+
+  FaultGenerator({"uint8": [7]})
+
+
+6. VERIFY ROWS AND CALCULATE EXPECTED OUTPUTS
+---------------------------------------------
+
+Interpreter.run(function, values) executes the body IR.
+
+It records:
+
+  outcomes       decision result
+  observed       all observed decision outcomes
+  conditions     observed atom patterns
+  loops          loop outcomes
+  outputs        expected output values
+  unknown        outputs that cannot be calculated
+
+Example input:
+
+  {
+      "num": 11,
+      "test.isvalid": 1,
+      "tessy_get_lol_msg.isvalid": 1,
+  }
+
+Example output:
+
+  outcomes = {1: True, 2: True}
+  outputs = {"testfunc()": 13}
+
+Interpreter supports arithmetic, assignments, C-style division/remainder,
+type wraparound, if/else, switch fallthrough, loops, ternaries, pointers,
+local helpers, and stub return values.
+
+Verifier.check() runs every row.
+
+If the actual path matches the row intent, it writes row.expected. Otherwise it
+adds an intent-mismatch note.
+
+
+7. EMIT FINAL FILES
+-------------------
+
+For each function, the normal batch writes:
+
+  value_<module>_<function>.xml
+  stub_<module>_<function>.xml
+  report_<module>_<function>.md
+
+The module database is:
+
+  db_<module>.xml
+
+
+7.1 Value XML
+
+ValueXmlWriter writes one argument per leaf.
+
+Input example:
+
+  <argument name="num"
+            len="8"
+            format="unsigned"
+            direction="in"
+            pointer="false"
+            range="0,0,0,11"
+            testmethod="decision" />
+
+Output leaves do not receive range or testmethod attributes.
+
+Enum numbers are rendered using enum names. Pointer address leaves are merged
+into the corresponding pointer input range, and NULL addresses produce NULL.
+
+
+7.2 Stub XML
+
+StubXmlWriter writes called function names, return types, return variable names,
+and argument capture variables.
+
+Example:
+
+  <function name="get_lol_msg">
+    <return>
+      <type>mystruct</type>
+      <name>tessy_get_lol_msg</name>
+    </return>
+  </function>
+
+
+7.3 Markdown report
+
+ReportWriter writes:
+
+  - Function name
+  - Source file
+  - Number of rows
+  - Coverage summary
+  - One table row per test case
+  - Expected outputs
+  - Infeasible pairs
+  - Uncontrollable conditions
+  - Manual actions
+
+
+8. COMPLETE BASIC EXAMPLE
+--------------------------
+
+Input:
+
+  typedef unsigned char uint8;
+
+  typedef struct {
+      uint8 isvalid;
+      uint8 code;
+  } mystruct;
+
+  extern mystruct get_lol_msg(void);
+
+  uint8 testfunc(uint8 num, mystruct test) {
+      mystruct lol = get_lol_msg();
+      uint8 ret = 0;
+
+      if (lol.isvalid && test.isvalid) {
+          if (num > 10) {
+              ret = 13;
+          }
+      }
+
+      return ret;
+  }
+
+Indexed leaves:
+
+  num                              IN
+  test.isvalid                     IN
+  test.code                        IN
+  testfunc()                      OUT
+  tessy_get_lol_msg.isvalid        IN
+  tessy_get_lol_msg.code           IN
+
+Decisions:
+
+  Decision 1:
+    tessy_get_lol_msg.isvalid && test.isvalid
+
+  Decision 2:
+    num > 10
+    Guard: Decision 1 == TRUE
+
+Main batch rows:
+
+  Row 1:
+    num=0
+    test.isvalid=1
+    tessy_get_lol_msg.isvalid=1
+    expected testfunc()=0
+
+  Row 2:
+    num=0
+    test.isvalid=1
+    tessy_get_lol_msg.isvalid=0
+    expected testfunc()=0
+
+  Row 3:
+    num=0
+    test.isvalid=0
+    tessy_get_lol_msg.isvalid=1
+    expected testfunc()=0
+
+  Row 4:
+    num=11
+    test.isvalid=1
+    tessy_get_lol_msg.isvalid=1
+    expected testfunc()=13
+
+
+9. MAIN CLASSES AND RESPONSIBILITIES
+-------------------------------------
+
+model.py:
+
+  Direction, Op
+    Enumerations for variable direction and condition operators.
+
+  CType
+    C type and numeric bounds.
+
+  Variable
+    One injectable or observable leaf.
+
+  Atom, And, Or, Not
+    Boolean condition tree.
+
+  Decision
+    Full branch decision and its guards.
+
+  StubInfo
+    External function metadata.
+
+  Inventory
+    Function leaves and stubs.
+
+  TestRow
+    One generated test vector.
+
+  Constraint
+    Numeric solver requirement.
+
+  MemberDef, StructDef, EnumDef, GlobalDef, MacroDef
+    Type graph, global, and macro records.
+
+  FunctionIR
+    Complete clang-free function representation.
+
+  ModuleAnalysis
+    Complete module representation.
+
+  DataflowState, DataflowPoint, DataflowResult
+    Symbolic execution results.
+
+  Decl, Assign, If, Switch, SwitchCase, While, For, DoWhile, ExprStmt,
+  Return, Break, Unknown
+    Statement IR nodes.
+
+  Ref, Const, Unary, Binop, CallE, Ternary, Cast, Index, MemberE, Phi
+    Expression IR nodes.
+
+  atoms_of()
+    Flattens a boolean tree into its atoms.
+
+solver.py:
+
+  Domain
+    Maintains the possible values for one variable.
+
+  AtomConstraints
+    Converts atom outcomes into constraints.
+
+  Solver
+    Intersects constraints and chooses concrete values.
+
+mcdc.py:
+
+  MaskingRecipes
+    Creates Boolean masking assignments.
+
+  McdcGenerator
+    Creates MC/DC independence pairs and rows.
+
+assembler.py:
+
+  RowAssembler
+    Combines decisions, guards, MC/DC assignments, solving, coverage,
+    boundaries, faults, and deduplication.
+
+coverage.py:
+
+  CoverageGenerator
+    Searches concrete input values for missing execution coverage.
+
+  _CoverageState
+    Tracks covered decisions, conditions, and MC/DC pairs.
+
+boundary.py:
+
+  BoundaryGenerator
+    Creates k-1, k, and k+1 rows under guards.
+
+fault.py:
+
+  FaultGenerator
+    Creates extreme-value and NULL-pointer rows.
+
+interp.py:
+
+  ExecResult
+    Stores concrete execution results.
+
+  Interpreter
+    Executes FunctionIR and calculates outputs.
+
+  Verifier
+    Checks row intent and attaches expected outputs.
+
+emit.py:
+
+  ValueXmlWriter
+    Writes row-aligned value XML.
+
+  StubXmlWriter
+    Writes stub XML.
+
+  ReportWriter
+    Writes Markdown reports.
+
+db.py:
+
+  ModuleIndexer
+    Orchestrates source parsing and per-function analysis.
+
+  XmlDbWriter
+    Serializes ModuleAnalysis.
+
+  XmlDbReader
+    Reconstructs ModuleAnalysis without parsing source again.
+
+
+10. CURRENT IMPLEMENTATION NOTES
+---------------------------------
+
+  - generate_from_config.py indexes the C source every run and then generates
+    from the in-memory analysis. It does not read the database it just wrote.
+
+  - regenerate_pdm_ut.py is the database-reading path.
+
+  - The normal batch disables boundary and fault generation.
+
+  - There is no current cli.py, pipeline.py, automatic --reindex, or Excel
+    generation stage in this repository.
+
+  - The DB stores source/header hashes, but the current reader does not
+    automatically validate staleness.
+
+
+11. DETAILED FUNCTION AND CLASS REFERENCE
+------------------------------------------
+
+This section explains the actual functions and classes in the current utgen
+source. The main functions are described in more detail. Very small private
+helpers are described together when they only format, parse, or forward data.
+
+Common types used by many functions:
+
+  Path
+    A pathlib file path.
+
+  Cursor
+    One node in Clang's syntax tree.
+
+  TranslationUnit
+    The complete result of parsing one C source file.
+
+  FunctionIR
+    The clang-free representation of one function.
+
+  Inventory
+    The inputs, outputs, and stubs of one function.
+
+  TestRow
+    One generated input vector and its metadata.
+
+
+12. generate_from_config.py
+---------------------------
+
+Constants:
+
+  CONFIG_PATH
+    config.yaml beside the script, or beside the executable when frozen.
+
+  TIME_LOG_PATH
+    generation_times.txt beside CONFIG_PATH.
+
+  FUNCTION_TIMEOUT_SECONDS
+    Maximum time allowed for one function. Current value: 200 seconds.
+
+
+projects_from_config()
+
+Input:
+
+  No arguments.
+
+Operation:
+
+  1. Read CONFIG_PATH.
+  2. Parse YAML.
+  3. Read config["projects"].
+  4. Read Tessy.include.
+  5. Convert one include string into a one-item tuple.
+
+Return:
+
+  (projects, tessy_include)
+
+Example:
+
+  config:
+    Tessy:
+      include: C:\MinGW\include
+    projects: [...]
+
+  return:
+    (projects, ("C:\MinGW\include",))
+
+
+elapsed(start)
+
+Input:
+
+  start
+    A value returned by perf_counter().
+
+Return:
+
+  A string containing elapsed seconds, for example "1.27s".
+
+
+report_time(message)
+
+Input:
+
+  message
+    Text to print and save.
+
+Operation:
+
+  1. Print the message.
+  2. Open generation_times.txt in append mode.
+  3. Add the message and a newline.
+
+Return:
+
+  None.
+
+
+fallback_rows(function)
+
+Input:
+
+  function
+    A FunctionIR.
+
+Operation:
+
+  Create two rows. Every IN or INOUT leaf is assigned 0 in the first row and
+  1 in the second row.
+
+Return:
+
+  Two TestRow objects with:
+
+    kind = "Timeout"
+    description = "generation timeout"
+
+This is used when a function exceeds the 200-second timeout.
+
+
+write_timeout_outputs(function, name, output)
+
+Input:
+
+  function
+    The function that timed out.
+
+  name
+    Module name.
+
+  output
+    Output directory.
+
+Operation:
+
+  1. Call fallback_rows().
+  2. Write value XML using the two fallback rows.
+  3. Write stub XML.
+  4. Write a Markdown report with the timeout note.
+
+Return:
+
+  Number of fallback rows, normally 2.
+
+
+generate_function(function, name, output, result_queue)
+
+Input:
+
+  function
+    One FunctionIR.
+
+  name
+    Module name.
+
+  output
+    Output directory.
+
+  result_queue
+    Multiprocessing queue used to return status to the parent process.
+
+Operation:
+
+  1. Create RowAssembler(Solver(), McdcGenerator()).
+  2. Disable boundary generation.
+  3. Disable fault generation.
+  4. Assemble rows.
+  5. Verify rows with Interpreter and Verifier.
+  6. Write value XML, stub XML, and report Markdown.
+  7. Put ("ok", row_count) into result_queue.
+
+If an exception occurs, put:
+
+  ("error", "ExceptionType: message")
+
+into the queue.
+
+Return:
+
+  None. The result is communicated through result_queue.
+
+
+run_function(function, name, output, context)
+
+Input:
+
+  function, name, output
+    Passed to generate_function().
+
+  context
+    Multiprocessing context.
+
+Operation:
+
+  1. Create a multiprocessing queue.
+  2. Start a child process running generate_function().
+  3. Wait up to FUNCTION_TIMEOUT_SECONDS.
+  4. If still alive, terminate it and call write_timeout_outputs().
+  5. Otherwise read the result queue.
+  6. Raise RuntimeError if the child reported an error.
+
+Return:
+
+  (row_count, timed_out)
+
+Examples:
+
+  (25, False)
+  (2, True)
+
+
+run()
+
+Input:
+
+  No arguments.
+
+Operation:
+
+  1. Call projects_from_config().
+  2. Clear generation_times.txt.
+  3. Create ModuleIndexer with __GHS__ and configured include paths.
+  4. Create a multiprocessing spawn context.
+  5. For each project:
+       a. For each module:
+            i. Create the output directory.
+           ii. Call ModuleIndexer.index().
+          iii. Call XmlDbWriter.write().
+           iv. For each analyzed function, call run_function().
+           v. Record timing.
+  6. Record module, project, and total timing.
+
+Return:
+
+  None.
+
+This is the first important caller in the normal batch flow.
+
+
+if __name__ == "__main__":
+
+The script calls mp.freeze_support() and then run(). freeze_support() is
+needed when multiprocessing is used on Windows or in a frozen executable.
+
+
+13. regenerate_pdm_ut.py
+------------------------
+
+The module creates argparse command-line options before regeneration starts:
+
+  --rebuild
+    Re-index the source and rewrite the DB first.
+
+  --source-root
+    Root directory containing the source tree.
+
+  --define
+    Additional compiler define. Can be repeated.
+
+  --profile
+    Print the top 50 cumulative profiling results.
+
+
+regenerate()
+
+Input:
+
+  No arguments. It uses the parsed global argparse values.
+
+Operation when --rebuild is present:
+
+  1. Find each configured source file.
+  2. Call ModuleIndexer.index().
+  3. Write db_<module>.xml with XmlDbWriter.
+
+Operation for every database:
+
+  1. Find PDM_UT/*/db_*.xml.
+  2. Call XmlDbReader.read().
+  3. Create RowAssembler.
+  4. Skip a small hard-coded list of PDM functions.
+  5. Assemble rows.
+  6. Verify rows.
+  7. Write value XML, stub XML, and reports.
+
+Return:
+
+  None.
+
+The important difference from generate_from_config.py is that this function
+can generate from the persisted DB instead of parsing the C source again.
+
+
+14. model.py
+------------
+
+Direction
+
+Enum values:
+
+  IN
+    The test supplies the value.
+
+  OUT
+    The function writes or returns the value.
+
+  INOUT
+    The test supplies the initial value and the function can write it.
+
+
+Op
+
+Enum for atom operators:
+
+  EQ, NE, LT, LE, GT, GE, TRUTHY, BITSET
+
+
+CType
+
+Stores a resolved C scalar or enum type.
+
+Fields:
+
+  name
+    Type name, such as uint8.
+
+  bits
+    Number of bits.
+
+  signed
+    Whether the type is signed.
+
+  enum_values
+    Tuple such as (("OFF", 0), ("ON", 1)).
+
+Properties:
+
+  lo
+    Minimum value. For signed 8-bit: -128. For unsigned 8-bit: 0.
+
+  hi
+    Maximum value. For signed 8-bit: 127. For unsigned 8-bit: 255.
+
+  enum_max
+    Largest enum value, or None if this is not an enum.
+
+Example:
+
+  CType("uint8", 8, False).lo -> 0
+  CType("uint8", 8, False).hi -> 255
+
+
+Variable
+
+Represents one leaf used by TESSY.
+
+Important fields:
+
+  name
+    Example: num, cfg.value, tessy_get_status.code.
+
+  ctype
+    CType object.
+
+  fmt
+    TESSY format name.
+
+  xml_len
+    Width written to XML.
+
+  direction
+    IN, OUT, or INOUT.
+
+  is_pointer
+    Whether the leaf represents pointer storage.
+
+  address_of
+    For an address leaf such as @p, stores p.
+
+
+Atom
+
+Represents one leaf condition.
+
+Examples:
+
+  Atom(x, Op.GT, rhs=10)
+  Atom(flag, Op.TRUTHY)
+  Atom(bits, Op.BITSET, rhs=2)
+
+controllable:
+
+  Returns True when var is not None.
+  Returns False when the expression could not be mapped to an input.
+
+
+And, Or, Not
+
+Boolean tree nodes:
+
+  And(children)
+    Logical &&.
+
+  Or(children)
+    Logical ||.
+
+  Not(child)
+    Logical !.
+
+
+_cached_atoms(), _atoms_of(), _clear_atoms(), atoms_of()
+
+These functions flatten a boolean tree into Atom objects.
+
+Example:
+
+  atoms_of(And((a, Not(Or((b, a))))))
+  -> [a, b, a]
+
+The internal cache avoids repeatedly walking the same immutable tree.
+
+
+Guard
+
+Stores an outer decision requirement:
+
+  Guard(expr=outer_condition, outcome=True)
+
+
+Decision
+
+Stores one complete branch decision:
+
+  id
+    Sequential decision ID.
+
+  expr
+    Atom/And/Or/Not tree.
+
+  kind
+    if, case, or loop.
+
+  guards
+    Conditions required to reach this decision.
+
+  location
+    Source file, line, and column.
+
+
+StubInfo
+
+Stores external call information:
+
+  name
+    Function name.
+
+  ret_ctype
+    Scalar/enum return type, if any.
+
+  ret_struct
+    Struct return type, if any.
+
+  params
+    List of (type_name, parameter_name).
+
+
+Inventory
+
+Stores all variables and stubs for one function.
+
+inputs()
+
+Returns variables whose direction is IN or INOUT.
+
+outputs()
+
+Returns variables whose direction is OUT or INOUT.
+
+find(name)
+
+Returns the matching Variable or None.
+
+
+TestRow
+
+Stores one generated row:
+
+  values
+    Dictionary from leaf name to input value.
+
+  kind
+    MC/DC, Switch, Coverage, Boundary, Fault Injection, Nominal, or Timeout.
+
+  description
+    Human-readable reason for the row.
+
+  intent
+    Required decision outcomes.
+
+  expected
+    Calculated output values.
+
+
+Constraint
+
+Stores one requirement for the solver:
+
+  Constraint(variable, operator, value, prefer)
+
+Example:
+
+  Constraint(num, Op.GT, 10)
+
+
+MemberDef, StructDef, EnumDef, MacroDef, GlobalDef
+
+These are persisted module/type records:
+
+  MemberDef
+    One struct/union member.
+
+  StructDef
+    Complete struct or union definition.
+
+  EnumDef
+    Enum name and ordered values.
+
+  MacroDef
+    Macro raw text and optional folded value.
+
+  GlobalDef
+    File-scope variable and qualifiers.
+
+
+Expression classes
+
+  Ref(path, scope)
+    Read a variable or local.
+
+  Const(value, type_name)
+    Constant integer or enum name.
+
+  Unary(op, x)
+    Unary operation such as !, -, *, or &.
+
+  Binop(op, l, r)
+    Binary operation such as +, >, &&, or &.
+
+  CallE(name, args)
+    Function call expression.
+
+  Ternary(c, t, f, decision_id)
+    c ? t : f.
+
+  Cast(type_name, x)
+    C type cast.
+
+  Index(base, idx)
+    Array indexing.
+
+  MemberE(base, name)
+    Struct member access.
+
+  Phi(condition, when_true, when_false)
+    Symbolic value chosen at a branch join.
+
+
+PathConstraint
+
+Stores a decision outcome required by one symbolic path.
+
+
+DataflowState
+
+Stores symbolic values, aliases, path constraints, reachability, and unknown
+values at one point in the function.
+
+
+DataflowPoint
+
+Stores all states reaching one decision or observable point.
+
+
+DataflowResult
+
+Stores all dataflow points, return states, and writes.
+
+point(decision_id)
+
+Returns the first DataflowPoint for that decision ID, or raises KeyError.
+
+
+Statement classes
+
+  Decl
+    Local declaration and initializer.
+
+  Assign
+    Assignment and optional compound operator.
+
+  If
+    Branch linked to a decision ID.
+
+  SwitchCase
+    One switch arm.
+
+  Switch
+    Switch subject and cases.
+
+  While, For, DoWhile
+    Loop forms.
+
+  ExprStmt
+    Expression used as a statement.
+
+  Return
+    Function return.
+
+  Break
+    Break from loop or switch.
+
+  Unknown
+    Unsupported source construct.
+
+
+FunctionIR
+
+Contains everything generation needs for one function without Clang:
+
+  name, line, return_type, static, params, stubs, leaves, decisions, body,
+  dataflow, constants, and local_functions.
+
+
+ModuleAnalysis
+
+Contains everything indexed for one source module:
+
+  source path, source hash, include paths, headers, macros, enums, structs,
+  globals, and functions.
+
+macro(name)
+
+Finds one MacroDef.
+
+variable(name)
+
+Finds one GlobalDef.
+
+function(name)
+
+Finds one FunctionIR.
+
+
+15. clang_setup.py
+------------------
+
+configure_libclang(path=None)
+
+Input:
+
+  path
+    Optional path to libclang.dll or its directory.
+
+Operation:
+
+  1. Return immediately if libclang was already configured.
+  2. Look for a bundled DLL.
+  3. Otherwise use path, LIBCLANG_PATH, or the default LLVM path.
+  4. Add libclang.dll if path is a directory.
+  5. Raise FileNotFoundError if it does not exist.
+  6. Call clang.cindex.Config.set_library_file().
+  7. Set the internal configured flag.
+
+Return:
+
+  None.
+
+Why only once:
+
+  clang.cindex can load libclang only once per process.
+
+
+16. parsing.py
+----------------
+
+ParseError
+
+Exception raised for fatal Clang diagnostics.
+
+
+ClangParser
+
+Represents the parser service.
+
+parse(source, includes, defines=())
+
+Input:
+
+  source
+    Path to the C file.
+
+  includes
+    Include directories.
+
+  defines
+    Compiler defines such as __GHS__.
+
+Operation:
+
+  1. Ensure libclang is configured.
+  2. Build -I arguments.
+  3. Build -D arguments.
+  4. Parse with PARSE_DETAILED_PROCESSING_RECORD.
+  5. Collect fatal diagnostics.
+  6. Raise ParseError if any fatal diagnostic exists.
+
+Return:
+
+  A Clang TranslationUnit.
+
+
+function_definitions(tu)
+
+Input:
+
+  tu
+    Parsed translation unit.
+
+Operation:
+
+  1. Normalize tu.spelling to get the main source path.
+  2. Visit top-level cursors.
+  3. Keep only FUNCTION_DECL cursors.
+  4. Keep only cursors where is_definition() is True.
+  5. Keep only cursors whose location is the main source file.
+  6. Store them by cursor.spelling.
+
+Return:
+
+  Dictionary:
+
+    {
+        "testfunc": <Clang Cursor>,
+        "helper": <Clang Cursor>,
+    }
+
+This is why prototypes and functions defined in headers are excluded.
+
+
+17. includes.py
+----------------
+
+IncludeScanner
+
+Stores recursive include information.
+
+__init__(source_file, root_path, debug=False)
+
+Starts scanning the target file immediately by calling _includes_of() and
+_walk().
+
+get_unique_include_dirs()
+
+Returns unique include-root directories. It removes relative include suffixes
+such as subdir/header.h when determining the -I root.
+
+_walk(filenames)
+
+For each include name:
+
+  1. Skip names already resolved.
+  2. Call _find_file().
+  3. Store the result in resolved.
+  4. Recursively scan a found file.
+  5. Add missing files to missing.
+
+_includes_of(source_file)
+
+Reads one file, applies the include regular expression, and returns the
+included base filenames.
+
+_encoding_of(source_file)
+
+Uses chardet when available. Returns an encoding name or None.
+
+_find_file(root_dir, target)
+
+Recursively scans directories and returns the first case-insensitive filename
+match, or None.
+
+
+18. typegraph.py
+----------------
+
+clean_name(spelling)
+
+Removes words such as const, volatile, struct, union, and enum from a type
+spelling.
+
+Example:
+
+  clean_name("const struct Config") -> "Config"
+
+
+dims_suffix(dims)
+
+Converts dimensions into a suffix.
+
+Example:
+
+  dims_suffix((4, 5)) -> "[4][5]"
+
+
+TypeGraph
+
+Stores registered StructDef and EnumDef objects.
+
+__init__(char_signed=False)
+
+Creates empty struct and enum dictionaries. char_signed controls plain char
+classification.
+
+describe(ctype, name, bitfield_width=None)
+
+Input:
+
+  ctype
+    Clang type object.
+
+  name
+    Member or variable name.
+
+  bitfield_width
+    Optional declared bit width.
+
+Operation:
+
+  1. Remove array layers and collect their dimensions.
+  2. Get the canonical type.
+  3. Record const/volatile information.
+  4. If a bitfield width is supplied, create a scalar MemberDef using that
+     width.
+  5. If it is a pointer, detect function pointer, record pointer, enum
+     pointer, or scalar pointer.
+  6. If it is a record, register the struct or union.
+  7. If it is an enum, register the enum.
+  8. If it is an integer, create a scalar MemberDef.
+  9. Otherwise create an unsupported MemberDef.
+
+Return:
+
+  MemberDef.
+
+Examples:
+
+  describe(uint8, "x")
+    -> scalar, 8 bits.
+
+  describe(Config, "cfg")
+    -> struct Config.
+
+  describe(uint8[4], "values")
+    -> scalar uint8 with dims=(4,).
+
+  describe(bitfield, "enabled", 1)
+    -> scalar with len_bits=1 and bitfield=True.
+
+
+register(ctype)
+
+Registers a record or enum and returns its clean type name. Scalar types are
+not added to the graph.
+
+
+_register_record(ctype, canon)
+
+Registers a struct or union. It inserts a temporary empty definition first so
+self-referential structures cannot recurse forever, then describes every field.
+
+
+_register_enum(ctype, canon)
+
+Reads ENUM_CONSTANT_DECL children and stores ordered (name, value) pairs.
+
+
+_name_for(ctype, canon)
+
+Chooses a named type or creates a name such as <anon1> for anonymous records.
+
+
+_is_signed(canon)
+
+Returns True for signed integer types. For plain char, returns the configured
+char_signed value.
+
+
+_file_of(decl)
+
+Returns the declaration's source path or an empty string.
+
+
+LeafDeriver
+
+Converts MemberDef objects into Variable leaves.
+
+leaves(member, direction)
+
+Starts recursive derivation and returns a list of Variables.
+
+_emit(out, prefix, member, direction, fmt, pointer, visited)
+
+Recursive rules:
+
+  - Skip function pointers and unsupported members.
+  - Add member names and dimensions to the path.
+  - Recursively explode structs and unions.
+  - Keep pointer=True for pointer members.
+  - Preserve enum values and enum domains.
+  - Emit scalar Variable objects.
+  - Stop on recursive type cycles.
+
+_join(prefix, name)
+
+Joins dotted member paths. Anonymous members are skipped.
+
+
+19. inventory.py
+----------------
+
+InventoryBuilder
+
+__init__(char_signed=False, const_globals="inject", no_stub=DEFAULT_NO_STUB)
+
+Creates:
+
+  - TypeGraph
+  - LeafDeriver
+  - StubFinder
+
+It also stores configuration for const globals and no-stub functions.
+
+build(func_cursor, tu)
+
+Input:
+
+  func_cursor
+    Clang function definition.
+
+  tu
+    Translation unit.
+
+Operation:
+
+  1. Clear previous usage state.
+  2. Scan the function for parameter/global reads and writes.
+  3. Add parameter address leaves and parameter member leaves.
+  4. Add a return leaf if the return type is not void.
+  5. Add global leaves with calculated directions.
+  6. Add static-local leaves.
+  7. Find stubs and stub leaves.
+
+Return:
+
+  Inventory(variables, stubs)
+
+_pointer_address(param)
+
+For a pointer parameter p, creates an address leaf:
+
+  Variable("@p", pointer CType, "pointer", "1", IN, True, "p")
+
+Function-pointer parameters are excluded.
+
+_statics(func_cursor)
+
+Finds static local declarations and gives repeated declarations unique names:
+
+  function::static_name#1
+  function::static_name#2
+
+_globals(func_cursor)
+
+Returns global declarations found in usage order, unless const_globals is
+"fold" and the global is const.
+
+_direction_of(entry)
+
+Converts read/write flags into IN, OUT, or INOUT.
+
+_scan(cur, writing)
+
+Walks the Clang tree and tracks:
+
+  - Normal references
+  - Assignment left-hand sides
+  - Compound assignment reads and writes
+  - Address-of expressions as read/write
+
+_record_ref(cur, writing)
+
+Adds parameter and file-scope variable references to the usage table. Locals
+are ignored because they are derived, not injected.
+
+_is_assign(cur)
+
+Detects a normal assignment using Clang's binary_operator property or a token
+fallback.
+
+_two_children(cur)
+
+Returns exactly two children or (None, None).
+
+_first_token(cur)
+
+Returns the spelling of the first token.
+
+_is_static(cursor)
+
+Returns whether the cursor storage class is static.
+
+
+20. stubs.py
+------------
+
+DEFAULT_NO_STUB
+
+Tuple of standard functions that should remain normal calls:
+
+  memcpy, memset, memcmp, abs
+
+
+StubFinder
+
+__init__(graph, deriver, no_stub)
+
+Stores the type graph, leaf deriver, and a set of excluded function names.
+
+find(func_cursor)
+
+Walks the function body and returns:
+
+  (stub_info_list, tessy_variable_list)
+
+_walk(cur, self_name, source_file, seen, stubs, variables)
+
+Recursively scans the AST. CALL_EXPR nodes are sent to _record().
+
+_record(cur, ...)
+
+Determines the callee name and skips:
+
+  - Empty names
+  - Recursion to the same function
+  - Names in no_stub
+  - Names already seen
+  - Same-file local definitions
+
+Otherwise it creates StubInfo and tessy leaves.
+
+_is_local_definition(callee, source_file)
+
+Uses callee.get_definition() and compares source paths.
+
+_file_of(cursor)
+
+Returns normalized cursor location path.
+
+_stub_info(name, callee)
+
+Creates metadata for unresolved or resolved calls. Resolved calls include
+return type and parameter types.
+
+_return_of(callee)
+
+Converts scalar, enum, pointer, struct, union, void, and unsupported return
+types into CType/struct metadata.
+
+_stub_type_name(ctype)
+
+Returns a readable parameter type name.
+
+_tessy_leaves(name, callee)
+
+For non-void functions:
+
+  - Derives tessy_<name> return leaves.
+  - Derives OUT capture leaves named tessy_<name>__ArgN.
+  - Removes one pointer layer for captured argument storage.
+
+
+21. atoms.py
+---------------
+
+_Value
+
+Internal result for resolving an expression. It may contain:
+
+  variable
+  constant
+  node
+
+
+CopyPropagation
+
+Tracks local/member assignment sources.
+
+__init__()
+
+Creates binding dictionaries, local-name set, and loop-written set.
+
+record(stmt_cursor)
+
+Records declarations and assignments before a condition. Assignment sources
+are stored by Clang declaration identity, not only by spelling, so shadowed
+locals remain separate.
+
+resolve(expr_cursor)
+
+Returns a source path string if the expression can be copy-propagated.
+
+resolve_expr(expr_cursor, seen=None)
+
+Returns the latest source Cursor, path, or None. It follows:
+
+  - Local assignments
+  - Member paths
+  - Array paths
+  - Address/dereference wrappers
+
+It stops on loops and cycles.
+
+_follow(value, seen)
+
+Follows a binding chain while preventing cycles.
+
+snapshot()
+
+Returns a copy of all binding state.
+
+restore(state)
+
+Restores a snapshot.
+
+merge(*states)
+
+Keeps only bindings that are identical on every reachable branch. Locals and
+loop-written names are unioned conservatively.
+
+_set(lhs, rhs)
+
+Stores a binding for a local or local member.
+
+_is_local(cursor)
+
+Checks whether a path belongs to a local declaration.
+
+_mark_loop_writes(cursor)
+
+Finds assignments inside a loop and marks their paths unknown after the loop.
+
+
+AtomBuilder
+
+__init__(inventory, copyprop=None, macros=None)
+
+Stores the inventory, copy-propagation object, macro values, constant results,
+and uncontrollable-condition messages.
+
+build(cond_cursor)
+
+Calls _node() and returns an Atom/And/Or/Not tree.
+
+build_case(subject_cursor, label_cursor)
+
+Creates a subject == label atom for switch cases. If the subject cannot be
+mapped to a controllable Variable, the atom is marked uncontrollable.
+
+_node(cursor)
+
+Dispatches:
+
+  - && -> And
+  - || -> Or
+  - relational operators -> _relation()
+  - bitwise mask -> BITSET
+  - ! -> Not
+  - variable truthiness -> TRUTHY
+  - unknown expressions -> uncontrollable Atom
+
+_relation(cursor, left_cursor, right_cursor, op)
+
+Creates a variable-vs-constant or variable-vs-variable Atom. It also handles
+constant folding, bit tests, and simple linear expressions.
+
+_bit_relation(cursor, left, right, op)
+
+Converts comparisons such as (flags & 2) == 2 into a BITSET atom.
+
+_value(cursor)
+
+Resolves a cursor into:
+
+  - A Variable from the inventory
+  - A folded integer constant
+  - A nested Atom/node
+  - Nothing when unknown
+
+_linear(cursor)
+
+Recognizes expressions such as:
+
+  x + 3
+  x - 2
+  3 + x
+
+and returns (Variable, offset).
+
+_find_variable(path, address=False)
+
+Looks up exact paths, normalized array paths, static paths, and pointer address
+paths in the inventory.
+
+_unknown(cursor)
+
+Records the source text as uncontrollable and returns Atom(None, TRUTHY, text).
+
+
+Small atoms.py helpers:
+
+  _unwrap()
+    Removes Clang expression wrapper nodes.
+
+  _last_non_type_child()
+    Finds the last initializer child that is not a TYPE_REF.
+
+  _root()
+    Walks member/index expressions back to their base.
+
+  _is_static()
+    Checks a declaration's storage class.
+
+  _common_bindings()
+    Keeps identical bindings across mappings.
+
+  _cursor_key()
+    Returns a stable Clang declaration identity.
+
+  _raw_path()
+    Converts a Clang expression into a source path.
+
+  _callee_name()
+    Returns a call's referenced function name.
+
+  _constant()
+    Folds enum values, unary constants, arithmetic constants, and literals.
+
+  _macro_constant()
+    Resolves a macro name at a source location.
+
+  _fold_int()
+    Folds a small integer macro expression.
+
+  _fold_node()
+    Recursively evaluates a Python AST integer expression.
+
+  _operator()
+    Finds the operator spelling from cursor spelling or tokens.
+
+  _compare()
+    Compares two integers using an Op.
+
+  _source()
+    Returns normalized token text.
+
+
+22. decisions.py
+----------------
+
+_SourceAtomBuilder
+
+Fallback builder used when no real AtomBuilder is provided. It creates one
+uncontrollable truthy atom containing source text.
+
+
+_Arm
+
+Internal switch-arm record:
+
+  labels
+  body
+  default
+
+
+DecisionExtractor
+
+__init__(atom_builder=None)
+
+Stores the atom builder, decision list, guard stack, and next ID.
+
+extract(body_cursor)
+
+Resets all state, obtains the function compound body when necessary, walks it,
+and returns decisions in source order.
+
+_function_body(cursor)
+
+Returns the COMPOUND_STMT child of a function.
+
+_statement(cursor)
+
+Dispatches compound blocks, ifs, switches, loops, declarations, assignments,
+returns, calls, and nested expressions.
+
+_block(cursor)
+
+Processes children in order. It stops after a child that ends in return.
+
+_if(cursor)
+
+Detailed flow:
+
+  1. Read condition, then branch, and else branch.
+  2. Create a Decision.
+  3. Traverse the then branch under Guard(condition, True).
+  4. Restore the state.
+  5. Traverse the else branch under Guard(condition, False).
+  6. Merge branch copy-propagation states.
+  7. If the then branch always returns, add Guard(condition, False) for code
+     after the if.
+
+_switch(cursor)
+
+Creates one case decision per arm, traverses each arm under a true guard,
+handles fallthrough labels, and adds false guards after returning arms.
+
+_arms(body)
+
+Groups CASE_STMT and DEFAULT_STMT cursors into switch arms.
+
+_case_chain(cursor)
+
+Combines consecutive case labels such as case 1: case 2:.
+
+_loop(cursor)
+
+Visits the loop body under condition=true for dataflow/copy propagation, then
+restores the state. The current implementation treats ordinary loop
+conditions as guard-only rather than normal generated decisions.
+
+_do_loop(cursor)
+
+Visits a do-while body once and then processes its condition.
+
+_copy_state(), _restore_state(), _merge_states()
+
+Adapter methods that call the corresponding CopyPropagation methods when
+available.
+
+_nested_expr(cursor)
+
+Recursively searches expressions for ternary conditions and nested decisions.
+
+_decision(condition, kind)
+
+Builds an expression and records a Decision.
+
+_record(expr, kind, cursor)
+
+Creates a Decision with the current guard stack and source location, then
+increments the ID.
+
+_build(cursor)
+
+Calls atom_builder.build() or a callable atom builder.
+
+_record_cursor(cursor)
+
+Passes declaration/assignment cursors to CopyPropagation.record().
+
+_case_expr(subject, labels)
+
+Creates one case atom or an Or of multiple case atoms.
+
+_case_atoms(subject, labels)
+
+Creates subject == label atoms using AtomBuilder.build_case() when available.
+
+_default_expr(subject, values, case_atoms)
+
+Creates an And of negated case conditions.
+
+_ends_in_return(cursor)
+
+Checks whether a statement, block, or both arms of an if always end in return.
+
+_guard(expr, outcome)
+
+Context manager that pushes a guard and pops it when traversal finishes.
+
+Module helpers:
+
+  _source()
+    Normalized token source text.
+
+  _literal_value()
+    Folds case literals, character literals, and integer suffixes.
+
+  _location()
+    Returns file:line:column.
+
+
+23. irbuild.py
+---------------
+
+BodyIrBuilder
+
+__init__(atom_builder, decisions=None, macros=None)
+
+Stores the atom builder, optional pre-extracted decisions, decision lookup
+table, scope information, static names, and macro values.
+
+build(func_cursor)
+
+Operation:
+
+  1. Use the supplied decisions or call DecisionExtractor.extract().
+  2. Index decisions by (kind, location).
+  3. Create a fresh atom builder for body conditions.
+  4. Collect local scopes and static names.
+  5. Convert the function body to a list of IR statements.
+
+Return:
+
+  List of statement IR nodes.
+
+_block(cursor)
+
+Converts every child to statements and concatenates the results.
+
+_statement(cursor)
+
+Maps a Clang cursor to Decl, If, Switch, loop, Return, Break, Assign, ExprStmt,
+or Unknown.
+
+_declarations(cursor)
+
+Creates Decl nodes. Static locals without an initializer receive Const(0).
+
+_if(cursor)
+
+Creates an If node linked to the corresponding decision ID.
+
+_switch(cursor)
+
+Creates SwitchCase nodes, including case labels and default flags.
+
+_loop(cursor)
+
+Creates While or For. For keeps initializer, condition, increment, body, and
+runtime expression separately.
+
+_do_loop(cursor)
+
+Creates DoWhile with body and condition.
+
+_arm(cursor)
+
+Converts one branch cursor into a tuple of statements.
+
+_boolean(cursor)
+
+Builds a boolean Atom tree using the fresh body atom builder.
+
+_expr(cursor)
+
+Converts literals, references, members, indexes, calls, casts, ternaries,
+unary operators, and binary operators to expression IR.
+
+_decision_id(kind, cursor)
+
+Finds and consumes the matching extracted decision ID by kind and location.
+
+Module helpers:
+
+  _function_body()
+    Finds a function's compound body.
+
+  _local_scopes()
+    Gives shadowed local declarations distinct scope names.
+
+  _static_names()
+    Gives static locals names such as function::counter#1.
+
+  _initializer()
+    Finds a declaration initializer.
+
+  _is_static()
+    Checks storage class.
+
+  _is_array_type()
+    Checks whether a type is an array type.
+
+  _zero_initializer()
+    Checks whether an initializer is effectively zero.
+
+  _arms(), _case_chain()
+    Group switch labels and statements.
+
+  _loop_condition()
+    Finds the condition child for while, for, and do-while.
+
+  _for_part()
+    Converts the initializer or increment part of a for loop.
+
+  _unwrap()
+    Removes expression wrappers.
+
+  _call_arguments()
+    Removes the referenced callee cursor and returns real call arguments.
+
+  _callee_name()
+    Returns the referenced function name.
+
+  _literal()
+    Folds Clang literals, enum values, macros, and integer text.
+
+  _literal_type()
+    Preserves unsigned literal type information for large literals.
+
+  _spelling(), _operator(), _source(), _location()
+    Read cursor spelling, operator, source text, and location.
+
+  _fresh_atom_builder()
+    Creates a new AtomBuilder with independent CopyPropagation state.
+
+
+24. dataflow.py
+----------------
+
+_Flow
+
+Internal result from processing a block:
+
+  active
+    States that continue normally.
+
+  breaks
+    States that left through break.
+
+
+DataflowEngine
+
+__init__(max_paths=256)
+
+Stores the maximum number of states to retain before merging.
+
+analyze(function_ir)
+
+Operation:
+
+  1. Reset points, returns, writes, and leaf names.
+  2. Index decision expressions.
+  3. Create initial values for IN and INOUT leaves.
+  4. Create aliases for top-level pointer leaves.
+  5. Process the whole body with _block().
+  6. Build DataflowResult.
+  7. Attach it to function_ir.dataflow.
+
+Return:
+
+  DataflowResult.
+
+_block(states, statements)
+
+Processes statements in order until no active state remains. Break states are
+collected separately.
+
+_statement(states, statement)
+
+Dispatches declarations, assignments, ifs, loops, switches, returns, calls,
+unknown statements, and breaks.
+
+_bind_static(state, declaration)
+
+Maps static storage leaves to the local static declaration path.
+
+_if(states, statement)
+
+For each state:
+
+  1. Resolve the condition.
+  2. Save a DataflowPoint.
+  3. Create true and false branches.
+  4. Process both arms.
+  5. Merge continuing states.
+
+_for(states, statement)
+
+Processes the initializer, converts the for loop to a While-like analysis, and
+invalidates values written by the loop.
+
+_loop(states, statement, extra_written=())
+
+Creates false exits and true body states. All values written by the loop are
+invalidated after the loop because the exact iteration count is not modeled.
+
+_do_loop(states, statement)
+
+Runs the body first, then creates condition true/false exits.
+
+_switch(states, statement)
+
+Tracks remaining states as each case is considered. It handles default and
+fallthrough paths.
+
+_case_condition(subject, case, all_labels)
+
+Creates equality expressions for case labels or an And of not-equalities for
+default.
+
+_branch(state, decision_id, condition, outcome)
+
+Rejects a branch when condition is a known constant with the opposite outcome.
+Otherwise appends a PathConstraint.
+
+_condition(expression, state, seen=())
+
+Resolves an Atom tree or expression, folds constants, and returns None if an
+unknown value remains.
+
+_node_expr(node, state, seen=())
+
+Converts Atom/And/Or/Not into executable symbolic expressions.
+
+_assign_lvalue(state, lhs, expression, operator)
+
+Finds assignment targets, substitutes the right side, updates each target,
+tracks aliases, and records writes.
+
+_assign_path(state, path, expression, operator)
+
+Updates one symbolic path and folds compound assignment.
+
+_declare_pointer(state, declaration)
+
+Creates an unknown alias entry for a pointer local.
+
+_lvalue_targets(expression, state)
+
+Resolves normal, dereferenced, member, and indexed assignment targets.
+
+_pointer_targets(expression, state, seen=())
+
+Resolves address-of, pointer dereference, aliases, member pointers, and indexed
+pointers into concrete symbolic paths.
+
+_member_targets(expression, state, seen=())
+
+Adds a member name to every pointer target.
+
+_index_targets(expression, state, seen=())
+
+Adds a constant or wildcard index to every pointer target.
+
+_add_index(target, index)
+
+Combines an index with a previous array index.
+
+_load_targets(targets, state, seen=())
+
+Loads one target. Unknown or ambiguous targets become Unknown expressions.
+
+_substitute(expression, state, seen=())
+
+Iteratively follows Ref, pointer, member, index, call, unary, binary, cast,
+ternary, Phi, and boolean nodes. It stops on cycles and unknown values.
+
+_path(expression)
+
+Converts an IR expression to a symbolic path string.
+
+_fold(expression)
+
+Folds constant unary, binary, And, and Or expressions.
+
+_eval(operator, left, right)
+
+Evaluates a known integer operation.
+
+_const_int(), _const_bool()
+
+Read constant integer or Boolean values.
+
+_has_unknown(expression)
+
+Recursively checks for Unknown nodes.
+
+_call_effect(state, expression)
+
+Marks values potentially changed by a stub call, especially pointer arguments.
+
+_pointer_argument_targets(argument, state)
+
+Finds the storage affected by a pointer argument.
+
+_poison(state, names)
+
+Adds names to the unknown set.
+
+_invalidate(state, names)
+
+Removes values/aliases and marks them unknown. "*" invalidates everything.
+
+_written(statements)
+
+Collects names assigned by a block, including nested control flow.
+
+_limit(states)
+
+Returns all states when under max_paths, otherwise calls _merge().
+
+_merge(states)
+
+Merges symbolic values and aliases. Values that differ become unknown. The
+common prefix of path constraints is retained.
+
+
+25. solver.py
+----------------
+
+NEGATE
+
+Maps an atom operator to its opposite:
+
+  EQ <-> NE
+  LT <-> GE
+  LE <-> GT
+
+
+Domain
+
+Stores the possible values for one CType.
+
+__init__(ctype)
+
+Initializes enum values or numeric type bounds, plus banned values, required
+bits, and forbidden bits.
+
+for_type(ctype)
+
+Class method that returns Domain(ctype).
+
+restrict(op, value)
+
+Narrows the domain:
+
+  EQ       -> set both bounds
+  NE       -> ban one value
+  LT/LE    -> reduce the high bound
+  GT/GE    -> increase the low bound
+  BITSET   -> require bits, or reject forbidden bits
+
+Returns False when no value can satisfy the domain.
+
+_alive(value)
+
+Skips banned values.
+
+_find(start)
+
+Finds the first legal enum or integer value at or after start.
+
+_ranges(start)
+
+For signed types, splits the domain into raw unsigned ranges that preserve
+two's-complement ordering.
+
+_next_bits(start, end)
+
+Finds a raw bit pattern satisfying required and forbidden bits.
+
+_to_raw(value), _from_raw(value)
+
+Convert between signed values and unsigned bit patterns.
+
+_bits_ok(value)
+
+Checks required and forbidden bits.
+
+pick(prefer=None)
+
+Returns a legal value, using prefer when possible. Raises ValueError for an
+empty domain.
+
+
+AtomConstraints.for_outcome(atom, outcome)
+
+Converts a Boolean atom result into numeric Constraint objects.
+
+Examples:
+
+  truthy TRUE  -> variable != 0
+  truthy FALSE -> variable == 0
+  x > 10 TRUE  -> x > 10
+  x > 10 FALSE -> x <= 10
+
+Returns an empty list for an uncontrollable atom.
+
+
+Solver
+
+solve(constraints)
+
+Operation:
+
+  1. Create one Domain per variable.
+  2. Apply every constraint to the correct Domain.
+  3. Store preferences.
+  4. Pick one value per variable.
+
+Return:
+
+  Dictionary such as {"x": 12}, or None when constraints conflict.
+
+
+26. mcdc.py
+----------------
+
+eval_expr(node, assign)
+
+Evaluates an Atom/And/Or/Not tree using a dictionary of Atom -> Boolean.
+
+Example:
+
+  eval_expr(And((a, b)), {a: True, b: False}) -> False
+
+
+_merge(*assignments)
+
+Combines assignments. Returns None if the same atom receives conflicting
+values.
+
+
+MaskingRecipes
+
+make(node, outcome)
+
+Creates a canonical assignment that makes node evaluate to outcome.
+
+For And:
+
+  To make the result True, all children must be True.
+  To make the result False, one child is False and others are masking values.
+
+For Or:
+
+  To make the result False, all children must be False.
+  To make the result True, one child is True and others are masking values.
+
+For Not, the requested outcome is inverted for the child.
+
+_combine(assignments)
+
+Combines child assignments into one dictionary.
+
+
+McdcGenerator
+
+pairs(expr)
+
+For every unique atom:
+
+  1. Find the masking context.
+  2. Create atom=False and atom=True assignments.
+  3. Check that the full expression flips.
+  4. Use truth-table fallback for up to 12 atoms when necessary.
+
+Return:
+
+  Dictionary:
+
+    atom -> (off_assignment, on_assignment)
+
+rows(expr)
+
+Creates deterministic, deduplicated assignments from pairs().
+
+_append(rows, seen, assignment)
+
+Adds an assignment once using a frozenset key.
+
+_unique_atoms(expr)
+
+Returns atoms from left to right, removing duplicate atom objects.
+
+_context(node, target)
+
+Finds the sibling values needed to isolate target.
+
+_flips(expr, off, on)
+
+Checks whether the full decision outcome changes.
+
+_fallback_pair(expr, target, atoms)
+
+Tries all Boolean combinations of other atoms when the masking recipe is not
+valid. It refuses truth-table expansion over 12 atoms.
+
+
+27. coverage.py
+----------------
+
+CoverageGenerator
+
+__init__(max_rounds=4, max_rows=256)
+
+Sets search limits and clears function-specific caches.
+
+rows(function, existing, decision_ids=None)
+
+Input:
+
+  function
+    FunctionIR to execute.
+
+  existing
+    Rows already produced by MC/DC/guards.
+
+  decision_ids
+    Optional subset of decisions to target.
+
+Operation:
+
+  1. Get function inputs.
+  2. Create an Interpreter.
+  3. Build coverage targets.
+  4. Run existing rows.
+  5. If coverage is incomplete, vary input values.
+  6. Execute candidates.
+  7. Keep candidates that gain coverage.
+  8. Stop at max_rounds or max_rows.
+
+Return:
+
+  Additional TestRow objects with kind "Coverage".
+
+_run(interpreter, function, values, key=None)
+
+Runs and caches one concrete execution. NULL is cached like interpreter value 0.
+
+_set_function(function)
+
+Resets execution caches when a different function is used.
+
+_state(function)
+
+Creates a _CoverageState.
+
+_targets(function, decision_ids)
+
+Creates targets for decision outcomes, atom outcomes, and MC/DC indexes.
+
+_covered(results, function)
+
+Converts ExecResult observed outcomes and condition patterns into coverage keys.
+
+_independent(expr, index, patterns)
+
+Checks whether two observed patterns form an independence pair for an atom.
+
+_outcome(expr, pattern, positions)
+
+Evaluates a partially observed condition pattern.
+
+_defaults(inputs)
+
+Creates the default input dictionary.
+
+_values(leaf, function, base, extra)
+
+Creates candidate values from type limits, simple constants, boundary values,
+and values related to another variable.
+
+_decision_inputs(function, inputs, decision_ids)
+
+Finds which inputs can influence selected decisions and whether combinations
+are needed for derived paths.
+
+_expression_paths(value, paths)
+
+Recursively collects input paths from IR expressions.
+
+_expression_path(value)
+
+Returns a normalized path for Ref, MemberE, Index, and pointer expressions.
+
+_index_values(value)
+
+Collects literal array indexes used by the body.
+
+_key(values)
+
+Creates a stable cache key in inventory input order. NULL becomes numeric zero
+for cache comparison.
+
+_description(gained)
+
+Creates a human-readable description for newly covered targets.
+
+
+_CoverageState
+
+Tracks already covered decisions, condition patterns, and MC/DC pairs.
+
+__init__(function)
+
+Indexes atoms and decision expressions.
+
+add(result)
+
+Commits all new coverage from an ExecResult.
+
+gained(result)
+
+Calculates new coverage without committing it.
+
+_changes(result, commit)
+
+Shared implementation for add() and gained().
+
+_independent(decision, index, left, right)
+
+Checks whether two concrete condition patterns isolate one atom.
+
+_outcome(decision, pattern)
+
+Caches evaluation of one decision pattern.
+
+
+28. boundary.py
+----------------
+
+RELATIONAL
+
+Set of relational operators accepted for boundary generation:
+
+  EQ, NE, LT, LE, GT, GE
+
+
+BoundaryGenerator
+
+__init__(solver)
+
+Stores the Solver.
+
+rows(function)
+
+Operation:
+
+  1. Create defaults.
+  2. Visit every decision and every atom.
+  3. Keep only controllable relational atoms.
+  4. Generate k-1, k, k+1.
+  5. Add guard constraints.
+  6. Solve values.
+  7. Deduplicate equal value dictionaries.
+
+Return:
+
+  Boundary TestRow objects.
+
+_boundary_atom(atom)
+
+Returns True for a variable relational atom with a constant or rhs variable.
+
+_points(atom)
+
+Returns legal boundary points. For x OP y, y is first replaced by its type
+midpoint.
+
+_description(atom, point)
+
+Creates text such as:
+
+  boundary x > 10: 9
+
+_guard_intent(function, decision)
+
+Creates intent entries for all outer guards.
+
+_append(rows, by_values, row)
+
+Adds or merges a row by input values.
+
+
+29. fault.py
+----------------
+
+FaultGenerator
+
+__init__(overrides=None)
+
+Stores type-name override values.
+
+rows(inventory)
+
+Operation:
+
+  1. Create defaults for all input leaves.
+  2. For each input, call _values().
+  3. Replace that one variable with each fault value.
+  4. Deduplicate identical rows.
+
+Return:
+
+  Fault Injection TestRow objects.
+
+_values(variable)
+
+Returns:
+
+  ["NULL"] for pointers.
+  Configured override values when present.
+  [enum_max + 1] for enums.
+  [lo, hi] for signed types.
+  [0, hi] for unsigned types.
+
+
+30. assembler.py
+----------------
+
+RowAssembler
+
+__init__(solver, mcdc, fault_overrides=None, include_boundary=True,
+include_fault=True)
+
+Stores generator objects and optional boundary/fault settings.
+
+assemble(function)
+
+Detailed operation:
+
+  1. Call _inputs().
+  2. Call _defaults().
+  3. If there are no decisions, return one Nominal row.
+  4. For each decision:
+       a. Report uncontrollable atoms.
+       b. Create guard assignments with _guards().
+       c. Create MC/DC assignments with McdcGenerator.rows().
+       d. Convert assignments into constraints.
+       e. Call Solver.solve().
+       f. Add intent and deduplicate values.
+       g. Call CoverageGenerator.rows() for concrete coverage.
+  5. If enabled, add BoundaryGenerator rows.
+  6. If enabled, add FaultGenerator rows.
+  7. Return rows and notes.
+
+Return:
+
+  (rows, notes)
+
+_inputs(function)
+
+Returns IN and INOUT leaves in function order.
+
+_defaults(inputs)
+
+Returns 0 for normal inputs, clamped to the type range. Address leaves default
+to 1, meaning non-NULL.
+
+_guards(decision)
+
+For every outer Guard, creates one or more atom assignments. It combines guard
+recipes and limits alternatives to 32.
+
+_recipes(expr, outcome)
+
+Creates the canonical masking recipe plus additional truth-table recipes for
+up to 12 atoms.
+
+_constraints(*assignments)
+
+Converts every Atom assignment to Solver constraints using
+AtomConstraints.for_outcome().
+
+_intent(function, decision, outcome)
+
+Creates a dictionary containing the target decision outcome and all outer
+guard outcomes.
+
+
+31. interp.py
+----------------
+
+ExecResult
+
+Stores the result of one concrete execution:
+
+  outcomes
+    Last outcome for each decision.
+
+  observed
+    All outcomes observed for each decision.
+
+  conditions
+    Short-circuit atom patterns.
+
+  loops
+    Loop outcomes.
+
+  outputs
+    Calculated output values.
+
+  unknown
+    Output names that could not be calculated safely.
+
+
+Interpreter
+
+__init__(inventory)
+
+Indexes input names, normalized array names, and pointer address names.
+
+run(function, values)
+
+Operation:
+
+  1. Reset environment, aliases, pointers, outcomes, and unknown state.
+  2. Load every input into env. NULL is represented as zero internally.
+  3. Execute the body with _block().
+  4. Save function return value as function().
+  5. Save OUT and INOUT values.
+  6. Return ExecResult.
+
+_block(statements)
+
+Executes statements in order and returns the first control signal.
+
+_stmt(statement)
+
+Executes one Decl, Assign, If, Switch, loop, Break, ExprStmt, or Return.
+
+_set_alias(path, expression)
+
+Stores pointer aliases for address-of and pointer-copy expressions.
+
+_loop_condition(statement)
+
+Uses runtime_cond when present, otherwise the symbolic condition.
+
+_bind_static(declaration)
+
+Copies static input leaves into the static local execution paths.
+
+_eval(expression)
+
+Evaluates constants, references, calls, ternaries, casts, indexes, members,
+unary operations, binary operations, atoms, and boolean trees.
+
+Local helper calls execute the helper body with decision recording disabled.
+External calls read tessy_<name> from the environment.
+
+_trace(expression)
+
+Evaluates a short-circuit condition and records which atom leaves were actually
+visited.
+
+_loop(body, condition, do_first=False, increment=(), loop_id=None)
+
+Executes up to 1024 iterations, handling break, return, increment, and unknown
+loop writes.
+
+_record(decision_id, outcome, leaves)
+
+Records decision outcome and concrete condition pattern when recording is on.
+
+_pattern(decision_id, leaves)
+
+Maps a short-circuit sequence of observed leaves back onto the complete atom
+tree, using None for masked atoms.
+
+_read(path, address=True)
+
+Reads a value from env. It handles address leaves, normalized array paths,
+unknown values, and missing values.
+
+_normalized_path(path)
+
+Replaces numeric indexes with [*] for shared array leaves.
+
+_legacy_atom(atom)
+
+Evaluates old source-text atoms using the legacy regular expression format.
+
+_legacy_constant(name)
+
+Gets a constant from function.constants or an array-bound fallback.
+
+_array_bound()
+
+Finds the largest literal index in input names.
+
+_path(expression)
+
+Converts an IR expression into an environment path and follows pointer aliases.
+
+_switch(statement)
+
+Evaluates the subject, selects the first matching case or default, records case
+outcomes, and executes fallthrough until break/return.
+
+_writes(statements)
+
+Collects simple assignment output paths for unknown loop handling.
+
+_struct_stub(name)
+
+Returns True if a stub returns a struct.
+
+_wrap(path, value)
+
+Applies the declared variable bit width and signed two's-complement conversion.
+
+_truth(value)
+
+Converts a value to 0/1 while preserving Unknown.
+
+_binop(op, left, right)
+
+Evaluates arithmetic, bitwise, comparison, and shift operators.
+
+_assign(op, old, value)
+
+Applies "=" or a compound assignment.
+
+_atom(op, left, right)
+
+Evaluates an Atom operator.
+
+_divide(left, right), _mod(left, right)
+
+Implement C-style division and remainder. Division by zero returns zero inside
+the concrete interpreter's low-level helper; the expression evaluator normally
+marks the result unknown before reaching this point.
+
+
+Verifier
+
+__init__(interpreter)
+
+Stores the Interpreter.
+
+check(function, rows)
+
+For every row:
+
+  1. Run the function.
+  2. Compare actual outcomes with row.intent.
+  3. Add an intent mismatch note when different.
+  4. Otherwise copy actual outputs into row.expected.
+
+Return:
+
+  List of diagnostic notes.
+
+
+32. emit.py
+----------------
+
+ValueXmlWriter
+
+write(function, rows, path, default_range=None)
+
+Operation:
+
+  1. Create a function XML root.
+  2. Skip address-only leaves.
+  3. Write name, length, format, direction, and pointer attributes.
+  4. For input leaves, create a row-aligned range.
+  5. Add testmethod="decision" to inputs.
+  6. Write the XML file.
+
+When default_range is supplied, every input receives that literal range
+instead of reading row values. Timeout output uses default_range="0,1".
+
+_pointer_address(name, addresses)
+
+Finds the address leaf controlling a pointer path.
+
+
+StubXmlWriter
+
+write(function, path)
+
+Creates function_analysis XML, writes every called function, its return type,
+return tessy name, and argument capture names.
+
+
+ReportWriter
+
+write(function, rows, notes, path)
+
+Builds Markdown containing:
+
+  - Function metadata
+  - Row count
+  - Coverage summary
+  - One row per TestRow
+  - Expected outputs
+  - Diagnostic sections
+
+_source(function)
+
+Reads function.file or function.source_file when present.
+
+_stub_path(value)
+
+Normalizes a stub source path and keeps the app_source suffix when possible.
+
+_write_stub_xml(root, path)
+
+Indents and writes stub XML with its XML declaration.
+
+_bool(value)
+
+Returns lowercase "true" or "false".
+
+_render(leaf, value)
+
+Writes NULL/string values directly and renders enum numbers as enum names.
+
+_validation_len(leaf)
+
+Applies the TESSY validation-length convention, including the extra width used
+for some unsigned struct members.
+
+_write_xml(root, path)
+
+Indents and writes value XML.
+
+_kinds(rows)
+
+Counts rows by kind and returns text such as MC/DC=4, Boundary=2.
+
+_expected(row)
+
+Formats expected outputs as name=value pairs.
+
+_cell(value)
+
+Escapes Markdown pipes and newlines.
+
+_diagnostics(function, rows, notes)
+
+Groups notes into infeasible, uncontrollable, and manual sections. It also adds
+manual notes for NULL rows and repeated stub calls.
+
+_has_null(rows)
+
+Checks whether any row contains NULL.
+
+_collect_calls(value, counts)
+
+Recursively counts CallE nodes.
+
+
+33. db.py
+----------------
+
+ModuleIndexer
+
+__init__(config=None)
+
+Stores the configuration mapping or object.
+
+_get(name, default=None)
+
+If config is dictionary-like, calls config.get(name, default). Otherwise it
+calls getattr(config, name, default).
+
+Example:
+
+  config = {"defines": ("DEBUG",)}
+  _get("defines", ()) -> ("DEBUG",)
+  _get("includes", ()) -> ()
+
+index(source, root_path=None)
+
+Detailed operation:
+
+  1. Normalize source and root paths.
+  2. Call _includes().
+  3. Call configure_libclang().
+  4. Call ClangParser.parse().
+  5. Collect macros.
+  6. Create InventoryBuilder.
+  7. Register global types.
+  8. Find functions with function_definitions().
+  9. Call _function() for every function.
+  10. Build ModuleAnalysis with source/header hashes and all records.
+  11. Attach constants and local-function mappings.
+
+Return:
+
+  ModuleAnalysis.
+
+_function(cursor, tu, inventory_builder, macros)
+
+Calls InventoryBuilder.build(), creates AtomBuilder, extracts decisions,
+builds body IR, creates FunctionIR, runs DataflowEngine.analyze(), and returns
+the FunctionIR.
+
+_includes(source, root_path)
+
+Combines configured include directories with IncludeScanner directories and
+creates (header_name, path, sha256) tuples.
+
+_register_globals(tu, builder)
+
+Walks all Clang nodes. It registers every enum and describes every file-scope
+variable so referenced structs/enums are present in TypeGraph.
+
+_globals(tu, builder)
+
+Creates unique GlobalDef records for file-scope variables, including extern,
+static, const, volatile, type, dimensions, and source path.
+
+_macros(tu)
+
+Collects non-system macros, folds object-like values, and returns MacroDef
+objects.
+
+
+XmlDbWriter
+
+write(analysis, path)
+
+Creates deterministic SourceAnalysis XML and writes includes, macros, enums,
+structs, globals, functions, bodies, and dataflow.
+
+_macro(), _enum(), _struct(), _member(), _global()
+
+Serialize module-level records.
+
+_function()
+
+Serialize parameters, stubs, leaves, decisions, body, and dataflow.
+
+_stub(), _leaf(), _decision()
+
+Serialize function metadata.
+
+_statement()
+
+Dispatch every statement IR class to an XML tag.
+
+_block()
+
+Writes a tagged block containing child statements.
+
+_dataflow()
+
+Writes points, states, returns, and writes.
+
+
+XmlDbReader
+
+read(path)
+
+Operation:
+
+  1. Parse XML.
+  2. Read include paths and headers.
+  3. Read macros, enums, structs, globals, and functions.
+  4. Build ModuleAnalysis.
+  5. Attach constants and local-function mappings.
+  6. Link local helper inputs and stubs.
+
+Return:
+
+  ModuleAnalysis reconstructed without running Clang parsing.
+
+
+db.py module helper functions:
+
+  _link_local_call_stubs(analysis)
+    Copies input leaves and stubs from same-module helper functions to callers.
+
+  _set_constants(analysis)
+    Gives every function folded macro and enum constants.
+
+  _set_local_functions(analysis)
+    Gives every function the name -> FunctionIR map.
+
+  _called_names(statements)
+    Collects CallE names recursively.
+
+  _nodes(node)
+    Recursively yields CallE nodes from dataclasses and containers.
+
+  _sha256(path)
+    Returns SHA-256 of file bytes.
+
+  _walk(cursor)
+    Recursively yields a cursor and all descendants.
+
+  _is_global(cursor)
+    Checks whether semantic_parent is the translation unit.
+
+  _storage(cursor, wanted)
+    Checks a storage-class name.
+
+  _is_static(cursor)
+    Checks static storage class.
+
+  _macro(cursor)
+    Parses one #define source line into MacroDef.
+
+  _source_line(file, line)
+    Reads one source line.
+
+  _dims(), _read_dims()
+    Convert dimensions between tuples and comma-separated XML text.
+
+  _enum_values(), _read_enum_values()
+    Convert enum pairs between tuples and XML text.
+
+  _values(), _read_values()
+    Convert labels/values between tuples and XML text.
+
+  _optional()
+    Converts None to empty text.
+
+  _line()
+    Extracts the line number from a source location.
+
+  _bool()
+    Parses lowercase XML Boolean text.
+
+  _read_macro(), _read_enum(), _read_member(), _read_struct(),
+  _read_global(), _read_stub(), _read_leaf()
+    Construct model dataclasses from XML elements.
+
+  _ctype()
+    Constructs CType from XML attributes.
+
+  _read_function()
+    Reconstructs FunctionIR, including decisions, body, and dataflow.
+
+  _read_decision()
+    Reconstructs guards and boolean expression nodes.
+
+  _read_statement()
+    Reconstructs statement IR.
+
+  _read_block(), _child_expr()
+    Read nested statement/expression blocks.
+
+  _write_expr(), _write_node()
+    Serialize expression and Boolean nodes.
+
+  _read_expr(), _read_node(), _read_child_node()
+    Reconstruct expression and Boolean nodes.
+
+  _write_state()
+    Serialize one DataflowState.
+
+  _read_dataflow(), _read_state()
+    Reconstruct dataflow records.
+
+
+34. SIMPLE WAY TO REMEMBER THE DESIGN
+--------------------------------------
+
+  ClangParser
+    Reads C syntax.
+
+  TypeGraph
+    Understands C types.
+
+  InventoryBuilder
+    Decides which values can be tested.
+
+  AtomBuilder
+    Converts conditions into testable atoms.
+
+  DecisionExtractor
+    Finds branches and their guards.
+
+  BodyIrBuilder
+    Converts the function body into an internal representation.
+
+  DataflowEngine
+    Resolves derived values and reachable paths.
+
+  RowAssembler
+    Builds test rows.
+
+  McdcGenerator
+    Chooses Boolean combinations.
+
+  Solver
+    Chooses actual integer values.
+
+  Interpreter
+    Executes each row.
+
+  Verifier
+    Checks the row and computes expected outputs.
+
+  Writers
+    Produce DB XML, value XML, stub XML, and reports.

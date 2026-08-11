@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='utf-8'?>
+<function_analysis function_name="PDM_MOS_Core0_DtcClear_Handler" file="" line="1473">
+  <called_functions count="1">
+    <function name="Rte_PDMMOS_1_DtcApp_PDMDtcClrEventCore0ASILB_Event_GetMsg" file="" line="">
+      <return>
+        <type>DtcApp_PDMDtcClearEvent_t</type>
+        <name>tessy_Rte_PDMMOS_1_DtcApp_PDMDtcClrEventCore0ASILB_Event_GetMsg</name>
+      </return>
+    </function>
+  </called_functions>
+</function_analysis>
