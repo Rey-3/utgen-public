@@ -1,16 +1,24 @@
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 import warnings
 from collections.abc import Sequence
+from copy import copy
 from dataclasses import dataclass
 from itertools import product
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
+
 DEFAULT_TEMPLATE_PATH = Path(r"D:\TestTeamAssets\common_tools\v2\template.xlsx")
 XLSX_VARIABLE_LIMIT = 14_000
 XLS_VARIABLES_PER_SHEET = 98
+XLSX_ROW_LIMIT = 1_048_576
+_REQUIRED_SHEETS = ("General", "Properties", "User Code", "Stubs", "Call Trace", "Values", "Fault Injections")
 _DIRECTIONS = {"in", "out", "inout"}
 _C_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _DIMENSION = re.compile(r"\[([^]]*)\]")
@@ -339,3 +347,164 @@ def _partition_columns(columns: Sequence[_Column]) -> tuple[tuple[_Column, ...],
     for start in range(0, len(columns), XLS_VARIABLES_PER_SHEET):
         parts.append(tuple(columns[start:start + XLS_VARIABLES_PER_SHEET]))
     return tuple(parts)
+
+
+def _manifest_suffix(path: Path, module: str, kind: str) -> str:
+    prefix = f"{kind}_{module}_"
+    if path.suffix != ".xml" or not path.name.startswith(prefix) or not path.stem[len(prefix):]:
+        raise RuntimeError(f"{path.name} is not a {kind}_{module}_*.xml manifest")
+    return path.stem[len(prefix):]
+
+
+def _manifest_paths(paths: Sequence[Path], module: str, kind: str) -> dict[str, Path]:
+    manifest = {}
+    for source in paths:
+        path = Path(source)
+        suffix = _manifest_suffix(path, module, kind)
+        if suffix in manifest:
+            raise RuntimeError(f"duplicate manifest suffix {suffix}")
+        manifest[suffix] = path
+    return manifest
+
+
+def _copy_style(source, target) -> None:
+    target._style = copy(source._style)
+
+
+def _extend_dimensions(sheet, first_row: int, last_row: int, first_column: int, last_column: int,
+                       anchor_row: int, anchor_column: int) -> None:
+    existing_rows = sheet.max_row
+    existing_columns = sheet.max_column
+    anchor_height = sheet.row_dimensions[anchor_row].height
+    anchor_width = sheet.column_dimensions[get_column_letter(anchor_column)].width
+    for row in range(max(first_row, existing_rows + 1), last_row + 1):
+        sheet.row_dimensions[row].height = anchor_height
+    for column in range(max(first_column, existing_columns + 1), last_column + 1):
+        sheet.column_dimensions[get_column_letter(column)].width = anchor_width
+
+
+def _write_cell(sheet, row: int, column: int, value, anchor_row: int, anchor_column: int) -> None:
+    cell = sheet.cell(row, column)
+    _copy_style(sheet.cell(anchor_row, anchor_column), cell)
+    cell.value = value
+
+
+def _validate_template(path: Path) -> None:
+    if not path.is_file():
+        raise RuntimeError(f"template does not exist: {path}")
+    try:
+        workbook = load_workbook(path)
+    except Exception as error:
+        raise RuntimeError(f"cannot load template {path}: {error}") from error
+    try:
+        for name in _REQUIRED_SHEETS:
+            count = workbook.sheetnames.count(name)
+            if count == 0:
+                raise RuntimeError(f"template is missing required sheet {name}")
+            if count != 1:
+                raise RuntimeError(f"template has duplicate required sheet {name}")
+    finally:
+        workbook.close()
+
+
+def _validate_limits(spec: _ValueSpec, columns: Sequence[_Column], stubs: Sequence[_StubSpec]) -> None:
+    if len(columns) > XLSX_VARIABLE_LIMIT:
+        raise ValueError(f"{spec.path}: has {len(columns)} variables; xlsx limit is {XLSX_VARIABLE_LIMIT}")
+    testcase_limit = XLSX_ROW_LIMIT - 4
+    if spec.row_count > testcase_limit:
+        raise ValueError(f"{spec.path}: has {spec.row_count} test cases; xlsx limit is {testcase_limit}")
+    if len(stubs) > XLSX_ROW_LIMIT - 4:
+        raise ValueError(f"module has {len(stubs)} stubs; xlsx limit is {XLSX_ROW_LIMIT - 4}")
+
+
+class ExcelWriter:
+    def __init__(self, template_path=DEFAULT_TEMPLATE_PATH):
+        self.template_path = Path(template_path)
+
+    def write_module(self, module: str, value_paths: Sequence[Path], stub_paths: Sequence[Path],
+                     output_directory: Path) -> list[Path]:
+        values = _manifest_paths(value_paths, module, "value")
+        stubs = _manifest_paths(stub_paths, module, "stub")
+        for suffix, path in values.items():
+            if suffix not in stubs:
+                raise RuntimeError(f"{path.name} requires stub_{module}_{suffix}.xml")
+        for suffix, path in stubs.items():
+            if suffix not in values:
+                raise RuntimeError(f"{path.name} requires value_{module}_{suffix}.xml")
+        plans = []
+        names = set()
+        for suffix, path in values.items():
+            spec = _parse_value(path)
+            columns = _plan_columns(spec)
+            destination = Path(output_directory) / f"{spec.function}.xlsx"
+            if destination.name in names:
+                raise RuntimeError(f"duplicate output name {destination.name}")
+            names.add(destination.name)
+            plans.append((spec, columns, destination))
+        catalog = _stub_catalog(tuple(stubs.values()))
+        for spec, columns, destination in plans:
+            _validate_limits(spec, columns, catalog)
+        _validate_template(self.template_path)
+        output_directory = Path(output_directory)
+        try:
+            output_directory.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            raise RuntimeError(f"cannot create output directory {output_directory}: {error}") from error
+        failures = []
+        written = []
+        for spec, columns, destination in plans:
+            try:
+                self._write_workbook(spec, columns, catalog, destination)
+            except Exception as error:
+                failures.append(f"{spec.function} ({destination}): {error}")
+            else:
+                written.append(destination)
+        if failures:
+            raise RuntimeError("failed to write workbooks: " + "; ".join(failures))
+        return written
+
+    def _write_workbook(self, spec: _ValueSpec, columns: Sequence[_Column], stubs: Sequence[_StubSpec],
+                        destination: Path) -> None:
+        temporary = None
+        workbook = None
+        try:
+            workbook = load_workbook(self.template_path)
+            values = workbook["Values"]
+            properties = workbook["Properties"]
+            stub_sheet = workbook["Stubs"]
+            _extend_dimensions(values, 1, spec.row_count + 2, 1, len(columns) + 1, 3, 2)
+            for index, column in enumerate(columns, 2):
+                _write_cell(values, 1, index, column.name, 1, 2)
+                _write_cell(values, 2, index, column.declaration, 2, 2)
+                for row, value in enumerate(column.values, 3):
+                    _write_cell(values, row, index, value or None, 3, 2)
+            for row in range(3, spec.row_count + 3):
+                _write_cell(values, row, 1, f"tc{row - 2}.1", 3, 2)
+            _extend_dimensions(properties, 5, spec.row_count + 4, 1, 5, 5, 1)
+            for row in range(5, spec.row_count + 5):
+                testcase = row - 4
+                _write_cell(properties, row, 1, testcase, 5, 1)
+                _write_cell(properties, row, 2, 0, 5, 2)
+                _write_cell(properties, row, 5,
+                            f"Test Case ID: UT_{spec.function}_{testcase}\rTest Case Type: Generated Test\r"
+                            f"Overview: Automatically generated testcase {testcase} for {spec.function}()", 5, 5)
+            _extend_dimensions(stub_sheet, 5, len(stubs) + 4, 1, 4, 5, 1)
+            for row, stub in enumerate(stubs, 5):
+                _write_cell(stub_sheet, row, 1, 0, 5, 1)
+                _write_cell(stub_sheet, row, 2, 0, 5, 2)
+                _write_cell(stub_sheet, row, 3, stub.name, 5, 3)
+                _write_cell(stub_sheet, row, 4, _stub_body(stub, spec) or None, 5, 4)
+            with tempfile.NamedTemporaryFile(dir=destination.parent, suffix=".tmp.xlsx", delete=False) as file:
+                temporary = Path(file.name)
+            workbook.save(temporary)
+            workbook.close()
+            workbook = None
+            checked = load_workbook(temporary)
+            checked.close()
+            os.replace(temporary, destination)
+            temporary = None
+        finally:
+            if workbook is not None:
+                workbook.close()
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
