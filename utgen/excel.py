@@ -262,6 +262,10 @@ def _pointer_root(name: str) -> str:
     return name.split(".", 1)[0].split("[", 1)[0]
 
 
+def _declaration_root(name: str) -> str:
+    return name.split(".", 1)[0]
+
+
 def _pointer_groups(arguments: Sequence[_ValueArgument]) -> dict[str, list[_ValueArgument]]:
     groups = {}
     for argument in arguments:
@@ -299,13 +303,17 @@ def _pointer_values(argument: _ValueArgument, row_count: int, marker: str) -> tu
     return tuple(values)
 
 
+def _typed_declaration(marker: str, data_type: str) -> str:
+    return f"{marker}({data_type})"
+
+
 def _plan_columns(spec: _ValueSpec) -> tuple[_Column, ...]:
     groups = _pointer_groups(spec.arguments)
     _validate_pointer_groups(groups, spec.row_count)
     columns = []
     address_roots = set()
-    storage_roots = set()
-    for marker, directions in (("i", {"in", "inout"}), ("o", {"out", "inout"})):
+    typed_roots = set()
+    for marker, directions in (("i", {"in", "inout"}), ("o", {"out"})):
         handled_roots = set()
         for argument in spec.arguments:
             if argument.direction not in directions:
@@ -313,7 +321,11 @@ def _plan_columns(spec: _ValueSpec) -> tuple[_Column, ...]:
             if not argument.pointer:
                 values = argument.values if marker == "i" else ("",) * spec.row_count
                 for name in _expanded_names(argument.name):
-                    columns.append(_Column(name, marker, values))
+                    root = _declaration_root(name)
+                    declaration = (_typed_declaration(marker, argument.fmt)
+                                   if root not in typed_roots else marker)
+                    columns.append(_Column(name, declaration, values))
+                    typed_roots.add(root)
                 continue
             root = _pointer_root(argument.name)
             if root in handled_roots:
@@ -336,9 +348,10 @@ def _plan_columns(spec: _ValueSpec) -> tuple[_Column, ...]:
                     continue
                 values = _pointer_values(candidate, spec.row_count, marker)
                 for name in _expanded_names(candidate.name):
-                    declaration = candidate.fmt if root not in storage_roots else marker
+                    declaration = (_typed_declaration(marker, candidate.fmt)
+                                   if root not in typed_roots else marker)
                     columns.append(_Column(_storage_name(root, name), declaration, values))
-                    storage_roots.add(root)
+                    typed_roots.add(root)
     return tuple(columns)
 
 
@@ -398,7 +411,7 @@ def _write_cell(sheet, row: int, column: int, value, anchor_row: int, anchor_col
 
 
 def _preserve_xlsx_carriage_returns(path: Path) -> None:
-    """Keep C-style CR separators after openpyxl serializes worksheet text."""
+    """Keep C-style CR separators without corrupting package XML declarations."""
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(dir=path.parent, suffix=".cr.xlsx", delete=False) as file:
@@ -406,8 +419,13 @@ def _preserve_xlsx_carriage_returns(path: Path) -> None:
         with zipfile.ZipFile(path) as source, zipfile.ZipFile(temporary, "w") as target:
             for info in source.infolist():
                 data = source.read(info)
-                if info.filename.startswith("xl/") and info.filename.endswith(".xml"):
-                    data = data.replace(b"\r", b"&#13;")
+                if (info.filename.startswith("xl/worksheets/") or
+                        info.filename == "xl/sharedStrings.xml"):
+                    prefix, marker, body = data.partition(b"?>")
+                    if marker:
+                        leading, root_marker, content = body.partition(b"<")
+                        if root_marker:
+                            data = prefix + marker + leading + root_marker + content.replace(b"\r", b"&#13;")
                 target.writestr(info, data)
         os.replace(temporary, path)
         temporary = None
