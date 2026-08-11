@@ -15,7 +15,6 @@ except ImportError:                     # encoding detection degrades gracefully
     chardet = None
 
 _INCLUDE_RE = re.compile(r'#include\s*[<"]([^">]+)[>"]')
-PATH_SEP = "/"
 
 
 class IncludeScanner:
@@ -77,9 +76,9 @@ class IncludeScanner:
                     match = _INCLUDE_RE.match(line.strip())
                     if not match:
                         continue
-                    include_path = match.group(1)
+                    include_path = match.group(1).replace("\\", os.sep)
                     names.append(os.path.basename(include_path))
-                    if PATH_SEP in include_path:
+                    if os.sep in include_path:
                         self.include_full_paths.append(include_path)
         except OSError as e:
             print(f"Error parsing {source_file}: {e}")
