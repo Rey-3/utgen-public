@@ -189,7 +189,7 @@ def _parse_stub_file(path: Path) -> tuple[_StubSpec, ...]:
                 if type_element is None or name_element is None:
                     raise ValueError(f"{path}: stub argument definition is incomplete")
                 argument_types.append(_stub_text(type_element, path, "stub argument type"))
-                _stub_text(name_element, path, "stub argument name")
+                _stub_identifier(_stub_text(name_element, path, "stub argument name"), path, "stub argument name")
         stubs.append(_StubSpec(name, return_type, return_name, tuple(argument_types)))
     return tuple(stubs)
 
