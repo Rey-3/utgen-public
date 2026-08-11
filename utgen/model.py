@@ -145,8 +145,8 @@ class Decision:
     id: int
     expr: object
     kind: str                       # "if" | "case" | "loop"
-    guards: tuple
-    location: str
+    guards: tuple = ()
+    location: str = ""
 
 
 @dataclass
