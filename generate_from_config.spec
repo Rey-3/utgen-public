@@ -20,7 +20,8 @@ if not resource_dirs:
 
 version = os.path.basename(resource_dirs[-1])
 binaries = [(clang_exe, "clang/bin"), (libclang, "clang/bin")]
-datas = [(resource_dirs[-1], os.path.join("clang", "lib", "clang", version))]
+datas = [(resource_dirs[-1], os.path.join("clang", "lib", "clang", version)),
+         (os.path.join(here, "template.xlsx"), ".")]
 hiddenimports = (collect_submodules("utgen") + collect_submodules("clang") +
                  collect_submodules("openpyxl") + collect_submodules("win32com") +
                  ["utgen.excel", "pythoncom", "pywintypes"])

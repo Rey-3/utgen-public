@@ -14,7 +14,7 @@ from xml.etree import ElementTree as ET
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
-DEFAULT_TEMPLATE_PATH = Path(r"D:\TestTeamAssets\common_tools\v2\template.xlsx")
+DEFAULT_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "template.xlsx"
 XLSX_VARIABLE_LIMIT = 14_000
 XLS_VARIABLES_PER_SHEET = 98
 XLSX_ROW_LIMIT = 1_048_576
