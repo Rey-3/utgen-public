@@ -23,7 +23,7 @@ binaries = [(clang_exe, "clang/bin"), (libclang, "clang/bin")]
 datas = [(resource_dirs[-1], os.path.join("clang", "lib", "clang", version))]
 hiddenimports = (collect_submodules("utgen") + collect_submodules("clang") +
                  collect_submodules("openpyxl") + collect_submodules("win32com") +
-                 ["pythoncom", "pywintypes"])
+                 ["utgen.excel", "pythoncom", "pywintypes"])
 
 a = Analysis(
     [os.path.join(here, "generate_from_config.py")],
