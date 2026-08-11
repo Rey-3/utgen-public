@@ -352,6 +352,10 @@ def _partition_columns(columns: Sequence[_Column]) -> tuple[tuple[_Column, ...],
     return tuple(parts)
 
 
+def _value_sheet_names(columns: Sequence[_Column]) -> tuple[str, ...]:
+    return tuple(f"Value {index}" for index, _ in enumerate(_partition_columns(columns), 1))
+
+
 def _manifest_suffix(path: Path, module: str, kind: str) -> str:
     prefix = f"{kind}_{module}_"
     if path.suffix != ".xml" or not path.name.startswith(prefix) or not path.stem[len(prefix):]:
@@ -392,7 +396,7 @@ def _write_cell(sheet, row: int, column: int, value, anchor_row: int, anchor_col
     cell.value = value
 
 
-def _validate_template(path: Path) -> None:
+def _validate_template(path: Path, value_sheet_names: Sequence[str] = ()) -> None:
     if not path.is_file():
         raise RuntimeError(f"template does not exist: {path}")
     try:
@@ -406,6 +410,10 @@ def _validate_template(path: Path) -> None:
                 raise RuntimeError(f"template is missing required sheet {name}")
             if count != 1:
                 raise RuntimeError(f"template has duplicate required sheet {name}")
+        if value_sheet_names:
+            sheetnames = [name for name in workbook.sheetnames if name != "Values"] + list(value_sheet_names)
+            if len(set(sheetnames)) != len(sheetnames) or any(len(name) > XLS_SHEET_NAME_LIMIT for name in sheetnames):
+                raise RuntimeError("xls worksheet names must be unique and at most 31 characters")
     finally:
         workbook.close()
 
@@ -415,7 +423,7 @@ def _validate_limits(spec: _ValueSpec, columns: Sequence[_Column], stubs: Sequen
     if not is_xls and len(columns) + 1 > XLSX_COLUMN_LIMIT:
         raise ValueError(f"{spec.path}: has {len(columns)} variables; xlsx column limit is {XLSX_COLUMN_LIMIT - 1}")
     if is_xls:
-        names = tuple(f"Value {index}" for index, _ in enumerate(_partition_columns(columns), 1))
+        names = _value_sheet_names(columns)
         if len(set(names)) != len(names) or any(len(name) > XLS_SHEET_NAME_LIMIT for name in names):
             raise ValueError(f"{spec.path}: xls Value sheet names must be unique and at most {XLS_SHEET_NAME_LIMIT} characters")
     testcase_limit = (XLS_ROW_LIMIT if is_xls else XLSX_ROW_LIMIT) - 4
@@ -521,6 +529,9 @@ class ExcelWriter:
         for spec, columns, destination in plans:
             _validate_limits(spec, columns, catalog)
         _validate_template(self.template_path)
+        for spec, columns, destination in plans:
+            if len(columns) > XLSX_VARIABLE_LIMIT:
+                _validate_template(self.template_path, _value_sheet_names(columns))
         output_directory = Path(output_directory)
         try:
             output_directory.mkdir(parents=True, exist_ok=True)
@@ -551,7 +562,7 @@ class ExcelWriter:
             stub_sheet = workbook["Stubs"]
             if len(columns) > XLSX_VARIABLE_LIMIT:
                 parts = _partition_columns(columns)
-                titles = tuple(f"Value {index}" for index in range(1, len(parts) + 1))
+                titles = _value_sheet_names(columns)
                 occupied = set(workbook.sheetnames) - {"Values"}
                 if len(set(titles)) != len(titles) or any(len(title) > XLS_SHEET_NAME_LIMIT for title in titles) or occupied.intersection(titles):
                     raise ValueError("xls Value sheet names must be unique and at most 31 characters")
