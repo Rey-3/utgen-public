@@ -7,19 +7,20 @@ from time import perf_counter
 import yaml
 
 from utgen.assembler import RowAssembler
-from utgen.db import ModuleIndexer, XmlDbReader, XmlDbWriter
+from utgen.db import ModuleIndexer
 from utgen.emit import StubXmlWriter, ValueXmlWriter
-from utgen.excel import ExcelWriter
 from utgen.interp import Interpreter, Verifier
 from utgen.mcdc import McdcGenerator
 from utgen.model import Direction, Inventory, TestRow
 from utgen.solver import Solver
+from tessy_parse import mainBody
 
 
 CONFIG_PATH = (Path(sys.executable).with_name("config.yaml")
                if getattr(sys, "frozen", False) else Path(__file__).with_name("config.yaml"))
 TIME_LOG_PATH = CONFIG_PATH.with_name("generation_times.txt")
 FUNCTION_TIMEOUT_SECONDS = 200
+XML_INPUT_PATH = CONFIG_PATH.with_name("input")
 
 
 def projects_from_config():
@@ -27,10 +28,7 @@ def projects_from_config():
     tessy_include = config.get("Tessy", {}).get("include", ())
     if isinstance(tessy_include, str):
         tessy_include = (tessy_include,)
-    generate_excel = config.get("settings", {}).get("generate_excel", True)
-    if not isinstance(generate_excel, bool):
-        raise TypeError("settings.generate_excel must be a Boolean")
-    return config["projects"], tessy_include, generate_excel
+    return config["projects"], tessy_include
 
 
 def elapsed(start):
@@ -62,20 +60,13 @@ def write_timeout_outputs(function, name, output):
     return len(rows)
 
 
-def write_module_excels(name, output, value_paths, stub_paths, enabled):
-    if not enabled:
-        return []
-    print(f"generated: {output}")
-    return ExcelWriter().write_module(name, value_paths, stub_paths, output)
-
-
 _WORKER_ANALYSIS = None
 
 
-def initialize_worker(db_path):
-    """Load the module database once when the persistent worker starts."""
+def initialize_worker(analysis):
+    """Retain the indexed module when the persistent worker starts."""
     global _WORKER_ANALYSIS
-    _WORKER_ANALYSIS = XmlDbReader().read(Path(db_path))
+    _WORKER_ANALYSIS = analysis
 
 
 def worker_ready():
@@ -106,12 +97,12 @@ def generate_function(function_name, name, output):
         return "error", f"{type(error).__name__}: {error}"
 
 
-def start_worker(context, db_path):
-    """Start one persistent child process and load the XML database once."""
+def start_worker(context, analysis):
+    """Start one persistent child process with the indexed module."""
     pool = context.Pool(
         processes=1,
         initializer=initialize_worker,
-        initargs=(str(db_path),),
+        initargs=(analysis,),
     )
     try:
         if not pool.apply(worker_ready):
@@ -154,7 +145,7 @@ def run_function(function, name, output, pool):
 
 
 def run():
-    projects, include_dirs, generate_excel = projects_from_config()
+    projects, include_dirs = projects_from_config()
     TIME_LOG_PATH.write_text("", encoding="utf-8")
     indexer = ModuleIndexer({"defines": ("__GHS__","USE_CANTRV_TJA1145", "__CCRH__", "USE_IOC", "USE_PMIC_FS26"), "includes": include_dirs})
     context = mp.get_context("spawn")
@@ -170,22 +161,16 @@ def run():
                     try:
                         source = Path(module["source_file"])
                         root = Path(project["root_path"])
-                        output = Path(module["excel_input_dir"])
+                        output = XML_INPUT_PATH / name
                         output.mkdir(parents=True, exist_ok=True)
                         print(f"{name}: indexing {source}", flush=True)
                         analysis = indexer.index(source, root)
-                        db_path = output / f"db_{name}.xml"
-                        db_start = perf_counter()
-                        XmlDbWriter().write(analysis, db_path)
-                        report_time(f"{name}: db xml time {elapsed(db_start)}")
                         print(f"{name}: generating {len(analysis.functions)} functions", flush=True)
 
-                        value_xml_paths = []
-                        stub_xml_paths = []
                         worker_pool = None
                         try:
                             worker_start = perf_counter()
-                            worker_pool = start_worker(context, db_path)
+                            worker_pool = start_worker(context, analysis)
                             report_time(f"{name}: worker init time {elapsed(worker_start)}")
 
                             function_count = len(analysis.functions)
@@ -197,8 +182,6 @@ def run():
                                     row_count, timed_out = run_function(
                                         function, name, output, worker_pool
                                     )
-                                    value_xml_paths.append(output / f"value_{name}_{function.name}.xml")
-                                    stub_xml_paths.append(output / f"stub_{name}_{function.name}.xml")
                                     if timed_out:
                                         print(
                                             f"{name}: {function.name}: timeout; "
@@ -209,7 +192,7 @@ def run():
                                         worker_pool = None
                                         if function_index + 1 < function_count:
                                             worker_start = perf_counter()
-                                            worker_pool = start_worker(context, db_path)
+                                            worker_pool = start_worker(context, analysis)
                                             report_time(
                                                 f"{name}: worker restart time "
                                                 f"{elapsed(worker_start)}"
@@ -222,15 +205,23 @@ def run():
                         finally:
                             if worker_pool is not None:
                                 stop_worker(worker_pool)
-                        write_module_excels(name, output, value_xml_paths, stub_xml_paths, generate_excel)
                     finally:
                         report_time(f"{name}: total time {elapsed(module_start)}")
             finally:
                 report_time(f"{project['name']}: total time {elapsed(project_start)}")
     finally:
         report_time(f"ALL PROJECTS: total time {elapsed(total_start)}")
+    mainBody()
 
 
 if __name__ == "__main__":
     mp.freeze_support()
-    run()
+    print("1. Normal run")
+    print("2. Excel only")
+    option = input("Select option: ").strip()
+    if option == "1":
+        run()
+    elif option == "2":
+        mainBody()
+    else:
+        raise SystemExit("Invalid option; enter 1 or 2")
