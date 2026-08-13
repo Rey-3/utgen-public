@@ -17,6 +17,7 @@ class Domain:
         self.banned = set()
         self.required = 0
         self.forbidden = 0
+        self.any_required = []
 
     @classmethod
     def for_type(cls, ctype):
@@ -41,9 +42,12 @@ class Domain:
                 self.forbidden |= -value
             else:
                 self.required |= value
+        elif op == Op.BITANY:
+            self.any_required.append(value)
         else:
             raise ValueError(f"unsupported constraint operator: {op}")
-        return self.required & self.forbidden == 0 and self._find(self.lo) is not None
+        possible = all(mask & ~self.forbidden & ((1 << self.ctype.bits) - 1) for mask in self.any_required)
+        return not self.required & self.forbidden and possible and self._find(self.lo) is not None
 
     def _alive(self, value):
         while value in self.banned:
@@ -84,20 +88,33 @@ class Domain:
     def _next_bits(self, start, end):
         if self.required & self.forbidden or self.required >> self.ctype.bits:
             return None
-        def build(bit, tight):
+        missing = (1 << len(self.any_required)) - 1
+        memo = {}
+
+        def build(bit, tight, pending):
+            key = bit, tight, pending
+            if key in memo:
+                return memo[key]
             if bit < 0:
-                return 0
+                return 0 if not pending else None
             floor = (start >> bit) & 1
             required = (self.required >> bit) & 1
             forbidden = (self.forbidden >> bit) & 1
             for digit in (0, 1):
                 if digit < required or digit and forbidden or tight and digit < floor:
                     continue
-                tail = build(bit - 1, tight and digit == floor)
+                remaining = pending
+                if digit:
+                    for index, mask in enumerate(self.any_required):
+                        if mask >> bit & 1:
+                            remaining &= ~(1 << index)
+                tail = build(bit - 1, tight and digit == floor, remaining)
                 if tail is not None:
-                    return digit << bit | tail
+                    memo[key] = digit << bit | tail
+                    return memo[key]
+            memo[key] = None
             return None
-        value = build(self.ctype.bits - 1, True)
+        value = build(self.ctype.bits - 1, True, missing)
         return value if value is not None and value <= end else None
 
     def _to_raw(self, value):
@@ -109,7 +126,8 @@ class Domain:
 
     def _bits_ok(self, value):
         raw = self._to_raw(value)
-        return raw & self.required == self.required and not raw & self.forbidden
+        return (raw & self.required == self.required and not raw & self.forbidden and
+                all(raw & mask for mask in self.any_required))
 
     def pick(self, prefer=None) -> int:
         if prefer is not None and self.lo <= prefer <= self.hi and prefer not in self.banned:
@@ -123,19 +141,24 @@ class Domain:
 
 class AtomConstraints:
     @staticmethod
-    def for_outcome(atom: Atom, outcome: bool) -> list[Constraint]:
+    def for_outcome(atom: Atom, outcome: bool, midpoint=True) -> list[Constraint]:
         if atom.var is None:
             return []
         if atom.op == Op.TRUTHY:
             return [Constraint(atom.var, Op.NE, 0, 1) if outcome else Constraint(atom.var, Op.EQ, 0)]
         if atom.op == Op.BITSET:
             value = atom.rhs or 0
-            return [Constraint(atom.var, Op.EQ, value, value) if outcome else Constraint(atom.var, Op.EQ, 0)]
+            return [Constraint(atom.var, Op.BITANY, value) if outcome else Constraint(atom.var, Op.BITSET, value, False)]
         op = atom.op if outcome else NEGATE[atom.op]
         value = atom.rhs
         if atom.rhs_var is not None:
-            value = atom.rhs_var.ctype.hi if op in (Op.LT, Op.LE) else atom.rhs_var.ctype.lo
-            return [Constraint(atom.var, op, value), Constraint(atom.rhs_var, Op.EQ, value)]
+            if not midpoint:
+                value = atom.rhs_var.ctype.hi if op in (Op.LT, Op.LE) else atom.rhs_var.ctype.lo
+                return [Constraint(atom.var, op, value), Constraint(atom.rhs_var, Op.EQ, value)]
+            value = (atom.rhs_var.ctype.lo + atom.rhs_var.ctype.hi) // 2
+            prefer = value - 1 if op == Op.LT else value + 1 if op in (Op.NE, Op.GT) else value
+            prefer = min(max(prefer, atom.var.ctype.lo), atom.var.ctype.hi)
+            return [Constraint(atom.var, op, value, prefer), Constraint(atom.rhs_var, Op.EQ, value)]
         return [Constraint(atom.var, op, value)]
 
 

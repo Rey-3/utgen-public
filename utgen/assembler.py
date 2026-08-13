@@ -44,6 +44,8 @@ class RowAssembler:
                 for guards in guard_assignments:
                     values = self.solver.solve(self._constraints(guards, assignment))
                     if values is None:
+                        values = self.solver.solve(self._constraints(guards, assignment, midpoint_relations=False))
+                    if values is None:
                         continue
                     emitted = True
                     values = defaults | values
@@ -151,12 +153,12 @@ class RowAssembler:
         return out
 
     @staticmethod
-    def _constraints(*assignments: dict) -> list:
+    def _constraints(*assignments: dict, midpoint_relations=True) -> list:
         out = []
         for assignment in assignments:
             for atom, outcome in assignment.items():
                 if isinstance(atom, Atom):
-                    out.extend(AtomConstraints.for_outcome(atom, outcome))
+                    out.extend(AtomConstraints.for_outcome(atom, outcome, midpoint_relations))
         return out
 
     @staticmethod

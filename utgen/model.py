@@ -27,6 +27,7 @@ class Op(StrEnum):
     GE = ">="
     TRUTHY = "truthy"
     BITSET = "bitset"
+    BITANY = "bitany"
 
 
 @dataclass(frozen=True)

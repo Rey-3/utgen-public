@@ -282,9 +282,10 @@ class AtomBuilder:
         if bit is None or right.constant is None or bit.rhs is None:
             return None
         atom = Atom(bit.var, Op.BITSET, rhs=bit.rhs, text=_source(cursor))
-        if right.constant == bit.rhs:
+        single = bit.rhs & (bit.rhs - 1) == 0
+        if right.constant == bit.rhs and single:
             return atom if op == Op.EQ else Not(atom) if op == Op.NE else None
-        if right.constant == 0 and bit.rhs & (bit.rhs - 1) == 0:
+        if right.constant == 0:
             return Not(atom) if op == Op.EQ else atom if op == Op.NE else None
         return None
 
