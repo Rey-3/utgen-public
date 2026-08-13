@@ -1,4 +1,3 @@
-"""Module indexing and deterministic XML persistence for UTGen."""
 from __future__ import annotations
 
 import hashlib
@@ -30,26 +29,43 @@ from utgen.model import (And, Atom, Binop, Break, CallE, Cast, Const, CType,
 
 
 class ModuleIndexer:
-    """Build one complete, clang-free ``ModuleAnalysis`` from a C source."""
 
     def __init__(self, config=None):
+        # Store the configuration used during indexing (define marco or include file)
         self.config = config or {}
 
     def index(self, source: Path, root_path: Path | None = None) -> ModuleAnalysis:
-        """Parse ``source`` once and build every persisted analysis stage."""
+        """
+        Index and analyze a C source file.
+
+        Args:
+            source : Path to the C source (.c) file that will be indexed and analyzed.
+
+            root_path: Project root path for resolving dependencies.
+
+        Returns:
+            ModuleAnalysis:
+                The analysis result for the source file, containing the indexed
+                module information and discovered code structure.
+        """
         source = Path(source)
         root_path = Path(root_path or self._get("include_root", source.parent))
         include_dirs, headers = self._includes(source, root_path)
+
         configure_libclang(self._get("libclang"))
+
         tu = ClangParser().parse(source, include_dirs, self._get("defines", ()))
         macros = self._macros(tu)
         inventory_builder = InventoryBuilder(self._get("char_signed", False),
                                              self._get("const_globals", "inject"),
                                              self._get("no_stub", DEFAULT_NO_STUB))
+
         self._register_globals(tu, inventory_builder)
+
         functions = []
         for cursor in function_definitions(tu).values():
             functions.append(self._function(cursor, tu, inventory_builder, macros))
+
         analysis = ModuleAnalysis(str(source), _sha256(source), include_dirs, headers,
                                   macros, list(inventory_builder.type_graph.enums.values()),
                                   list(inventory_builder.type_graph.structs.values()),
@@ -59,6 +75,7 @@ class ModuleIndexer:
         return analysis
 
     def _function(self, cursor, tu, inventory_builder, macros=None):
+        """ This converts one clang function definition into a complete `FunctionIR`"""
         inventory = inventory_builder.build(cursor, tu)
         atom_builder = AtomBuilder(inventory, macros=macros)
         decisions = DecisionExtractor(atom_builder).extract(cursor)
@@ -96,6 +113,7 @@ class ModuleIndexer:
                 builder.type_graph.describe(cursor.type, cursor.spelling)
 
     def _globals(self, tu, builder):
+        """ This creates persistent `GlobalDef` records"""
         result, seen = [], set()
         for cursor in _walk(tu.cursor):
             if cursor.kind != CursorKind.VAR_DECL or not _is_global(cursor):
@@ -113,6 +131,7 @@ class ModuleIndexer:
         return result
 
     def _macros(self, tu):
+        """ macro extraction """
         result, seen = [], set()
         for cursor in _walk(tu.cursor):
             if cursor.kind != CursorKind.MACRO_DEFINITION or cursor.spelling.startswith("__"):
@@ -256,6 +275,7 @@ class XmlDbWriter:
         _write_node(element, decision.expr)
 
     def _statement(self, parent, statement):
+        """ It takes a UTGen statement object and writes it into XML."""
         if isinstance(statement, Decl):
             attrs = {"name": statement.name, "scope": statement.scope,
                      "pointer": str(statement.is_pointer).lower()}
@@ -358,10 +378,8 @@ class XmlDbWriter:
 
 
 class XmlDbReader:
-    """Restore a ``ModuleAnalysis`` without importing clang."""
 
     def read(self, path: Path) -> ModuleAnalysis:
-        """Read a Task 9 XML database from ``path``."""
         root = ET.parse(path).getroot()
         includes = root.find("Includes")
         dirs, headers = [], []
@@ -420,12 +438,14 @@ def _set_constants(analysis: ModuleAnalysis) -> None:
 
 
 def _set_local_functions(analysis: ModuleAnalysis) -> None:
+    """ This is later used by the interpreter to execute same-module helper calls """
     functions = {function.name: function for function in analysis.functions}
     for function in analysis.functions:
         function.local_functions = functions
 
 
 def _called_names(statements) -> set[str]:
+    """ finds called function names"""
     names = set()
     for statement in statements:
         for node in _nodes(statement):
@@ -435,6 +455,7 @@ def _called_names(statements) -> set[str]:
 
 
 def _nodes(node):
+    """ recursively walks through the AST/data structure and finds every CallE node """
     if isinstance(node, CallE):
         yield node
     if is_dataclass(node):
@@ -452,6 +473,7 @@ def _sha256(path: Path) -> str:
 
 
 def _walk(cursor):
+    """ Clang AST cursor tree. """
     yield cursor
     for child in cursor.get_children():
         yield from _walk(child)
@@ -463,6 +485,7 @@ def _is_global(cursor):
 
 
 def _storage(cursor, wanted):
+    # static, extern ...
     storage = getattr(cursor, "storage_class", "")
     return getattr(storage, "name", str(storage)).lower() == wanted
 
@@ -472,6 +495,7 @@ def _is_static(cursor):
 
 
 def _macro(cursor):
+    """ return marco details (#define ADD(a, b) ((a) + (b)))"""
     file = str(cursor.location.file or "")
     line = _source_line(file, cursor.location.line)
     match = re.match(r"\s*#define\s+([A-Za-z_]\w*)(\(([^)]*)\))?\s*(.*)$", line)
@@ -486,6 +510,7 @@ def _macro(cursor):
 
 
 def _source_line(file, line):
+    """ reads one specific line from a source file """
     if not file or not line:
         return ""
     try:
@@ -495,10 +520,12 @@ def _source_line(file, line):
 
 
 def _dims(dims):
+    """ convert array dimensions"""
     return ",".join(str(dim) for dim in dims)
 
 
 def _read_dims(value):
+    """ convert dimension to turple"""
     if not value:
         return ()
     result = []
@@ -508,6 +535,7 @@ def _read_dims(value):
 
 
 def _enum_values(values):
+    """ serialize enum name-value pairs into text."""
     result = []
     for name, value in values:
         result.append(f"{name}:{value}")
@@ -515,6 +543,7 @@ def _enum_values(values):
 
 
 def _read_enum_values(value):
+    """ convert serialized enum text back into enum name-value pairs"""
     if not value:
         return ()
     result = []
@@ -525,10 +554,12 @@ def _read_enum_values(value):
 
 
 def _values(values):
+    """ serialize a list of values into text."""
     return ",".join(str(value) for value in values)
 
 
 def _read_values(value):
+    """ convert value in to tuple"""
     if not value:
         return ()
     result = []
@@ -545,6 +576,7 @@ def _optional(value):
 
 
 def _line(location):
+    """ get the source-code line number"""
     match = re.search(r":(\d+)(?::\d+)?$", location or "")
     return match.group(1) if match else "0"
 
@@ -616,25 +648,37 @@ def _read_leaf(element):
 
 def _read_function(element):
     params = []
+
+    # read parameters
     for item in element.findall("Param"):
         params.append((item.get("type", ""), item.get("name", "")))
+
+    # Read stubs and leaves
     stubs, leaves = [], []
     for item in element:
         if item.tag == "Stub":
             stubs.append(_read_stub(item))
         elif item.tag == "Leaf":
             leaves.append(_read_leaf(item))
+
+    # Build leaf lookup
     variables = {}
     for leaf in leaves:
         variables[leaf.name] = leaf
+
+    # Read decisions
     decisions = []
     for item in element.findall("Decision"):
         decisions.append(_read_decision(item, variables))
+
+    #  Read body IR
     body_element = element.find("Body")
     body = []
     if body_element is not None:
         for item in body_element:
             body.append(_read_statement(item, variables))
+
+    # Read dataflow
     dataflow_element = element.find("Dataflow")
     dataflow = _read_dataflow(dataflow_element, variables) if dataflow_element is not None else None
     return FunctionIR(element.get("name", ""), int(element.get("line", "0")),
@@ -711,6 +755,7 @@ def _read_statement(element, variables):
 
 
 def _read_block(parent, tag, variables):
+    """ read all statements inside a block"""
     element = parent.find(tag)
     if element is None:
         return ()
@@ -977,11 +1022,21 @@ def _node_children(element):
 
 
 def _read_node(element, variables):
-    """Read a node iteratively so deeply nested XML expressions are supported."""
+    """It reconstructs expression/boolean objects iteratively. """
     if element is None:
         return None
 
+    # Maps each XML element to the UTGen IR object already built for it.
+    # Parent nodes can only be created after their child nodes are ready.
     built = {}
+
+    """
+    The boolean flag means:
+    False:
+        children are not processed yet
+    True:
+        children have already been processed
+    """
     stack = [(element, False)]
 
     def value(child):
@@ -991,7 +1046,12 @@ def _read_node(element, variables):
         current, ready = stack.pop()
 
         if not ready:
+            # Put the current node back on the stack so we return to it
+            # after all of its child expressions have been built
             stack.append((current, True))
+
+            # Push children in reverse because the stack is LIFO
+            # This preserves the original left-to-right expression order
             for child in reversed(_node_children(current)):
                 stack.append((child, False))
             continue
@@ -1073,6 +1133,7 @@ def _read_child_node(parent, tag, variables):
 
 
 def _write_state(parent, state):
+    """ writes a UTGen execution/dataflow state into XML."""
     attrs = {"reachable": str(state.reachable).lower(), "unknown": _values(state.unknown)}
     element = ET.SubElement(parent, "State", **attrs)
     if state.condition is not None:

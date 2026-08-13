@@ -252,7 +252,7 @@ class Interpreter:
                 return _UNKNOWN
             if (
                 expression.op
-                in ("+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>")
+                in ("+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "<", "<=", ">", ">=")
                 and (
                     not isinstance(left, int)
                     or not isinstance(right, int)
