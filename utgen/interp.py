@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
 
 from utgen.model import (And, Assign, Atom, Binop, Break, CallE, Cast, Const,
                           Decl, DoWhile, ExprStmt, For, If, Index, Inventory,
@@ -48,6 +48,7 @@ class Interpreter:
         self.pointers = set()
         self.constants = getattr(function, "constants", {}) or {}
         self.local_functions = function.local_functions
+        self._local_stack = []
         self.decision_expr = {decision.id: decision.expr for decision in function.decisions}
         self.recording = True
         self.outcomes = {}
@@ -158,7 +159,8 @@ class Interpreter:
         for variable in self.inventory.inputs():
             name = variable.name
             if name == declaration.static_name or name.startswith((declaration.static_name + ".", declaration.static_name + "[")):
-                self.env[local + name[len(declaration.static_name):]] = self._read(name)
+                path = self._normalized_path(local + name[len(declaration.static_name):])
+                self.env[path] = self._read(name)
 
     def _eval(self, expression):
         if expression is None:
@@ -184,13 +186,7 @@ class Interpreter:
         if isinstance(expression, CallE):
             helper = self.local_functions.get(expression.name)
             if helper is not None:
-                recording = self.recording
-                self.recording = False
-                try:
-                    signal = self._block(helper.body)
-                finally:
-                    self.recording = recording
-                return 0 if signal is None else signal[1]
+                return self._call_local(expression, helper)
             return self.env.get(f"tessy_{expression.name}", 0)
         if isinstance(expression, Ternary):
             condition, leaves = self._trace(expression.c)
@@ -295,6 +291,96 @@ class Interpreter:
             return value, (bool(value),)
         return value, ()
 
+    def _call_local(self, expression, helper):
+        if helper.name in self._local_stack or len(expression.args) != len(helper.params):
+            return _UNKNOWN
+        actuals = []
+        for (type_name, _), actual in zip(helper.params, expression.args):
+            if "*" in type_name:
+                target = self._path(actual.x) if isinstance(actual, Unary) and actual.op == "&" else self._path(actual)
+                if not target:
+                    return _UNKNOWN
+                actuals.append(("pointer", target))
+                continue
+            source = self._path(actual) if isinstance(actual, (Ref, MemberE, Index)) else ""
+            members = self._aggregate(source)
+            if members:
+                actuals.append(("aggregate", members))
+                continue
+            value = self._eval(actual)
+            if value is _UNKNOWN:
+                return _UNKNOWN
+            actuals.append(("scalar", value))
+        roots = {name for _, name in helper.params} | self._decl_roots(helper.body)
+        snapshot = self._save_frame(roots)
+        recording = self.recording
+        self._local_stack.append(helper.name)
+        try:
+            for (kind, value), (_, formal) in zip(actuals, helper.params):
+                if kind == "pointer":
+                    self.aliases[formal] = value
+                    self.pointers.add(formal)
+                elif kind == "aggregate":
+                    for suffix, member in value.items():
+                        self.env[formal + suffix] = member
+                else:
+                    self.env[formal] = value
+            self.recording = False
+            signal = self._block(helper.body)
+            return _UNKNOWN if not signal or signal[0] != "return" else signal[1]
+        finally:
+            self.recording = recording
+            self._local_stack.pop()
+            self._restore_frame(snapshot)
+
+    def _aggregate(self, source):
+        if not source:
+            return {}
+        prefixes = source + ".", source + "["
+        return {name[len(source):]: value for name, value in self.env.items()
+                if name.startswith(prefixes)}
+
+    @staticmethod
+    def _decl_roots(statements):
+        roots = set()
+
+        def visit(value):
+            if isinstance(value, Decl):
+                roots.add(value.name)
+            if is_dataclass(value):
+                for item in fields(value):
+                    visit(getattr(value, item.name))
+            elif isinstance(value, (tuple, list)):
+                for item in value:
+                    visit(item)
+
+        visit(statements)
+        return roots
+
+    def _save_frame(self, roots):
+        owned = lambda name: any(name == root or name.startswith((root + ".", root + "[")) for root in roots)
+        return (roots, {name: value for name, value in self.env.items() if owned(name)},
+                {name: value for name, value in self.aliases.items() if owned(name)},
+                {name for name in self.pointers if owned(name)},
+                {name for name in self.unknown if owned(name)})
+
+    def _restore_frame(self, snapshot):
+        roots, env, aliases, pointers, unknown = snapshot
+        owned = lambda name: any(name == root or name.startswith((root + ".", root + "[")) for root in roots)
+        for mapping in (self.env, self.aliases):
+            for name in tuple(mapping):
+                if owned(name):
+                    mapping.pop(name)
+
+        owned_pointers = {name for name in self.pointers if owned(name)}
+        owned_unknown = {name for name in self.unknown if owned(name)}
+        self.pointers.difference_update(owned_pointers)
+        self.unknown.difference_update(owned_unknown)
+        self.env.update(env)
+        self.aliases.update(aliases)
+        self.pointers.update(pointers)
+        self.unknown.update(unknown)
+
     def _loop(self, body, condition, do_first=False, increment=(), loop_id=None):
         ran = False
         outcomes = self.loops.setdefault(loop_id, set())
@@ -385,6 +471,10 @@ class Interpreter:
         if path in self.env:
             return self.env[path]
         pattern = self._normalized_path(path)
+        if pattern in self.unknown:
+            return _UNKNOWN
+        if pattern in self.env:
+            return self.env[pattern]
         for key in self.unknown & self._variable_names:
             if self._normalized_names[key] == pattern:
                 return _UNKNOWN

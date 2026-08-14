@@ -11,6 +11,7 @@ from utgen.model import And, Atom, Direction, Inventory, Not, Op, Or, Variable
 
 _RELATIONS = {"==": Op.EQ, "!=": Op.NE, "<": Op.LT,
               "<=": Op.LE, ">": Op.GT, ">=": Op.GE}
+_ASSIGNMENTS = {"=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="}
 _WRAPPERS = {CursorKind.UNEXPOSED_EXPR, CursorKind.PAREN_EXPR,
              getattr(CursorKind, "CSTYLE_CAST_EXPR", None)}
 for _kind_name in ("IMPLICIT_CAST_EXPR", "CXX_STATIC_CAST_EXPR"):
@@ -62,11 +63,19 @@ class CopyPropagation:
                         self._set(child, init)
             return
         if kind in (CursorKind.BINARY_OPERATOR, CursorKind.COMPOUND_ASSIGNMENT_OPERATOR):
-            if _operator(stmt_cursor) in ("=", "+=", "-=", "*=", "/=", "%="):
+            if _operator(stmt_cursor) in _ASSIGNMENTS:
                 children = list(stmt_cursor.get_children())
                 if children:
-                    self._set(children[0], None if _operator(stmt_cursor) != "=" else children[-1])
+                    lhs = children[0]
+                    value = children[-1] if _operator(stmt_cursor) == "=" else _raw_path(lhs) if _is_static(lhs) else None
+                    self._set(lhs, value)
                 return
+        if kind == CursorKind.UNARY_OPERATOR and _operator(stmt_cursor) in ("++", "--"):
+            children = list(stmt_cursor.get_children())
+            if children:
+                lhs = children[0]
+                self._set(lhs, _raw_path(lhs) if _is_static(lhs) else None)
+            return
         if kind in (CursorKind.WHILE_STMT, CursorKind.DO_STMT, CursorKind.FOR_STMT):
             body = list(stmt_cursor.get_children())[-1:]
             for child in body:
@@ -155,6 +164,8 @@ class CopyPropagation:
             sources = [state[1][path] for state in states if path in state[1]]
             if sources and all(source is sources[0] for source in sources):
                 members[path] = sources[0]
+            elif path in sources:
+                members[path] = path
             else:
                 members.pop(path, None)
         return (bindings, members, set().union(*(state[2] for state in states)),
@@ -175,7 +186,7 @@ class CopyPropagation:
 
     def _mark_loop_writes(self, cursor: Cursor) -> None:
         if cursor.kind in (CursorKind.BINARY_OPERATOR, CursorKind.COMPOUND_ASSIGNMENT_OPERATOR):
-            if _operator(cursor) in ("=", "+=", "-=", "*=", "/=", "%="):
+            if _operator(cursor) in _ASSIGNMENTS:
                 children = list(cursor.get_children())
                 if children:
                     key = _cursor_key(children[0]) or _raw_path(children[0])
@@ -184,6 +195,15 @@ class CopyPropagation:
                     path = _raw_path(children[0])
                     if path:
                         self._loop_written.add(path)
+        elif cursor.kind == CursorKind.UNARY_OPERATOR and _operator(cursor) in ("++", "--"):
+            children = list(cursor.get_children())
+            if children:
+                key = _cursor_key(children[0]) or _raw_path(children[0])
+                if key:
+                    self._loop_written.add(key)
+                path = _raw_path(children[0])
+                if path:
+                    self._loop_written.add(path)
         for child in cursor.get_children():
             self._mark_loop_writes(child)
 
@@ -606,7 +626,7 @@ def _fold_node(node, macros, seen):
 def _operator(cursor: Cursor) -> str:
     spelling = getattr(cursor, "spelling", "")
     operators = ("&&", "||", "==", "!=", "<", "<=", ">", ">=", "&", "|", "^",
-                 "+", "-", "*", "/", "%", "<<", ">>", "=", "+=", "-=", "*=", "/=", "%=",
+                 "+", "-", "*", "/", "%", "<<", ">>", *_ASSIGNMENTS,
                  "!", "++", "--", "~")
     if spelling in operators:
         return spelling

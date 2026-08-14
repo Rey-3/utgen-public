@@ -66,11 +66,10 @@ class DecisionExtractor:
         elif kind == CursorKind.DO_STMT:
             self._do_loop(cursor)
         elif kind in (CursorKind.DECL_STMT, CursorKind.BINARY_OPERATOR,
-                      CursorKind.COMPOUND_ASSIGNMENT_OPERATOR):
+                      CursorKind.COMPOUND_ASSIGNMENT_OPERATOR, CursorKind.UNARY_OPERATOR):
             self._record_cursor(cursor)
             self._nested_expr(cursor)
-        elif kind in (CursorKind.RETURN_STMT, CursorKind.UNARY_OPERATOR,
-                      CursorKind.CALL_EXPR, CursorKind.NULL_STMT):
+        elif kind in (CursorKind.RETURN_STMT, CursorKind.CALL_EXPR, CursorKind.NULL_STMT):
             self._nested_expr(cursor)
         else:
             for child in cursor.get_children():
