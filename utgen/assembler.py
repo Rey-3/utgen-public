@@ -132,6 +132,8 @@ class RowAssembler:
     @staticmethod
     def _recipes(expr, outcome: bool) -> list:
         canonical = MaskingRecipes.make(expr, outcome)
+        if canonical is None:
+            return []
         atoms = []
         for atom in atoms_of(expr):
             if atom not in atoms:
