@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import ast
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from clang.cindex import Cursor, CursorKind
 
@@ -315,6 +315,10 @@ class AtomBuilder:
         if resolved is None:
             return _Value()
         if isinstance(resolved, str):
+            access = _access_path(cursor, self._macro_values)
+            if ("*" in resolved and "*" not in access and
+                    re.sub(r"\[[^]]*\]", "", resolved) == re.sub(r"\[[^]]*\]", "", access)):
+                resolved = access
             variable = self._find_variable(resolved)
             return _Value(variable=variable) if variable is not None else _Value()
         if isinstance(resolved, Cursor) and resolved is not cursor:
@@ -374,7 +378,7 @@ class AtomBuilder:
                     return variable
         direct = self.inventory.find(path)
         if direct is not None:
-            return direct
+            return replace(direct, name=path) if "*" not in path and direct.name != path else direct
         normalized = re.sub(r"\[[^\]]*\]", "", path)
         for variable in self.inventory.variables:
             if re.sub(r"\[[^\]]*\]", "", variable.name) == normalized:
@@ -466,6 +470,23 @@ def _raw_path(cursor: Cursor) -> str:
         name = _callee_name(cursor)
         return f"tessy_{name}" if name else ""
     return ""
+
+
+def _access_path(cursor: Cursor, macros) -> str:
+    cursor = _unwrap(cursor)
+    if cursor.kind == CursorKind.ARRAY_SUBSCRIPT_EXPR:
+        children = list(cursor.get_children())
+        if len(children) == 2:
+            index = _constant(children[1])
+            if index is None:
+                index = _macro_constant(children[1], macros)
+            suffix = "*" if index is None else str(index)
+            return f"{_access_path(children[0], macros)}[{suffix}]"
+    if cursor.kind == CursorKind.MEMBER_REF_EXPR:
+        children = list(cursor.get_children())
+        base = _access_path(children[0], macros) if children else ""
+        return f"{base}.{cursor.spelling}" if base else cursor.spelling
+    return _raw_path(cursor)
 
 
 def _callee_name(cursor: Cursor) -> str:

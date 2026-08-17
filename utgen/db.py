@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 import xml.etree.ElementTree as ET
-from dataclasses import fields, is_dataclass
+from dataclasses import fields, is_dataclass, replace
 from pathlib import Path
 from typing import Mapping
 
@@ -1106,9 +1106,9 @@ def _read_node(element, variables):
             )
         elif tag == "Atom":
             rhs = current.get("rhs")
-            rhs_var = variables.get(current.get("rhs_var", ""))
+            rhs_var = _read_variable(current.get("rhs_var", ""), variables)
             result = Atom(
-                variables.get(current.get("var", "")),
+                _read_variable(current.get("var", ""), variables),
                 Op(current.get("op", "truthy")),
                 int(rhs) if rhs is not None else None,
                 rhs_var,
@@ -1126,6 +1126,21 @@ def _read_node(element, variables):
         built[id(current)] = result
 
     return built[id(element)]
+
+
+def _read_variable(name, variables):
+    variable = variables.get(name)
+    if variable is not None or not name:
+        return variable
+    normalized = re.sub(r"\[[^]]*\]", "", name)
+    rank = len(re.findall(r"\[[^]]*\]", name))
+    for declared in variables.values():
+        if (len(re.findall(r"\[[^]]*\]", declared.name)) == rank and
+                re.sub(r"\[[^]]*\]", "", declared.name) == normalized):
+            variable = replace(declared, name=name)
+            variables[name] = variable
+            return variable
+    return None
 
 def _read_child_node(parent, tag, variables):
     item = parent.find(tag)

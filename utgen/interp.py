@@ -60,6 +60,8 @@ class Interpreter:
         for variable in self.inventory.inputs():
             value = values.get(variable.name, 1 if variable.address_of else 0)
             self.env[variable.name] = 0 if value == "NULL" else value
+        for name, value in values.items():
+            self.env[name] = 0 if value == "NULL" else value
         signal = self._block(function.body)
         if signal and signal[0] == "return":
             output = f"{function.name}()"
@@ -371,11 +373,8 @@ class Interpreter:
             for name in tuple(mapping):
                 if owned(name):
                     mapping.pop(name)
-
-        owned_pointers = {name for name in self.pointers if owned(name)}
-        owned_unknown = {name for name in self.unknown if owned(name)}
-        self.pointers.difference_update(owned_pointers)
-        self.unknown.difference_update(owned_unknown)
+        self.pointers.difference_update(name for name in tuple(self.pointers) if owned(name))
+        self.unknown.difference_update(name for name in tuple(self.unknown) if owned(name))
         self.env.update(env)
         self.aliases.update(aliases)
         self.pointers.update(pointers)

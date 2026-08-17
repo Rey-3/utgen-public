@@ -1,6 +1,7 @@
 """TESSY value/stub XML and human-readable report emitters."""
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import fields, is_dataclass
 from pathlib import Path
@@ -25,18 +26,34 @@ class ValueXmlWriter:
             address = _pointer_address(leaf.name, addresses)
             if leaf.direction in (Direction.IN, Direction.INOUT):
                 if default_range is None:
-                    values = []
-                    for row in rows:
-                        value = row.values.get(leaf.name, 0)
-                        values.append("NULL" if address is not None and
-                                      row.values.get(address.name, 1) in (0, "NULL") else
-                                      _render(leaf, value))
-                    attrs["range"] = ",".join(values)
+                    attrs["range"] = _array_range(leaf, rows) or _row_range(leaf, rows, address)
                 else:
                     attrs["range"] = default_range
                 attrs["testmethod"] = "decision"
             ET.SubElement(root, "argument", **attrs)
         _write_xml(root, path)
+
+
+def _row_range(leaf, rows, address=None, name=None):
+    values = []
+    for row in rows:
+        value = row.values.get(name or leaf.name, row.values.get(leaf.name, 0))
+        values.append("NULL" if address is not None and
+                      row.values.get(address.name, 1) in (0, "NULL") else
+                      _render(leaf, value))
+    return ",".join(values)
+
+
+def _array_range(leaf, rows):
+    match = re.search(r"\[(\d+)\]", leaf.name)
+    if match is None or re.search(r"\[\d+\]", leaf.name[match.end():]):
+        return ""
+    names = []
+    for index in range(int(match.group(1))):
+        names.append(f"{leaf.name[:match.start()]}[{index}]{leaf.name[match.end():]}")
+    if not any(name in row.values for name in names for row in rows):
+        return ""
+    return "|".join(_row_range(leaf, rows, name=name) for name in names)
 
 
 def _pointer_address(name, addresses):
@@ -45,7 +62,7 @@ def _pointer_address(name, addresses):
             return address
     return None
 
-
+    
 class StubXmlWriter:
     """Write the TESSY called-function and argument schema."""
 
