@@ -224,6 +224,12 @@ class AtomBuilder:
         """Build an ``Atom``/``And``/``Or``/``Not`` tree for a condition."""
         return self._node(cond_cursor)
 
+    def build_source(self, cond_cursor: Cursor):
+        """Build a source-shaped condition without expanding local bindings."""
+        builder = AtomBuilder(self.inventory, CopyPropagation())
+        builder._macro_values = self._macro_values
+        return builder._node(cond_cursor)
+
     def build_case(self, subject_cursor: Cursor, label_cursor: Cursor) -> Atom:
         """Build a switch-label equality using the real subject expression."""
         subject = self._value(subject_cursor)

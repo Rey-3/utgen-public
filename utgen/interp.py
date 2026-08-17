@@ -110,7 +110,12 @@ class Interpreter:
                 return None
             if path in self.pointers:
                 self.aliases.pop(path, None)
-            value = self._eval(statement.value)
+            if statement.decision_id:
+                value, leaves = self._trace(statement.value)
+                if value is not _UNKNOWN:
+                    self._record(statement.decision_id, bool(value), leaves)
+            else:
+                value = self._eval(statement.value)
             if value is _UNKNOWN:
                 self.unknown.add(path)
             else:
@@ -289,7 +294,7 @@ class Interpreter:
             value, leaves = self._trace(expression.child)
             return int(not value), leaves
         value = self._eval(expression)
-        if isinstance(expression, Atom) or (isinstance(expression, Binop) and expression.op in ("==", "!=", "<", "<=", ">", ">=")):
+        if isinstance(expression, (Atom, Ref)) or (isinstance(expression, Binop) and expression.op in ("==", "!=", "<", "<=", ">", ">=")):
             return value, (bool(value),)
         return value, ()
 

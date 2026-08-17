@@ -64,7 +64,7 @@ class CoverageGenerator:
                         seen.add(key)
                         result = self._run(interpreter, function, candidate, key)
                         gained = (state.gained(result) & targets) - covered
-                        if not gained:
+                        if not gained and not state.novel(result, decision_ids):
                             if needs_combinations and leaf.name in relevant and neutral < self.max_rows * 32:
                                 queue.append(candidate)
                                 neutral += 1
@@ -304,6 +304,14 @@ class _CoverageState:
 
     def gained(self, result):
         return self._changes(result, False)
+
+    def novel(self, result, decision_ids=None):
+        selected = None if decision_ids is None else set(decision_ids)
+        for decision_id, patterns in result.conditions.items():
+            if decision_id in self.pattern_sets and (selected is None or decision_id in selected):
+                if any(pattern not in self.pattern_sets[decision_id] for pattern in patterns):
+                    return True
+        return False
 
     def _changes(self, result, commit):
         gained, additions = set(), {}

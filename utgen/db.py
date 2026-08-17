@@ -287,6 +287,8 @@ class XmlDbWriter:
             return
         if isinstance(statement, Assign):
             attrs = {"op": statement.op}
+            if statement.decision_id:
+                attrs["decision"] = str(statement.decision_id)
             if isinstance(statement.lhs, Ref):
                 attrs.update(lhs=statement.lhs.path, scope=statement.lhs.scope)
                 element = ET.SubElement(parent, "Assign", **attrs)
@@ -717,7 +719,7 @@ def _read_statement(element, variables):
                 lhs = _read_expr(child[0], variables) if len(child) else None
             elif child.tag != "Lhs":
                 value = _read_expr(child, variables)
-        return Assign(lhs, value, element.get("op", "="))
+        return Assign(lhs, value, element.get("op", "="), int(element.get("decision", "0")))
     if tag == "If":
         condition = _child_expr(element, "Condition", variables)
         return If(int(element.get("decision", "0")), _read_block(element, "Then", variables),

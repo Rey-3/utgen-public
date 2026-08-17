@@ -87,7 +87,8 @@ class BodyIrBuilder:
             if op in _ASSIGNMENTS:
                 children = list(cursor.get_children())
                 if len(children) == 2:
-                    return [Assign(self._expr(children[0]), self._expr(children[1]), op)]
+                    decision_id = self._decision_id("expr", _unwrap(children[1])) if op == "=" else 0
+                    return [Assign(self._expr(children[0]), self._expr(children[1]), op, decision_id)]
             return [ExprStmt(self._expr(cursor))]
         if kind in (CursorKind.CALL_EXPR, CursorKind.UNARY_OPERATOR,
                     CursorKind.CONDITIONAL_OPERATOR, CursorKind.NULL_STMT):

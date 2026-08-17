@@ -67,8 +67,15 @@ class DecisionExtractor:
             self._do_loop(cursor)
         elif kind in (CursorKind.DECL_STMT, CursorKind.BINARY_OPERATOR,
                       CursorKind.COMPOUND_ASSIGNMENT_OPERATOR, CursorKind.UNARY_OPERATOR):
-            self._record_cursor(cursor)
-            self._nested_expr(cursor)
+            if cursor.kind == CursorKind.BINARY_OPERATOR and _operator(cursor) == "=":
+                condition = self._assignment_condition(cursor)
+                if condition is not None:
+                    self._record(self._build_source(condition), "expr", condition)
+                self._nested_expr(cursor)
+                self._record_cursor(cursor)
+            else:
+                self._record_cursor(cursor)
+                self._nested_expr(cursor)
         elif kind in (CursorKind.RETURN_STMT, CursorKind.CALL_EXPR, CursorKind.NULL_STMT):
             self._nested_expr(cursor)
         else:
@@ -236,6 +243,14 @@ class DecisionExtractor:
     def _decision(self, condition: Cursor, kind: str) -> Decision:
         return self._record(self._build(condition), kind, condition)
 
+    @staticmethod
+    def _assignment_condition(cursor: Cursor) -> Cursor | None:
+        if cursor.kind != CursorKind.BINARY_OPERATOR or _operator(cursor) != "=":
+            return None
+        children = list(cursor.get_children())
+        rhs = _unwrap(children[-1]) if len(children) == 2 else None
+        return rhs if rhs is not None and rhs.kind == CursorKind.BINARY_OPERATOR and _operator(rhs) in ("&&", "||") else None
+
     def _record(self, expr: object, kind: str, cursor: Cursor) -> Decision:
         decision = Decision(self._next_id, expr, kind, tuple(self._guards), _location(cursor))
         self._next_id += 1
@@ -247,6 +262,10 @@ class DecisionExtractor:
         if hasattr(builder, "build"):
             return builder.build(cursor)
         return builder(cursor)
+
+    def _build_source(self, cursor: Cursor) -> object:
+        builder = self.atom_builder
+        return builder.build_source(cursor) if hasattr(builder, "build_source") else self._build(cursor)
 
     def _record_cursor(self, cursor: Cursor) -> None:
         copyprop = getattr(self.atom_builder, "copyprop", None)
@@ -306,6 +325,29 @@ class DecisionExtractor:
 def _source(cursor: Cursor) -> str:
     """Return normalized token text for a cursor."""
     return " ".join(token.spelling for token in cursor.get_tokens()).strip()
+
+
+def _operator(cursor: Cursor) -> str:
+    operator = getattr(cursor, "binary_operator", None)
+    if operator is not None and getattr(operator, "name", "Invalid") != "Invalid":
+        return {"Assign": "=", "LAnd": "&&", "LOr": "||"}.get(operator.name, "")
+    children = list(cursor.get_children())
+    if len(children) != 2:
+        return ""
+    left_end = children[0].extent.end.offset
+    for token in cursor.get_tokens():
+        if token.extent.start.offset >= left_end:
+            return token.spelling if token.spelling in ("=", "&&", "||") else ""
+    return ""
+
+
+def _unwrap(cursor: Cursor) -> Cursor:
+    while cursor.kind in (CursorKind.UNEXPOSED_EXPR, CursorKind.PAREN_EXPR):
+        children = list(cursor.get_children())
+        if len(children) != 1:
+            break
+        cursor = children[0]
+    return cursor
 
 
 def _literal_value(cursor: Cursor) -> int | None:

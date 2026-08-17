@@ -397,6 +397,7 @@ class Assign:
     lhs: object
     value: object
     op: str = "="
+    decision_id: int = 0
 
 
 @dataclass(frozen=True)
