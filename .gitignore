@@ -12,6 +12,8 @@ htmlcov/
 .pyinstaller_build/
 build/
 dist/
+*.exe
+*.pkg
 
 # Generated test outputs
 generated/
