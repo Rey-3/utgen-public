@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+import linecache
 
 from clang.cindex import Cursor, CursorKind, TypeKind
 
@@ -402,16 +403,17 @@ def _literal(cursor: Cursor, macros=None):
     if cursor.kind == CursorKind.DECL_REF_EXPR and cursor.referenced is not None:
         if cursor.referenced.kind == CursorKind.ENUM_CONSTANT_DECL:
             return cursor.referenced.enum_value
-    try:
-        result = cursor.evaluate()
-        if result is not None and hasattr(result, "as_int"):
-            return result.as_int()
-    except Exception:
-        pass
+    if cursor.kind in (CursorKind.INTEGER_LITERAL, CursorKind.CHARACTER_LITERAL):
+        try:
+            result = cursor.evaluate()
+            if result is not None and hasattr(result, "as_int"):
+                return result.as_int()
+        except Exception:
+            pass
     macro = _macro_constant(cursor, macros)
     if macro is not None:
         return macro
-    folded = _fold_int(_source(cursor), macros)
+    folded = _fold_int(_physical_source(cursor), macros)
     if folded is not None:
         return folded
     text = _spelling(cursor)
@@ -441,6 +443,15 @@ def _spelling(cursor: Cursor) -> str:
     for token in cursor.get_tokens():
         return token.spelling
     return ""
+
+
+def _physical_source(cursor: Cursor) -> str:
+    extent = cursor.extent
+    file = extent.start.file
+    if file is not None and extent.start.line == extent.end.line:
+        line = linecache.getline(str(file), extent.start.line)
+        return line[extent.start.column - 1:extent.end.column - 1]
+    return _source(cursor)
 
 
 def _operator(cursor: Cursor) -> str:

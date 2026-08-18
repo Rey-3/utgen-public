@@ -59,7 +59,7 @@ class CopyPropagation:
                     if key:
                         self._locals.add(key)
                     init = _last_non_type_child(child)
-                    if init is not None:
+                    if init is not None and not _is_static(child):
                         self._set(child, init)
             return
         if kind in (CursorKind.BINARY_OPERATOR, CursorKind.COMPOUND_ASSIGNMENT_OPERATOR):
@@ -544,12 +544,13 @@ def _constant(cursor: Cursor) -> int | None:
                     return left << right
                 if op == ">>" and right >= 0:
                     return left >> right
-    try:
-        result = cursor.evaluate()
-        if result is not None and hasattr(result, "as_int"):
-            return result.as_int()
-    except Exception:
-        pass
+    if cursor.kind in (CursorKind.INTEGER_LITERAL, CursorKind.CHARACTER_LITERAL):
+        try:
+            result = cursor.evaluate()
+            if result is not None and hasattr(result, "as_int"):
+                return result.as_int()
+        except Exception:
+            pass
     text = _source(cursor).strip().rstrip("uUlL")
     if len(text) >= 3 and text[0] == "'" and text[-1] == "'":
         return ord(text[1])
@@ -561,6 +562,7 @@ def _constant(cursor: Cursor) -> int | None:
 
 def _macro_constant(cursor: Cursor, macros=None) -> int | None:
     """Resolve an object-like numeric macro behind an expanded literal."""
+    cursor = _unwrap(cursor)
     file = cursor.location.file
     if file is None or cursor.location.line < 1:
         return None
@@ -580,6 +582,10 @@ def _macro_constant(cursor: Cursor, macros=None) -> int | None:
             name = match.group(0)
             break
     if name is None:
+        return None
+    extent = cursor.extent
+    if (extent.start.line != cursor.location.line or extent.end.line != cursor.location.line or
+            line[extent.start.column - 1:extent.end.column - 1].strip() != name):
         return None
     if macros is not None and name in macros:
         value = macros[name]
