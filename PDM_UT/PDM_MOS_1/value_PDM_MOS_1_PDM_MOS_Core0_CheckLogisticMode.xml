@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<function name="PDM_MOS_Core0_CheckLogisticMode" file="">
-    <argument name="LogisticCtrlReq_LZCU" len="8" format="unsigned" direction="in" pointer="false" range="0,0" testmethod="decision" />
-    <argument name="LogisticCtrlReq_PDMMOS" len="8" format="unsigned" direction="in" pointer="false" range="0,1" testmethod="decision" />
-    <argument name="PDM_Core0_LoadStat.LoadCtrl[13]" len="9" format="PDM_LoadMosType" direction="out" pointer="false" />
-    <argument name="PDM_Core0_LoadStat.LoadCtrlSource[13]" len="9" format="PDM_LoadMosType" direction="out" pointer="false" />
-    <argument name="PDM_Core0_LoadCtrlSourceDebug[13]" len="8" format="unsigned" direction="out" pointer="false" />
-</function>

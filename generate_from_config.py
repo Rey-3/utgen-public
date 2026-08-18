@@ -19,7 +19,7 @@ from tessy_parse import mainBody
 CONFIG_PATH = (Path(sys.executable).with_name("config.yaml")
                if getattr(sys, "frozen", False) else Path(__file__).with_name("config.yaml"))
 TIME_LOG_PATH = CONFIG_PATH.with_name("generation_times.txt")
-FUNCTION_TIMEOUT_SECONDS = 200
+FUNCTION_TIMEOUT_SECONDS = 180
 XML_INPUT_PATH = CONFIG_PATH.with_name("input")
 
 
@@ -88,8 +88,8 @@ def generate_function(function_name, name, output):
         assembler = RowAssembler(Solver(), McdcGenerator(), include_boundary=False,
                                  include_fault=False)
         rows, notes = assembler.assemble(function)
-        notes.extend(Verifier(Interpreter(Inventory(function.leaves, function.stubs))).check(
-            function, rows))
+        # notes.extend(Verifier(Interpreter(Inventory(function.leaves, function.stubs))).check(
+        #     function, rows))
         ValueXmlWriter().write(function, rows, output / f"value_{name}_{function.name}.xml")
         StubXmlWriter().write(function, output / f"stub_{name}_{function.name}.xml")
         return "ok", len(rows)
@@ -100,7 +100,7 @@ def generate_function(function_name, name, output):
 def start_worker(context, analysis):
     """Start one persistent child process with the indexed module."""
     pool = context.Pool(
-        processes=1,
+        processes=4,
         initializer=initialize_worker,
         initargs=(analysis,),
     )

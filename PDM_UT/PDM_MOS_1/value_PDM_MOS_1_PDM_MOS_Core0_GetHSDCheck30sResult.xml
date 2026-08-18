@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<function name="PDM_MOS_Core0_GetHSDCheck30sResult" file="">
-    <argument name="HSDTend" len="32" format="unsigned" direction="in" pointer="false" range="0,1,4294967295" testmethod="decision" />
-    <argument name="HSDTstart" len="32" format="unsigned" direction="in" pointer="false" range="4294967295,0,0" testmethod="decision" />
-    <argument name="PDM_MOS_Core0_GetHSDCheck30sResult()" len="8" format="unsigned" direction="out" pointer="false" />
-</function>

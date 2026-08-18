@@ -192,7 +192,7 @@ class Interpreter:
             return self._read(path)
         if isinstance(expression, CallE):
             helper = self.local_functions.get(expression.name)
-            if helper is not None:
+            if helper is not None and not helper.static:
                 return self._call_local(expression, helper)
             return self.env.get(f"tessy_{expression.name}", 0)
         if isinstance(expression, Ternary):

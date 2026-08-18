@@ -1,4 +1,0 @@
-<?xml version='1.0' encoding='utf-8'?>
-<function_analysis function_name="PDM_MOS_Core0_MOSOpenConfirmCheckCnt1" file="app_source/AppSWC/PDM/PDM_MOS_1.c" line="1295">
-  <called_functions count="0" />
-</function_analysis>
