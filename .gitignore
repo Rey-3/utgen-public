@@ -1,4 +1,22 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+
+# Test and analysis caches
 .pytest_cache/
+.coverage
+htmlcov/
+
+# Build artifacts
+.pyinstaller_build/
+build/
+dist/
+
+# Generated test outputs
 generated/
+AppM/
+CanApp/
+PDM_UT/
+c/
+mcdc.txt

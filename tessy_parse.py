@@ -37,6 +37,13 @@ def expandArrayName(name):
     return expanded
 
 
+def expandArrayRanges(value, count):
+    ranges = str(value).split('|')
+    if len(ranges) == count:
+        return ranges
+    return [value] * count
+
+
 def expandSignFormat(fmt, length):
     # [zb] the value xml carries a collapsed sign ('unsigned'/'signed'); turn it into the full (e.g. unsigned char, unsigned short)
     suffix = {'8': 'char', '16': 'short', '32': 'long', '64': 'long long'}.get(str(length))
@@ -199,7 +206,7 @@ def Decode_Functions(inputFile , stubDir , outputDir , row_aligned=False ):
                 variableLength_list += [a['len']] * len(names)
                 variableFormat_list += [fmt] * len(names)
                 variableDirection_list += [a['direction']] * len(names)
-                variableValidRange_list += [a.get('range', '0~1')] * len(names)
+                variableValidRange_list += expandArrayRanges(a.get('range', '0~1'), len(names))
                 testClassification_list += [a.get('testmethod', 'decision')] * len(names)
 
 
