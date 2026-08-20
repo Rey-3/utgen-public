@@ -44,6 +44,14 @@ def expandArrayRanges(value, count):
     return [value] * count
 
 
+def _pointer_input_range(attrs, expected):
+    if 'range' in attrs:
+        return attrs['range']
+    if attrs['direction'] != 'out':
+        return '0~1'
+    return ','.join('0' for _ in str(expected).split(','))
+
+
 def expandSignFormat(fmt, length):
     # [zb] the value xml carries a collapsed sign ('unsigned'/'signed'); turn it into the full (e.g. unsigned char, unsigned short)
     suffix = {'8': 'char', '16': 'short', '32': 'long', '64': 'long long'}.get(str(length))
@@ -52,16 +60,16 @@ def expandSignFormat(fmt, length):
     return fmt
 
 
-def applyNullPointerRows(testCases, variableNames, variableValidRanges, testClassifications):
+def applyNullPointerRows(testCases, variableNames, variableValidRanges, testClassifications, variableDirections):
     for pointerIndex, _ in enumerate(variableNames):
-        if testClassifications[pointerIndex] != "pointer":
+        if testClassifications[pointerIndex] != "pointer" or variableDirections[pointerIndex] != "in":
             continue
         targetName = str(variableValidRanges[pointerIndex]).strip()
         if not targetName.startswith("tessy_"):
             continue
         targetIndexes = []
         for i, target in enumerate(variableNames):
-            if target == targetName or target.startswith(targetName + ".") or target.startswith(targetName + "["):
+            if variableDirections[i] == "in" and (target == targetName or target.startswith(targetName + ".") or target.startswith(targetName + "[")):
                 targetIndexes.append(i)
         for row in testCases:
             if any(str(row[i]).strip().upper() == "NULL" for i in targetIndexes):
@@ -131,6 +139,7 @@ def Decode_Functions(inputFile , stubDir , outputDir , row_aligned=False ):
         variableFormat_list = []
         variableDirection_list = []
         variableValidRange_list = []
+        variableOutputRange_list = []
         testClassification_list = []
         pointer_bases_seen = set()   # [zb] struct bases already emitted as a pointer (Error, Stat, ...)
         pointer_members_seen = set() # [zb] member-pointer tessy vars already emitted (StatePtr, ...)
@@ -146,11 +155,12 @@ def Decode_Functions(inputFile , stubDir , outputDir , row_aligned=False ):
                 print("function's ", func, " contain arguments missing name/len/format/direction attribute")
                 break
             names = expandArrayName(a['name'])               ### [zb] expand array names to one entry per index
+            expected = expandArrayRanges(a.get('output', '0'), len(names))
             fmt = expandSignFormat(a['format'], a['len'])
             tessy_names = ["tessy_" + n for n in names]
 
             if a['pointer'] == "true" and whole_struct[a['name'].split('.')[0]]:
-                for n, tn in zip(names, tessy_names):
+                for index, (n, tn) in enumerate(zip(names, tessy_names)):
                     base = n.split('.')[0]           ### [zb] strip struct member
                     if base not in pointer_bases_seen:
                         pointer_bases_seen.add(base)
@@ -162,13 +172,15 @@ def Decode_Functions(inputFile , stubDir , outputDir , row_aligned=False ):
                             variableValidRange_list.append("NULL")
                         else:
                             variableValidRange_list.append("tessy_" + base)
+                        variableOutputRange_list.append("0")
                         testClassification_list.append("pointer")
 
                     variableName_list.append(tn)
                     variableLength_list.append(a['len'])
                     variableFormat_list.append(fmt)
                     variableDirection_list.append("inout")
-                    variableValidRange_list.append(a.get('range', '0~1'))
+                    variableValidRange_list.append(_pointer_input_range(a, expected[index]))
+                    variableOutputRange_list.append(expected[index])
                     testClassification_list.append(a.get('testmethod', 'decision'))
             elif a['pointer'] == "true":
                 # [zb] only this member of the struct is a pointer -> emit a var for the specific member,
@@ -190,16 +202,18 @@ def Decode_Functions(inputFile , stubDir , outputDir , row_aligned=False ):
                         variableValidRange_list.append("NULL")
                     else:
                         variableValidRange_list.append(tc)
+                    variableOutputRange_list.append("0")
                     testClassification_list.append("pointer")
                 if tessy_var not in pointer_members_seen:
                     pointer_members_seen.add(tessy_var)
                     tessy_fmt = target + " [%d]" % len(names) if is_array else target
-                    for tc in tessy_cols:
+                    for index, tc in enumerate(tessy_cols):
                         variableName_list.append(tc)
                         variableLength_list.append(a['len'])
                         variableFormat_list.append(tessy_fmt)
                         variableDirection_list.append("inout")
-                        variableValidRange_list.append(a.get('range', '0~1'))
+                        variableValidRange_list.append(_pointer_input_range(a, expected[index]))
+                        variableOutputRange_list.append(expected[index])
                         testClassification_list.append(a.get('testmethod', 'decision'))
             else:
                 variableName_list += names
@@ -207,6 +221,7 @@ def Decode_Functions(inputFile , stubDir , outputDir , row_aligned=False ):
                 variableFormat_list += [fmt] * len(names)
                 variableDirection_list += [a['direction']] * len(names)
                 variableValidRange_list += expandArrayRanges(a.get('range', '0~1'), len(names))
+                variableOutputRange_list += expected
                 testClassification_list += [a.get('testmethod', 'decision')] * len(names)
 
 
@@ -221,7 +236,8 @@ def Decode_Functions(inputFile , stubDir , outputDir , row_aligned=False ):
         variableName_list = [variableName_list[i] for i in order]
         variableLength_list = [variableLength_list[i] for i in order]
         variableFormat_list = [variableFormat_list[i] for i in order]
-        variableValidRange_list = [variableValidRange_list[i] for i in order]
+        variableValidRange_list = ([variableValidRange_list[i] for i in inputs] +
+                                   [variableOutputRange_list[i] for i in outputs])
         testClassification_list = [testClassification_list[i] for i in order]
         stub_list = Decode_Stubs(stubDir)
         print("creating Stub for",func_name,"() with total stub count ",len(stub_list))
@@ -233,7 +249,8 @@ def Decode_Functions(inputFile , stubDir , outputDir , row_aligned=False ):
             testCase_list , testMethod_list = createRowAlignedTestList(func_name , variableName_list, variableLength_list, variableFormat_list, variableDirection_list , variableValidRange_list ,testClassification_list)
         else:
             testCase_list , testMethod_list = createTestListforFunction(func_name , variableName_list, variableLength_list, variableFormat_list, variableDirection_list , variableValidRange_list ,testClassification_list)
-        applyNullPointerRows(testCase_list, variableName_list, variableValidRange_list, testClassification_list)
+        applyNullPointerRows(testCase_list, variableName_list, variableValidRange_list,
+                             testClassification_list, variableDirection_list)
         updateTestlistToExcel(func_name , os.path.join(RES_ROOT, 'template.xlsx'), outputFile ,  testCase_list , testMethod_list , stub_list ,  variableName_list , variableDirection_list , variableFormat_list)
         print("testCase_list:")
         for i in range(len(testCase_list)):

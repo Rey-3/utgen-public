@@ -1,12 +1,11 @@
 """TESSY value/stub XML and human-readable report emitters."""
 from __future__ import annotations
 
-import re
 from collections import Counter
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from utgen.model import Direction, FunctionIR, TestRow
+from utgen.model import Direction, FunctionIR, TestRow, expand_array_names
 
 
 class ValueXmlWriter:
@@ -23,12 +22,11 @@ class ValueXmlWriter:
             attrs = {"name": leaf.name, "len": _validation_len(leaf), "format": leaf.fmt,
                      "direction": leaf.direction.value, "pointer": _bool(leaf.is_pointer)}
             address = _pointer_address(leaf.name, addresses)
-            if leaf.direction in (Direction.IN, Direction.INOUT):
-                if default_range is None:
-                    attrs["range"] = _array_range(leaf, rows) or _row_range(leaf, rows, address)
-                else:
-                    attrs["range"] = default_range
+            if leaf.direction != Direction.OUT:
+                attrs["range"] = default_range if default_range is not None else _array_range(leaf, rows) or _row_range(leaf, rows, address)
                 attrs["testmethod"] = "decision"
+            if leaf.direction != Direction.IN:
+                attrs["output"] = _array_output_range(leaf, rows) or _output_range(leaf, rows)
             ET.SubElement(root, "argument", **attrs)
         _write_xml(root, path)
 
@@ -43,16 +41,24 @@ def _row_range(leaf, rows, address=None, name=None):
     return ",".join(values)
 
 
+def _output_range(leaf, rows, name=None):
+    name = name or leaf.name
+    values = []
+    for row in rows:
+        values.append(_render(leaf, row.expected[name]) if name in row.expected else "0")
+    return ",".join(values)
+
+
 def _array_range(leaf, rows):
-    match = re.search(r"\[(\d+)\]", leaf.name)
-    if match is None or re.search(r"\[\d+\]", leaf.name[match.end():]):
-        return ""
-    names = []
-    for index in range(int(match.group(1))):
-        names.append(f"{leaf.name[:match.start()]}[{index}]{leaf.name[match.end():]}")
+    names = expand_array_names(leaf.name)
     if not any(name in row.values for name in names for row in rows):
         return ""
     return "|".join(_row_range(leaf, rows, name=name) for name in names)
+
+
+def _array_output_range(leaf, rows):
+    names = expand_array_names(leaf.name)
+    return "|".join(_output_range(leaf, rows, name) for name in names)
 
 
 def _pointer_address(name, addresses):

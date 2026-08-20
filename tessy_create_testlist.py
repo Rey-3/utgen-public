@@ -12,14 +12,19 @@ def createTestListforFunction(func_name , variableName_list, variableLength_list
     ### row represent test cases , col represent test injection value for each arguments/variables
     col = len(variableName_list)
     injectionValue_list = []
+    input_rows = output_rows = 0
     for arg in range(col):
-        if variableDirection_list[arg]=="in" or variableDirection_list[arg]=="inout":
-            injectionValue_list.append(getRequiredTestValue(variableName_list[arg] , variableLength_list[arg], variableFormat_list[arg] , variableValidRange_list[arg] , testCassification_list[arg]))
+        values = (_row_values(variableValidRange_list[arg]) if variableDirection_list[arg] == "out" and testCassification_list[arg] != "pointer" else
+                  getRequiredTestValue(variableName_list[arg], variableLength_list[arg], variableFormat_list[arg],
+                                       variableValidRange_list[arg], testCassification_list[arg]))
+        injectionValue_list.append(values)
+        if variableDirection_list[arg] == "out":
+            output_rows = max(output_rows, len(values))
         else:
-            injectionValue_list.append([])
+            input_rows = max(input_rows, len(values))
     ##print("argument List:" , injectionValue_list)
     ### each-choice coverage: every value of every variable appears, rows = the largest variable's value count (no cartesian blow-up)
-    rows = max((len(v) for v in injectionValue_list), default=0)
+    rows = input_rows or output_rows
     myTestList, testMethod = [], []
     for i in range(rows):
         # myTestList = []
@@ -29,8 +34,14 @@ def createTestListforFunction(func_name , variableName_list, variableLength_list
         #         myTestList , testMethod = updateTestList(myTestList , testMethod, variableValidRange_list[r] , injectionValue_list[r] , variableLength_list[r] , variableFormat_list[r])
         #         if r==5:
         #             break
-        myTestList.append([v[i % len(v)] if v else 0 for v in injectionValue_list])
-        testMethod.append([classifyTestMethod(variableLength_list[c], variableFormat_list[c], variableValidRange_list[c], injectionValue_list[c][i % len(injectionValue_list[c])]) if injectionValue_list[c] else 'Ignore' for c in range(col)])
+        row = []
+        for c, values in enumerate(injectionValue_list):
+            if variableDirection_list[c] == "out" and testCassification_list[c] != "pointer":
+                row.append(values[i] if i < len(values) else 0)
+            else:
+                row.append(values[i % len(values)] if values else 0)
+        myTestList.append(row)
+        testMethod.append([classifyTestMethod(variableLength_list[c], variableFormat_list[c], variableValidRange_list[c], injectionValue_list[c][i % len(injectionValue_list[c])]) if injectionValue_list[c] and variableDirection_list[c] != "out" else 'Ignore' for c in range(col)])
     return (myTestList, testMethod)
 
 
@@ -38,41 +49,45 @@ def createRowAlignedTestList(func_name, variableName_list, variableLength_list, 
     """Replay the range verbatim as row-aligned test cases.
     """
     col = len(variableName_list)
-    # parse each input variable's range into an ordered token list (row vector)
+    # parse every variable's row vector; output columns carry expected values
     parsed = []
-    num_tc = 1
+    input_rows = output_rows = 0
     for i in range(col):
-        if variableDirection_list[i] == "in" or variableDirection_list[i] == "inout":
-            rng = str(variableValidRange_list[i])
-            toks = [t.strip() for t in rng.split(",")] if "," in rng else [rng.strip()]
-            parsed.append(toks)
-            if len(toks) > 1:
-                num_tc = max(num_tc, len(toks))
+        rng = str(variableValidRange_list[i])
+        toks = [t.strip() for t in rng.split(",")] if "," in rng else [rng.strip()]
+        parsed.append(toks)
+        if variableDirection_list[i] == "out":
+            output_rows = max(output_rows, len(toks))
         else:
-            parsed.append(None)   # output columns carry no injected value
+            input_rows = max(input_rows, len(toks))
+    num_tc = input_rows or output_rows or 1
 
     myTestList, testMethod = [], []
     for r in range(num_tc):
         row, meth = [], []
         for i in range(col):
             toks = parsed[i]
-            if toks is None:
-                row.append(0)
-                meth.append("Ignore")
-                continue
             if testCassification_list[i] == "pointer":
                 value = variableValidRange_list[i]        # tessy binding, constant across rows
             else:
-                tok = toks[r] if r < len(toks) else toks[-1]
-                value = convertHexToDec(tok)
+                value = convertHexToDec(toks[r]) if r < len(toks) else (0 if variableDirection_list[i] == "out" else convertHexToDec(toks[-1]))
             row.append(value)
-            if OutofRangeChecker(variableLength_list[i], variableFormat_list[i], value) == 1:
+            if variableDirection_list[i] == "out":
+                meth.append("Ignore")
+            elif OutofRangeChecker(variableLength_list[i], variableFormat_list[i], value) == 1:
                 meth.append("Invalid Test Case")
             else:
                 meth.append("Functional Test")
         myTestList.append(row)
         testMethod.append(meth)
     return (myTestList, testMethod)
+
+
+def _row_values(value):
+    values = []
+    for token in str(value).split(","):
+        values.append(convertHexToDec(token))
+    return values
 
 
 def classifyTestMethod(variableLength, variableFormat, variableValidRange, value):
@@ -249,4 +264,3 @@ def DuplicateChecker(index , injectionValue):
         if i!=index and injectionValue[index] == injectionValue[i]:
             duplicatedFlg = 1
     return duplicatedFlg
-    

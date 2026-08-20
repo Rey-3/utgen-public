@@ -8,6 +8,23 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import cache
+from itertools import product
+import re
+
+
+_ARRAY_EXTENT = re.compile(r"\[(\d+)\]")
+
+
+def expand_array_names(name: str) -> list[str]:
+    """Expand declared array extents in left-to-right product order."""
+    sizes = _ARRAY_EXTENT.findall(name)
+    if not sizes:
+        return []
+    template = _ARRAY_EXTENT.sub("[{}]", name)
+    names = []
+    for indices in product(*(range(int(size)) for size in sizes)):
+        names.append(template.format(*indices))
+    return names
 
 
 class Direction(StrEnum):

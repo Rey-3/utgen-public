@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, fields, is_dataclass
 from utgen.model import (And, Assign, Atom, Binop, Break, CallE, Cast, Const,
                           Decl, DoWhile, ExprStmt, For, If, Index, Inventory,
                           MemberE, Not, Or, Ref, Return, Switch, Ternary,
-                          TestRow, Unary, While, atoms_of)
+                          TestRow, Unary, While, atoms_of, expand_array_names)
 
 
 _BREAK = object()
@@ -31,8 +31,9 @@ class ExecResult:
 class Interpreter:
     """Execute a function IR using injectable inventory values."""
 
-    def __init__(self, inventory: Inventory) -> None:
+    def __init__(self, inventory: Inventory, execute_static_helpers: bool = True) -> None:
         self.inventory = inventory
+        self.execute_static_helpers = execute_static_helpers
         self._variable_names, self._normalized_names, self._address_names = set(), {}, {}
         self._path_cache = {}
         for variable in inventory.variables:
@@ -70,10 +71,11 @@ class Interpreter:
             else:
                 self.result.outputs[output] = self._wrap(output, signal[1])
         for variable in self.inventory.outputs():
-            if variable.name in self.unknown:
-                self.unknown.add(variable.name)
-            elif variable.name in self.env:
-                self.result.outputs[variable.name] = self._wrap(variable.name, self.env[variable.name])
+            for name in expand_array_names(variable.name) or (variable.name,):
+                if variable.name in self.unknown or name in self.unknown:
+                    self.unknown.add(name)
+                elif name in self.env:
+                    self.result.outputs[name] = self._wrap(variable.name, self.env[name])
         self.result.outcomes = self.outcomes
         self.result.observed = self.observed
         self.result.conditions = self.conditions
@@ -191,10 +193,9 @@ class Interpreter:
             path = self._path(expression)
             return self._read(path)
         if isinstance(expression, CallE):
-            # remove for not stable 
-            # helper = self.local_functions.get(expression.name)
-            # if helper is not None and not helper.static:
-            #     return self._call_local(expression, helper)
+            helper = self.local_functions.get(expression.name)
+            if helper is not None and (not helper.static or self.execute_static_helpers):
+                return self._call_local(expression, helper)
             return self.env.get(f"tessy_{expression.name}", 0)
         if isinstance(expression, Ternary):
             condition, leaves = self._trace(expression.c)
@@ -618,17 +619,13 @@ class Interpreter:
         return left - Interpreter._divide(left, right) * right if right else 0
 
 class Verifier:
-    """Attach concrete expected outputs to rows with matching intents."""
+    """Attach concrete expected outputs to every row."""
 
     def __init__(self, interpreter: Interpreter) -> None:
         self.interpreter = interpreter
 
     def check(self, function, rows: list[TestRow]) -> None:
-        """Fill expected outputs for rows whose intents match execution."""
+        """Execute every row and fill its known expected outputs."""
         for row in rows:
             result = self.interpreter.run(function, row.values)
-            for decision_id, wanted in row.intent.items():
-                if result.outcomes.get(decision_id) != wanted:
-                    break
-            else:
-                row.expected.update(result.outputs)
+            row.expected = result.outputs
