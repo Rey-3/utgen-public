@@ -9,9 +9,8 @@ import yaml
 from utgen.assembler import RowAssembler
 from utgen.db import ModuleIndexer
 from utgen.emit import StubXmlWriter, ValueXmlWriter
-from utgen.interp import Interpreter, Verifier
 from utgen.mcdc import McdcGenerator
-from utgen.model import Direction, Inventory, TestRow
+from utgen.model import Direction, TestRow
 from utgen.solver import Solver
 from tessy_parse import mainBody
 
@@ -87,9 +86,7 @@ def generate_function(function_name, name, output):
         output = Path(output)
         assembler = RowAssembler(Solver(), McdcGenerator(), include_boundary=False,
                                  include_fault=False)
-        rows, notes = assembler.assemble(function)
-        # notes.extend(Verifier(Interpreter(Inventory(function.leaves, function.stubs))).check(
-        #     function, rows))
+        rows = assembler.assemble(function)
         ValueXmlWriter().write(function, rows, output / f"value_{name}_{function.name}.xml")
         StubXmlWriter().write(function, output / f"stub_{name}_{function.name}.xml")
         return "ok", len(rows)

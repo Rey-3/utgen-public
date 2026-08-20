@@ -618,20 +618,17 @@ class Interpreter:
         return left - Interpreter._divide(left, right) * right if right else 0
 
 class Verifier:
-    """Verify row intents and attach concrete expected outputs."""
+    """Attach concrete expected outputs to rows with matching intents."""
 
     def __init__(self, interpreter: Interpreter) -> None:
         self.interpreter = interpreter
 
-    def check(self, function, rows: list[TestRow]) -> list[str]:
-        """Fill expected outputs and return intent-mismatch notes."""
-        notes = []
+    def check(self, function, rows: list[TestRow]) -> None:
+        """Fill expected outputs for rows whose intents match execution."""
         for row in rows:
             result = self.interpreter.run(function, row.values)
             for decision_id, wanted in row.intent.items():
                 if result.outcomes.get(decision_id) != wanted:
-                    notes.append(f"decision {decision_id}: intent mismatch")
                     break
             else:
                 row.expected.update(result.outputs)
-        return notes

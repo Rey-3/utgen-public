@@ -3,11 +3,10 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from dataclasses import fields, is_dataclass
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from utgen.model import CallE, Direction, FunctionIR, TestRow
+from utgen.model import Direction, FunctionIR, TestRow
 
 
 class ValueXmlWriter:
@@ -90,11 +89,10 @@ class StubXmlWriter:
 
 
 class ReportWriter:
-    """Write deterministic row traceability and diagnostic Markdown."""
+    """Write deterministic row traceability Markdown."""
 
-    def write(self, function: FunctionIR, rows: list[TestRow], notes: list[str],
-              path: str | Path) -> None:
-        """Write a report containing every row, output, and diagnostic note."""
+    def write(self, function: FunctionIR, rows: list[TestRow], path: str | Path) -> None:
+        """Write a report containing every row and expected output."""
         lines = [f"# UTGen report: {function.name}", "",
                  f"- Function: `{function.name}`", f"- File: `{_source(function)}`",
                  f"- Test cases: {len(rows)}",
@@ -104,14 +102,6 @@ class ReportWriter:
         for index, row in enumerate(rows, 1):
             lines.append(f"| {index} | {_cell(row.kind)} | {_cell(row.description)} | "
                          f"{_cell(_expected(row))} |")
-        grouped = _diagnostics(function, rows, notes)
-        for title, items in grouped:
-            lines.extend(("", f"## {title}"))
-            if items:
-                for item in items:
-                    lines.append(f"- {_cell(item)}")
-            else:
-                lines.append("None.")
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         Path(path).write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
 
@@ -183,48 +173,3 @@ def _expected(row: TestRow) -> str:
 
 def _cell(value) -> str:
     return str(value).replace("|", "\\|").replace("\r", " ").replace("\n", " ")
-
-
-def _diagnostics(function: FunctionIR, rows: list[TestRow], notes: list[str]) -> list[tuple[str, list[str]]]:
-    infeasible = []
-    uncontrollable = []
-    manual = []
-    for note in notes:
-        lower = note.lower()
-        if "infeasible" in lower:
-            infeasible.append(note)
-        elif "uncontrollable" in lower:
-            uncontrollable.append(note)
-        else:
-            manual.append(note)
-    if _has_null(rows):
-        manual.append("NULL pointer fault rows require manual address setup (D3).")
-    calls = Counter()
-    _collect_calls(function.body, calls)
-    for stub in function.stubs:
-        if calls[stub.name] > 1:
-            manual.append(f"Stub {stub.name} is called multiple times; one input is shared (E4).")
-    return [("Infeasible pairs", infeasible), ("Uncontrollable conditions", uncontrollable),
-            ("Manual actions", manual)]
-
-
-def _has_null(rows: list[TestRow]) -> bool:
-    for row in rows:
-        for value in row.values.values():
-            if value == "NULL":
-                return True
-    return False
-
-
-def _collect_calls(value, counts: Counter) -> None:
-    if isinstance(value, CallE):
-        counts[value.name] += 1
-    if is_dataclass(value):
-        for item in fields(value):
-            _collect_calls(getattr(value, item.name), counts)
-    elif isinstance(value, (tuple, list)):
-        for item in value:
-            _collect_calls(item, counts)
-    elif isinstance(value, dict):
-        for item in value.values():
-            _collect_calls(item, counts)

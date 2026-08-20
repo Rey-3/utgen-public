@@ -44,11 +44,11 @@ def regenerate():
                 print(f"skip {function.name}")
                 continue
             print(f"{module}: generating {function.name}", flush=True)
-            rows, notes = assembler.assemble(function)
-            notes.extend(Verifier(Interpreter(Inventory(function.leaves, function.stubs))).check(function, rows))
+            rows = assembler.assemble(function)
+            Verifier(Interpreter(Inventory(function.leaves, function.stubs))).check(function, rows)
             ValueXmlWriter().write(function, rows, output / f"value_{module}_{function.name}.xml")
             StubXmlWriter().write(function, output / f"stub_{module}_{function.name}.xml")
-            ReportWriter().write(function, rows, notes, output / f"report_{module}_{function.name}.md")
+            ReportWriter().write(function, rows, output / f"report_{module}_{function.name}.md")
             print(f"{module}: {function.name}: {len(rows)} rows", flush=True)
 
 

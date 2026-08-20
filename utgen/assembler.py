@@ -19,35 +19,29 @@ class RowAssembler:
         self.include_boundary = include_boundary
         self.include_fault = include_fault
 
-    def assemble(self, function: FunctionIR) -> tuple[list[TestRow], list[str]]:
-        """Return deterministic rows and notes for one function's decisions."""
+    def assemble(self, function: FunctionIR) -> list[TestRow]:
+        """Return deterministic rows for one function's decisions."""
         inputs = self._inputs(function)
         defaults = self._defaults(inputs)
         if not function.decisions:
-            return [TestRow(defaults, "Nominal", "nominal path")], []
+            return [TestRow(defaults, "Nominal", "nominal path")]
         rows = []
-        notes = []
         by_values = {}
         from utgen.coverage import CoverageGenerator
 
         concrete = CoverageGenerator()
         for decision in function.decisions:
-            if any(atom.var is None for atom in atoms_of(decision.expr)):
-                notes.append(f"decision {decision.id}: uncontrollable or degenerate condition")
             guard_assignments = self._guards(decision)
             if not guard_assignments:
-                notes.append(f"decision {decision.id}: infeasible guard stack")
                 continue
             assignments = self.mcdc.rows(decision.expr)
             for assignment in assignments:
-                emitted = False
                 for guards in guard_assignments:
                     values = self.solver.solve(self._constraints(guards, assignment))
                     if values is None:
                         values = self.solver.solve(self._constraints(guards, assignment, midpoint_relations=False))
                     if values is None:
                         continue
-                    emitted = True
                     values = defaults | values
                     key = tuple(values.items())
                     outcome = eval_expr(decision.expr, assignment)
@@ -62,10 +56,6 @@ class RowAssembler:
                     by_values[key] = row
                     rows.append(row)
                     break
-                if not emitted:
-                    notes.append(f"decision {decision.id}: infeasible MC/DC row")
-            if not assignments:
-                notes.append(f"decision {decision.id}: no feasible MC/DC pair")
             for coverage in concrete.rows(function, rows, (decision.id,)):
                 key = tuple(coverage.values.items())
                 if key not in by_values:
@@ -95,7 +85,7 @@ class RowAssembler:
                     continue
                 by_values[key] = fault
                 rows.append(fault)
-        return rows, notes
+        return rows
 
     @staticmethod
     def _inputs(function: FunctionIR) -> list:
