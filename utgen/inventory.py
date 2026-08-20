@@ -56,7 +56,7 @@ class InventoryBuilder:
             if address is not None:
                 variables.append(address)
             member = self.type_graph.describe(param.type, param.spelling)
-            variables.extend(self.deriver.leaves(member, Direction.IN))
+            variables.extend(self.deriver.leaves(member, self._param_direction(param)))
         result_type = func_cursor.result_type
         if result_type.get_canonical().kind != TypeKind.VOID:
             member = self.type_graph.describe(result_type, f"{func_cursor.spelling}()")
@@ -70,6 +70,14 @@ class InventoryBuilder:
         stubs, stub_vars = self.stub_finder.find(func_cursor)
         variables.extend(stub_vars)
         return _Inventory(variables, stubs)
+
+    @staticmethod
+    def _param_direction(param) -> Direction:
+        canonical = param.type.get_canonical()
+        if canonical.kind != TypeKind.POINTER:
+            return Direction.IN
+        return (Direction.IN if canonical.get_pointee().is_const_qualified()
+                else Direction.INOUT)
 
     @staticmethod
     def _pointer_address(param) -> Variable | None:

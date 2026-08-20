@@ -31,7 +31,7 @@ class ExecResult:
 class Interpreter:
     """Execute a function IR using injectable inventory values."""
 
-    def __init__(self, inventory: Inventory, execute_static_helpers: bool = True) -> None:
+    def __init__(self, inventory: Inventory, execute_static_helpers: bool = False) -> None:
         self.inventory = inventory
         self.execute_static_helpers = execute_static_helpers
         self._variable_names, self._normalized_names, self._address_names = set(), {}, {}
