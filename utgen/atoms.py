@@ -30,6 +30,15 @@ class _Value:
     node: object = None
 
 
+@dataclass(frozen=True)
+class _ConditionalValue:
+    """Scalar value selected by a conditional expression."""
+
+    condition: object
+    when_true: _Value
+    when_false: _Value
+
+
 class CopyPropagation:
     """Track ordered local/member assignments for condition resolution."""
 
@@ -290,6 +299,10 @@ class AtomBuilder:
                 return Atom(left.variable, op, rhs=right.constant, text=_source(cursor))
             if right.variable is not None:
                 return Atom(left.variable, op, rhs_var=right.variable, text=_source(cursor))
+        if right.constant is not None and isinstance(left.node, _ConditionalValue):
+            relation = self._conditional_relation(left.node, op, right.constant)
+            if relation is not None:
+                return relation
         if left.constant is not None and right.constant is not None:
             result = _compare(left.constant, right.constant, op)
             self.constants[_source(cursor)] = result
@@ -301,6 +314,35 @@ class AtomBuilder:
             variable, offset = linear
             return Atom(variable, op, rhs=right.constant - offset, text=_source(cursor))
         return self._unknown(cursor)
+
+    def _conditional_relation(self, value: _ConditionalValue, op: Op, rhs: int):
+        when_true = self._value_relation(value.when_true, op, rhs)
+        when_false = self._value_relation(value.when_false, op, rhs)
+        if when_true is None or when_false is None:
+            return None
+        if self._is_max(value):
+            if op in (Op.GT, Op.GE):
+                return Or((when_true, when_false))
+            if op in (Op.LT, Op.LE):
+                return And((when_true, when_false))
+        return Or((And((value.condition, when_true)),
+                   And((Not(value.condition), when_false))))
+
+    @staticmethod
+    def _is_max(value: _ConditionalValue) -> bool:
+        condition = value.condition
+        return (isinstance(condition, Atom) and condition.op == Op.GT
+                and condition.var is not None and condition.rhs_var is not None
+                and value.when_true.variable == condition.var
+                and value.when_false.variable == condition.rhs_var)
+
+    def _value_relation(self, value: _Value, op: Op, rhs: int):
+        if value.variable is not None:
+            return Atom(value.variable, op, rhs=rhs,
+                        text=f"{value.variable.name} {op.value} {rhs}")
+        if isinstance(value.node, _ConditionalValue):
+            return self._conditional_relation(value.node, op, rhs)
+        return None
 
     @staticmethod
     def _bit_relation(cursor: Cursor, left: _Value, right: _Value, op: Op):
@@ -335,6 +377,11 @@ class AtomBuilder:
             constant = _macro_constant(cursor, self._macro_values)
         if constant is not None:
             return _Value(constant=constant)
+        if cursor.kind == CursorKind.CONDITIONAL_OPERATOR:
+            children = list(cursor.get_children())
+            if len(children) == 3:
+                return _Value(node=_ConditionalValue(
+                    self._node(children[0]), self._value(children[1]), self._value(children[2])))
         path = _raw_path(cursor)
         variable = self._find_variable(path, cursor.kind == CursorKind.DECL_REF_EXPR)
         if variable is not None:
