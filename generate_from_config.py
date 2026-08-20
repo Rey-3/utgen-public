@@ -54,7 +54,8 @@ def fallback_rows(function):
 def write_timeout_outputs(function, name, output):
     rows = fallback_rows(function)
     note = f"generation timed out after {FUNCTION_TIMEOUT_SECONDS}s; fallback values used"
-    Verifier(Interpreter(Inventory(function.leaves, function.stubs))).check(function, rows)
+    Verifier(Interpreter(Inventory(function.leaves, function.stubs),
+                         execute_static_helpers=True)).check(function, rows)
     ValueXmlWriter().write(function, rows, output / f"value_{name}_{function.name}.xml",
                            default_range="0,1")
     StubXmlWriter().write(function, output / f"stub_{name}_{function.name}.xml")
@@ -89,7 +90,8 @@ def generate_function(function_name, name, output):
         assembler = RowAssembler(Solver(), McdcGenerator(), include_boundary=False,
                                  include_fault=False)
         rows = assembler.assemble(function)
-        Verifier(Interpreter(Inventory(function.leaves, function.stubs))).check(function, rows)
+        Verifier(Interpreter(Inventory(function.leaves, function.stubs),
+                             execute_static_helpers=True)).check(function, rows)
         ValueXmlWriter().write(function, rows, output / f"value_{name}_{function.name}.xml")
         StubXmlWriter().write(function, output / f"stub_{name}_{function.name}.xml")
         return "ok", len(rows)
