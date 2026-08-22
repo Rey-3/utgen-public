@@ -1,4 +1,4 @@
-"""Map clang condition expressions to controllable boolean atoms."""
+
 from __future__ import annotations
 
 import ast
@@ -23,7 +23,11 @@ _WRAPPERS.discard(None)
 
 @dataclass(frozen=True)
 class _Value:
-    """Resolved condition operand."""
+    """Resolved expression value used while converting C conditions into atoms.
+
+    Exactly one of ``variable``, ``constant`` or ``node`` is normally populated.
+    ``node`` keeps expressions that cannot be reduced to a single scalar value.
+    """
 
     variable: Variable | None = None
     constant: int | None = None
@@ -32,7 +36,7 @@ class _Value:
 
 @dataclass(frozen=True)
 class _ConditionalValue:
-    """Scalar value selected by a conditional expression."""
+    """Intermediate representation for the C ternary operator ``cond ? a : b``."""
 
     condition: object
     when_true: _Value
@@ -40,7 +44,12 @@ class _ConditionalValue:
 
 
 class CopyPropagation:
-    """Track ordered local/member assignments for condition resolution."""
+    """Track simple local assignments so conditions can be traced back to real inputs.
+
+    For example, if ``tmp = input`` and a later decision uses ``tmp``, the builder can
+    resolve that use back to ``input``. Writes inside loops are treated conservatively
+    because the value may change between iterations.
+    """
 
     def __init__(self):
         self._bindings: dict[str, Cursor | None] = {}
@@ -50,7 +59,7 @@ class CopyPropagation:
         self._static_member_paths: set[str] = set()
 
     def record(self, stmt_cursor: Cursor) -> None:
-        """Record declarations and assignments appearing before a condition."""
+
         kind = stmt_cursor.kind
         if kind == CursorKind.FUNCTION_DECL:
             for child in stmt_cursor.get_children():
@@ -96,14 +105,20 @@ class CopyPropagation:
                 self.record(child)
 
     def resolve(self, expr_cursor: Cursor) -> str | None:
-        """Resolve an expression to a source path when it is copy-propagatable."""
+
         value = self.resolve_expr(expr_cursor)
         if isinstance(value, Cursor):
             return _raw_path(value)
         return value if isinstance(value, str) else None
 
     def resolve_expr(self, expr_cursor: Cursor, seen: set[str] | None = None):
-        """Return the latest source cursor for an expression or ``None``."""
+        """Follow known aliases/copies until the original expression is reached.
+
+        ``seen`` prevents assignment cycles from causing infinite recursion. A value
+        written inside a loop is deliberately left unresolved because its runtime
+        value is iteration-dependent.
+        """
+
         seen = set() if seen is None else seen
         expr_cursor = _unwrap(expr_cursor)
         path = _raw_path(expr_cursor)
@@ -131,6 +146,8 @@ class CopyPropagation:
                     base = self.resolve_expr(children[0], seen)
                     base_path = _raw_path(base) if isinstance(base, Cursor) else base
                     if base_path:
+                        # Copy propagation only needs the array identity here; the exact
+                        # index is recovered later by _access_path when it is constant.
                         return f"{base_path}[*]"
             return expr_cursor
         return self._follow(self._bindings[key], seen)
@@ -152,18 +169,24 @@ class CopyPropagation:
         return value
 
     def snapshot(self):
-        """Capture bindings before taking a control-flow branch."""
+
         return (self._bindings.copy(), self._member_bindings.copy(), self._locals.copy(),
                 self._loop_written.copy(), self._static_member_paths.copy())
 
     def restore(self, state) -> None:
-        """Restore a previously captured binding state."""
+
         self._bindings, self._member_bindings, self._locals, self._loop_written = (
             state[0].copy(), state[1].copy(), state[2].copy(), state[3].copy())
         self._static_member_paths = state[4].copy()
 
     def merge(self, *states):
-        """Keep only bindings unchanged on every reachable branch."""
+        """Merge branch states without inventing a value that is not common to all paths.
+
+        Ordinary bindings survive only when every branch points to the same source.
+        Static member paths are handled separately because their state persists across
+        control-flow joins.
+        """
+
         if not states:
             return self.snapshot()
         bindings = _common_bindings(*(state[0] for state in states))
@@ -194,6 +217,8 @@ class CopyPropagation:
         return (_cursor_key(_root(cursor)) or "") in self._locals
 
     def _mark_loop_writes(self, cursor: Cursor) -> None:
+        # Any variable modified by the loop body is unsafe for simple copy propagation:
+        # the assignment seen statically may not represent the value at a later iteration.
         if cursor.kind in (CursorKind.BINARY_OPERATOR, CursorKind.COMPOUND_ASSIGNMENT_OPERATOR):
             if _operator(cursor) in _ASSIGNMENTS:
                 children = list(cursor.get_children())
@@ -218,7 +243,13 @@ class CopyPropagation:
 
 
 class AtomBuilder:
-    """Build boolean atom trees mapped to an ``Inventory``."""
+    """Convert Clang condition expressions into UTGen boolean decision nodes.
+
+    The preferred result is a controllable ``Atom`` tied to an inventory variable.
+    Compound C conditions become ``And``/``Or``/``Not`` trees. Expressions that cannot
+    be mapped to a controllable input are still preserved as text and marked
+    uncontrollable instead of being silently discarded.
+    """
 
     def __init__(self, inventory: Inventory, copyprop: CopyPropagation | None = None, macros=None):
         self.inventory = inventory
@@ -230,17 +261,18 @@ class AtomBuilder:
         self.uncontrollable: list[str] = []
 
     def build(self, cond_cursor: Cursor):
-        """Build an ``Atom``/``And``/``Or``/``Not`` tree for a condition."""
+
         return self._node(cond_cursor)
 
     def build_source(self, cond_cursor: Cursor):
-        """Build a source-shaped condition without expanding local bindings."""
+        """Build from the source expression without reusing current copy-propagation state."""
+
         builder = AtomBuilder(self.inventory, CopyPropagation())
         builder._macro_values = self._macro_values
         return builder._node(cond_cursor)
 
     def build_case(self, subject_cursor: Cursor, label_cursor: Cursor) -> Atom:
-        """Build a switch-label equality using the real subject expression."""
+
         subject = self._value(subject_cursor)
         label = _constant(_unwrap(label_cursor))
         if label is None:
@@ -271,6 +303,8 @@ class AtomBuilder:
                 left = self._value(children[0])
                 right = self._value(children[1])
                 if left.variable is not None and right.constant is not None:
+                    # Keep ``flags & MASK`` as a BITSET atom. A surrounding comparison
+                    # such as ``(flags & MASK) != 0`` is normalized by _bit_relation.
                     return Atom(left.variable, Op.BITSET, rhs=right.constant,
                                 text=_source(cursor))
             return self._unknown(cursor)
@@ -311,16 +345,22 @@ class AtomBuilder:
             return bit_test
         linear = self._linear(left_cursor)
         if linear is not None and right.constant is not None:
+            # Normalize simple arithmetic before solving. Example: ``x + 2 > 5``
+            # becomes ``x > 3`` so the solver only needs a constraint on x.
             variable, offset = linear
             return Atom(variable, op, rhs=right.constant - offset, text=_source(cursor))
         return self._unknown(cursor)
 
     def _conditional_relation(self, value: _ConditionalValue, op: Op, rhs: int):
+        """Expand a ternary comparison into equivalent boolean branch constraints."""
+
         when_true = self._value_relation(value.when_true, op, rhs)
         when_false = self._value_relation(value.when_false, op, rhs)
         if when_true is None or when_false is None:
             return None
         if self._is_max(value):
+            # ``(a > b ? a : b)`` is max(a, b). Comparisons against max can be
+            # simplified without carrying the ternary guard into both branches.
             if op in (Op.GT, Op.GE):
                 return Or((when_true, when_false))
             if op in (Op.LT, Op.LE):
@@ -346,6 +386,8 @@ class AtomBuilder:
 
     @staticmethod
     def _bit_relation(cursor: Cursor, left: _Value, right: _Value, op: Op):
+        """Normalize common masked-bit comparisons into one BITSET condition."""
+
         bit = left.node if isinstance(left.node, Atom) and left.node.op == Op.BITSET else None
         if bit is None or right.constant is None or bit.rhs is None:
             return None
@@ -358,6 +400,13 @@ class AtomBuilder:
         return None
 
     def _value(self, cursor: Cursor) -> _Value:
+        """Resolve an expression as an inventory variable, integer constant, or sub-node.
+
+        Resolution order matters: copy propagation is applied first, then constants and
+        macros are folded, and only then is the remaining source path matched against
+        the inventory. This avoids treating a copied local temporary as a new input.
+        """
+
         original = cursor
         resolved = self.copyprop.resolve_expr(cursor)
         if resolved is None:
@@ -366,6 +415,8 @@ class AtomBuilder:
             access = _access_path(cursor, self._macro_values)
             if ("*" in resolved and "*" not in access and
                     re.sub(r"\[[^]]*\]", "", resolved) == re.sub(r"\[[^]]*\]", "", access)):
+                # Copy propagation stores array accesses as [*]. Recover a concrete
+                # constant index when the original source expression still provides it.
                 resolved = access
             variable = self._find_variable(resolved)
             return _Value(variable=variable) if variable is not None else _Value()
@@ -392,6 +443,8 @@ class AtomBuilder:
                 return _Value(node=node)
         if cursor.kind == CursorKind.CALL_EXPR:
             name = _callee_name(cursor)
+            # Stub return values are exposed in the inventory using the tessy_<callee>
+            # naming convention, so a call used in a condition can remain controllable.
             variable = self._find_variable(f"tessy_{name}") if name else None
             if variable is not None:
                 return _Value(variable=variable)
@@ -400,6 +453,8 @@ class AtomBuilder:
         return _Value()
 
     def _linear(self, cursor: Cursor):
+        """Recognize only ``variable +/- constant`` chains and return their offset."""
+
         cursor = _unwrap(cursor)
         value = self._value(cursor)
         if value.variable is not None:
@@ -423,6 +478,13 @@ class AtomBuilder:
         return None
 
     def _find_variable(self, path: str | None, address=False) -> Variable | None:
+        """Match a source access path to the normalized variables stored in Inventory.
+
+        Array indices may differ between AST paths and inventory leaf names, and static
+        locals can carry generated scope suffixes, so direct lookup is followed by a
+        normalized fallback match.
+        """
+
         if not path:
             return None
         if address:
@@ -442,6 +504,8 @@ class AtomBuilder:
         return None
 
     def _unknown(self, cursor: Cursor) -> Atom:
+        # Keep unsupported expressions in the decision tree for traceability, but with
+        # var=None so later stages know that UTGen cannot directly control the condition.
         text = _source(cursor)
         if text not in self.uncontrollable:
             self.uncontrollable.append(text)
@@ -449,7 +513,8 @@ class AtomBuilder:
 
 
 def _unwrap(cursor: Cursor) -> Cursor:
-    """Remove clang expression wrappers while preserving calls and literals."""
+    """Strip AST wrapper/cast nodes that do not change the logical expression."""
+
     while cursor.kind in _WRAPPERS:
         children = []
         for child in cursor.get_children():
@@ -487,7 +552,7 @@ def _is_static(cursor: Cursor) -> bool:
 
 
 def _common_bindings(*mappings):
-    """Return entries whose cursor binding is identical in every mapping."""
+
     if not mappings:
         return {}
     common = {}
@@ -506,6 +571,8 @@ def _cursor_key(cursor: Cursor) -> str | None:
 
 
 def _raw_path(cursor: Cursor) -> str:
+    """Build a stable inventory-style path and wildcard all array subscripts."""
+
     cursor = _unwrap(cursor)
     if cursor.kind in (CursorKind.DECL_REF_EXPR, CursorKind.VAR_DECL):
         return cursor.spelling
@@ -526,6 +593,8 @@ def _raw_path(cursor: Cursor) -> str:
 
 
 def _access_path(cursor: Cursor, macros) -> str:
+    """Build an access path while preserving array indices that fold to constants."""
+
     cursor = _unwrap(cursor)
     if cursor.kind == CursorKind.ARRAY_SUBSCRIPT_EXPR:
         children = list(cursor.get_children())
@@ -548,6 +617,12 @@ def _callee_name(cursor: Cursor) -> str:
 
 
 def _constant(cursor: Cursor) -> int | None:
+    """Fold integer-only C expressions without evaluating runtime-dependent values.
+
+    Division and modulo intentionally follow C integer semantics (truncate toward zero)
+    rather than Python's floor-division behavior for negative operands.
+    """
+
     cursor = _unwrap(cursor)
     referenced = cursor.referenced
     if referenced is not None and referenced.kind == CursorKind.ENUM_CONSTANT_DECL:
@@ -608,7 +683,13 @@ def _constant(cursor: Cursor) -> int | None:
 
 
 def _macro_constant(cursor: Cursor, macros=None) -> int | None:
-    """Resolve an object-like numeric macro behind an expanded literal."""
+    """Resolve an identifier at the cursor location as a numeric macro when possible.
+
+    The source-location checks avoid accidentally folding another identifier from the
+    same line. Parsed macro metadata is preferred; source ``#define`` scanning is only
+    a fallback.
+    """
+
     cursor = _unwrap(cursor)
     file = cursor.location.file
     if file is None or cursor.location.line < 1:
@@ -646,7 +727,12 @@ def _macro_constant(cursor: Cursor, macros=None) -> int | None:
 
 
 def _fold_int(raw, macros=None, seen=()):
-    """Fold a small C integer expression used by object-like macros."""
+    """Safely fold a restricted integer macro expression via Python's AST.
+
+    C comments, simple casts and integer suffixes are removed first. Only explicitly
+    handled integer AST nodes are evaluated, so arbitrary Python code is never run.
+    """
+
     text = re.sub(r"/\*.*?\*/|//.*", "", str(raw), flags=re.S).strip()
     text = re.sub(r"\(\s*(?:const\s+)?[A-Za-z_]\w*\s*\*\s*\)", "", text)
     text = re.sub(r"\(\s*(?:unsigned\s+|signed\s+)?(?:char|short|int|long|bool|void|uint\d+|sint\d+)\s*\)", "", text)
@@ -659,6 +745,7 @@ def _fold_int(raw, macros=None, seen=()):
 
 
 def _fold_node(node, macros, seen):
+    # ``seen`` breaks recursive macro definitions such as A -> B -> A.
     if isinstance(node, ast.Constant) and isinstance(node.value, int):
         return node.value
     if isinstance(node, ast.Name) and node.id in macros and node.id not in seen:

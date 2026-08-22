@@ -1,9 +1,4 @@
-"""Recursive #include resolution -> unique -I directories.
 
-Port of the proven include_scanner.py from the existing tool (same algorithm:
-regex #include walk, case-insensitive filename search under the source root,
-self-named-subpath handling), decoupled from its config module. Spec L7.
-"""
 from __future__ import annotations
 
 import os
@@ -11,18 +6,14 @@ import re
 
 try:
     import chardet
-except ImportError:                     # encoding detection degrades gracefully
+except ImportError:
     chardet = None
 
 _INCLUDE_RE = re.compile(r'#include\s*[<"]([^">]+)[>"]')
 
 
 class IncludeScanner:
-    """Resolves every #include reachable from one source file.
 
-    `resolved` maps header filename -> found path (None when missing);
-    `missing` lists headers that could not be found under `root_path`.
-    """
 
     def __init__(self, source_file: str, root_path: str, debug: bool = False):
         self.root_path = root_path
@@ -33,7 +24,7 @@ class IncludeScanner:
         self._walk(self._includes_of(source_file))
 
     def get_unique_include_dirs(self) -> list[str]:
-        """-I directories, subpath includes stripped back to their include root."""
+
         subpaths = {}
         for p in self.include_full_paths:
             subpaths[os.path.basename(p).lower()] = os.path.normpath(p)
@@ -46,10 +37,10 @@ class IncludeScanner:
             file_base = os.path.splitext(os.path.basename(full_path))[0]
             sub = subpaths.get(filename.lower())
             if sub and os.path.basename(dir_path) == file_base:
-                # Header included via a self-named subpath (e.g. ioc/ioc.h): use its parent.
+
                 dir_path = os.path.dirname(dir_path)
             elif sub and full_path.lower().endswith(os.sep + sub.lower()):
-                # Included via a relative subpath: strip it to get the include root.
+
                 dir_path = full_path[: -(len(sub) + 1)]
             dir_path = os.path.normpath(dir_path)
             if dir_path not in dirs:

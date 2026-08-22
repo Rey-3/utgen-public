@@ -1,4 +1,3 @@
-"""Translation-unit building and per-module function discovery."""
 from __future__ import annotations
 
 import os
@@ -10,26 +9,37 @@ from utgen.clang_setup import configure_libclang
 
 
 class ParseError(Exception):
-    """Raised when clang reports fatal diagnostics for a source file (K6)."""
+    """Raised when libclang cannot safely continue parsing the source file."""
 
 
 class ClangParser:
-    """Parses one C source file into a TranslationUnit.
-
-    Detailed preprocessing record is enabled so macro definitions are visible
-    to the module indexer (Task 9 / spec L4).
-    """
+    """Convert a C source file into the libclang TranslationUnit used by UTGen."""
 
     def parse(self, source: Path, includes: list, defines=()) -> TranslationUnit:
+        """Parse one C source file with the include paths and preprocessor defines from UTGen."""
+
         configure_libclang(None)
+
+        # Build the same compiler context the source expects.  Clang needs the
+        # include search paths and preprocessor symbols to resolve the AST
+        # correctly; otherwise declarations may be missing or parsed incorrectly.
         args = ["-x", "c"]
         for inc in includes:
             args.append("-I" + str(inc))
         for define in defines:
+            # Accept config values in either "NAME=VALUE" or "-DNAME=VALUE" form.
             args.append(str(define) if str(define).startswith("-D") else "-D" + str(define))
+
+        # Keep preprocessing entities such as macro definitions in the
+        # TranslationUnit.  ModuleIndexer later walks these cursors to collect
+        # macros in addition to normal declarations and function bodies.
         tu = Index.create().parse(
             str(source), args=args,
             options=TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD)
+
+        # Only fatal diagnostics stop this stage.  Lower-severity diagnostics
+        # remain attached to the TranslationUnit, while a fatal parse means the
+        # resulting AST cannot be trusted for the later UTGen analysis stages.
         fatals = []
         for diag in tu.diagnostics:
             if diag.severity >= Diagnostic.Fatal:
@@ -40,16 +50,19 @@ class ClangParser:
 
 
 def function_definitions(tu: TranslationUnit) -> dict:
-    """Functions DEFINED in the parsed .c itself, by name.
+    """Return function definitions that physically belong to the parsed source file."""
 
-    Static functions included (K3); functions defined in included headers
-    (inline helpers) excluded via the location filter (K10).
-    """
+    # A TranslationUnit also contains declarations/definitions reached through
+    # headers.  Normalize paths first so Windows path casing/separators do not
+    # cause the main source file to be compared incorrectly.
     main_file = os.path.normcase(os.path.normpath(str(tu.spelling)))
     out = {}
     for cursor in tu.cursor.get_children():
         if cursor.kind != CursorKind.FUNCTION_DECL or not cursor.is_definition():
             continue
+
+        # Keep only functions implemented in this .c file.  Header functions or
+        # other included definitions are dependencies, not UTGen target functions.
         loc = cursor.location.file
         if loc and os.path.normcase(os.path.normpath(str(loc))) == main_file:
             out[cursor.spelling] = cursor

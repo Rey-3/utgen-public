@@ -31,23 +31,13 @@ from utgen.model import (And, Atom, Binop, Break, CallE, Cast, Const, CType,
 class ModuleIndexer:
 
     def __init__(self, config=None):
-        # Store the configuration used during indexing (define marco or include file)
+
         self.config = config or {}
 
     def index(self, source: Path, root_path: Path | None = None) -> ModuleAnalysis:
-        """
-        Index and analyze a C source file.
 
-        Args:
-            source : Path to the C source (.c) file that will be indexed and analyzed.
-
-            root_path: Project root path for resolving dependencies.
-
-        Returns:
-            ModuleAnalysis:
-                The analysis result for the source file, containing the indexed
-                module information and discovered code structure.
-        """
+        # Build one complete module snapshot. The result combines Clang parsing,
+        # discovered type information, function IR, and the derived dataflow model.
         source = Path(source)
         root_path = Path(root_path or self._get("include_root", source.parent))
         include_dirs, headers = self._includes(source, root_path)
@@ -60,6 +50,8 @@ class ModuleIndexer:
                                              self._get("const_globals", "inject"),
                                              self._get("no_stub", DEFAULT_NO_STUB))
 
+        # Register shared enum/global types before building function inventories so
+        # parameters and expressions can resolve those types consistently.
         self._register_globals(tu, inventory_builder)
 
         functions = []
@@ -75,7 +67,9 @@ class ModuleIndexer:
         return analysis
 
     def _function(self, cursor, tu, inventory_builder, macros=None):
-        """ This converts one clang function definition into a complete `FunctionIR`"""
+
+        # A function is converted in stages: inventory -> decision atoms -> body IR.
+        # Dataflow is then computed from that IR and stored on the same FunctionIR.
         inventory = inventory_builder.build(cursor, tu)
         atom_builder = AtomBuilder(inventory, macros=macros)
         decisions = DecisionExtractor(atom_builder).extract(cursor)
@@ -93,6 +87,8 @@ class ModuleIndexer:
     def _includes(self, source: Path, root_path: Path):
         scanner = IncludeScanner(str(source), str(root_path))
         dirs = []
+        # Keep configured include paths first, then add paths discovered recursively
+        # from #include directives. This preserves user precedence without duplicates.
         configured = self._get("includes", ())
         for directory in configured:
             if directory not in dirs:
@@ -101,6 +97,8 @@ class ModuleIndexer:
             if directory not in dirs:
                 dirs.append(directory)
         headers = []
+        # Header hashes make the XML database sensitive to dependency changes, not
+        # only to changes in the main C source file.
         for name, path in scanner.resolved.items():
             if path:
                 headers.append((name, path, _sha256(Path(path))))
@@ -113,11 +111,13 @@ class ModuleIndexer:
                 builder.type_graph.describe(cursor.type, cursor.spelling)
 
     def _globals(self, tu, builder):
-        """ This creates persistent `GlobalDef` records"""
+
         result, seen = [], set()
         for cursor in _walk(tu.cursor):
             if cursor.kind != CursorKind.VAR_DECL or not _is_global(cursor):
                 continue
+            # Clang may expose the same global through more than one cursor. Name +
+            # source file is used as the stable identity for de-duplication here.
             key = (cursor.spelling, str(cursor.location.file or ""))
             if key in seen:
                 continue
@@ -131,7 +131,7 @@ class ModuleIndexer:
         return result
 
     def _macros(self, tu):
-        """ macro extraction """
+
         result, seen = [], set()
         for cursor in _walk(tu.cursor):
             if cursor.kind != CursorKind.MACRO_DEFINITION or cursor.spelling.startswith("__"):
@@ -141,6 +141,9 @@ class ModuleIndexer:
                 seen.add(macro.name)
                 result.append(macro)
         values = {}
+        # Object-like macros may reference other macros. Re-run folding until a full
+        # pass discovers no new integer value, which handles dependency chains such
+        # as A -> B -> C without requiring declaration order.
         changed = True
         while changed:
             changed = False
@@ -163,10 +166,12 @@ class ModuleIndexer:
 
 
 class XmlDbWriter:
-    """Write a deterministic ``SourceAnalysis`` XML document."""
+
 
     def write(self, analysis: ModuleAnalysis, path: Path) -> None:
-        """Serialize ``analysis`` to ``path`` using the Task 9 schema."""
+
+        # Persist enough of ModuleAnalysis to reconstruct the IR later without
+        # reparsing the C source. Derived relationships are restored by XmlDbReader.
         root = ET.Element("SourceAnalysis", file=analysis.file,
                           sha256=analysis.sha256, tool="utgen 0.1")
         includes = ET.SubElement(root, "Includes")
@@ -236,6 +241,8 @@ class XmlDbWriter:
             self._leaf(element, leaf)
         for decision in function.decisions:
             self._decision(element, decision)
+        # The executable IR and dataflow snapshot are stored separately: Body keeps
+        # program structure, while Dataflow keeps path-dependent symbolic states.
         body = ET.SubElement(element, "Body")
         for statement in function.body:
             self._statement(body, statement)
@@ -275,7 +282,7 @@ class XmlDbWriter:
         _write_node(element, decision.expr)
 
     def _statement(self, parent, statement):
-        """ It takes a UTGen statement object and writes it into XML."""
+
         if isinstance(statement, Decl):
             attrs = {"name": statement.name, "scope": statement.scope,
                      "pointer": str(statement.is_pointer).lower()}
@@ -382,6 +389,8 @@ class XmlDbWriter:
 class XmlDbReader:
 
     def read(self, path: Path) -> ModuleAnalysis:
+        # XML restores serialized objects first. Cross-function lookup tables and
+        # helper dependencies are rebuilt afterwards because they are derived data.
         root = ET.parse(path).getroot()
         includes = root.find("Includes")
         dirs, headers = [], []
@@ -411,7 +420,10 @@ class XmlDbReader:
 
 
 def _link_local_call_stubs(analysis: ModuleAnalysis) -> None:
-    """Propagate external inputs used by same-module helper calls."""
+
+    # A caller can execute a local helper during interpretation. Pull the helper
+    # inputs and external stubs into the caller so the caller has everything needed
+    # to generate values for that transitive dependency after loading from XML.
     for function in analysis.functions:
         names = _called_names(function.body)
         for name in names:
@@ -427,7 +439,9 @@ def _link_local_call_stubs(analysis: ModuleAnalysis) -> None:
 
 
 def _set_constants(analysis: ModuleAnalysis) -> None:
-    """Give each function the persisted object-macro and enum values."""
+
+    # Expressions use one constant namespace, so resolved macros and enum members
+    # are merged into the lookup attached to every function.
     values = {}
     for macro in analysis.macros:
         if macro.value is not None:
@@ -440,14 +454,18 @@ def _set_constants(analysis: ModuleAnalysis) -> None:
 
 
 def _set_local_functions(analysis: ModuleAnalysis) -> None:
-    """ This is later used by the interpreter to execute same-module helper calls """
+
+    # Keep a module-wide name -> FunctionIR map on each function. The interpreter
+    # uses it to execute calls to helpers implemented in the same source module.
     functions = {function.name: function for function in analysis.functions}
     for function in analysis.functions:
         function.local_functions = functions
 
 
 def _called_names(statements) -> set[str]:
-    """ finds called function names"""
+
+    # Walk the dataclass-based IR recursively instead of checking only top-level
+    # statements; calls may be nested inside assignments, conditions, or expressions.
     names = set()
     for statement in statements:
         for node in _nodes(statement):
@@ -457,7 +475,7 @@ def _called_names(statements) -> set[str]:
 
 
 def _nodes(node):
-    """ recursively walks through the AST/data structure and finds every CallE node """
+
     if isinstance(node, CallE):
         yield node
     if is_dataclass(node):
@@ -475,7 +493,7 @@ def _sha256(path: Path) -> str:
 
 
 def _walk(cursor):
-    """ Clang AST cursor tree. """
+
     yield cursor
     for child in cursor.get_children():
         yield from _walk(child)
@@ -487,7 +505,7 @@ def _is_global(cursor):
 
 
 def _storage(cursor, wanted):
-    # static, extern ...
+
     storage = getattr(cursor, "storage_class", "")
     return getattr(storage, "name", str(storage)).lower() == wanted
 
@@ -497,7 +515,9 @@ def _is_static(cursor):
 
 
 def _macro(cursor):
-    """ return marco details (#define ADD(a, b) ((a) + (b)))"""
+
+    # Read the original source line so the raw replacement text and function-like
+    # parameter list are preserved exactly enough for later constant folding/XML.
     file = str(cursor.location.file or "")
     line = _source_line(file, cursor.location.line)
     match = re.match(r"\s*#define\s+([A-Za-z_]\w*)(\(([^)]*)\))?\s*(.*)$", line)
@@ -512,7 +532,7 @@ def _macro(cursor):
 
 
 def _source_line(file, line):
-    """ reads one specific line from a source file """
+
     if not file or not line:
         return ""
     try:
@@ -522,12 +542,12 @@ def _source_line(file, line):
 
 
 def _dims(dims):
-    """ convert array dimensions"""
+
     return ",".join(str(dim) for dim in dims)
 
 
 def _read_dims(value):
-    """ convert dimension to turple"""
+
     if not value:
         return ()
     result = []
@@ -537,7 +557,7 @@ def _read_dims(value):
 
 
 def _enum_values(values):
-    """ serialize enum name-value pairs into text."""
+
     result = []
     for name, value in values:
         result.append(f"{name}:{value}")
@@ -545,7 +565,7 @@ def _enum_values(values):
 
 
 def _read_enum_values(value):
-    """ convert serialized enum text back into enum name-value pairs"""
+
     if not value:
         return ()
     result = []
@@ -556,12 +576,12 @@ def _read_enum_values(value):
 
 
 def _values(values):
-    """ serialize a list of values into text."""
+
     return ",".join(str(value) for value in values)
 
 
 def _read_values(value):
-    """ convert value in to tuple"""
+
     if not value:
         return ()
     result = []
@@ -578,7 +598,7 @@ def _optional(value):
 
 
 def _line(location):
-    """ get the source-code line number"""
+
     match = re.search(r":(\d+)(?::\d+)?$", location or "")
     return match.group(1) if match else "0"
 
@@ -651,11 +671,11 @@ def _read_leaf(element):
 def _read_function(element):
     params = []
 
-    # read parameters
+
     for item in element.findall("Param"):
         params.append((item.get("type", ""), item.get("name", "")))
 
-    # Read stubs and leaves
+
     stubs, leaves = [], []
     for item in element:
         if item.tag == "Stub":
@@ -663,24 +683,26 @@ def _read_function(element):
         elif item.tag == "Leaf":
             leaves.append(_read_leaf(item))
 
-    # Build leaf lookup
+
+    # Decisions and expression nodes refer to variables by name in XML. Build this
+    # table first so deserialization can reconnect Atom objects to Variable metadata.
     variables = {}
     for leaf in leaves:
         variables[leaf.name] = leaf
 
-    # Read decisions
+
     decisions = []
     for item in element.findall("Decision"):
         decisions.append(_read_decision(item, variables))
 
-    #  Read body IR
+
     body_element = element.find("Body")
     body = []
     if body_element is not None:
         for item in body_element:
             body.append(_read_statement(item, variables))
 
-    # Read dataflow
+
     dataflow_element = element.find("Dataflow")
     dataflow = _read_dataflow(dataflow_element, variables) if dataflow_element is not None else None
     return FunctionIR(element.get("name", ""), int(element.get("line", "0")),
@@ -690,6 +712,8 @@ def _read_function(element):
 
 
 def _read_decision(element, variables):
+    # Guards are serialized as a wrapper before the main decision expression, so they
+    # must be rebuilt separately and skipped when locating the decision root node.
     guards_element = element.find("Guards")
     guards = []
     if guards_element is not None:
@@ -757,7 +781,7 @@ def _read_statement(element, variables):
 
 
 def _read_block(parent, tag, variables):
-    """ read all statements inside a block"""
+
     element = parent.find(tag)
     if element is None:
         return ()
@@ -773,12 +797,14 @@ def _child_expr(parent, tag, variables):
 
 
 def _write_expr(parent, expression):
-    """Write an expression without recursive Python calls."""
+
     _write_node(parent, expression)
 
 
 def _write_node(parent, node):
-    """Write a node iteratively so deeply nested expressions are supported."""
+
+    # Use an explicit stack instead of recursive calls. Generated IR can be deeply
+    # nested, and recursive XML emission would otherwise hit Python's recursion limit.
     stack = [(parent, node)]
 
     while stack:
@@ -803,6 +829,8 @@ def _write_node(parent, node):
             tag = "And" if isinstance(current, And) else "Or" if isinstance(current, Or) else "Not"
             element = ET.SubElement(current_parent, tag)
             children = current.children if isinstance(current, (And, Or)) else (current.child,)
+            # The stack is LIFO, so push children in reverse to preserve their
+            # original left-to-right order in the serialized XML.
             for child in reversed(children):
                 stack.append((element, child))
             continue
@@ -830,7 +858,7 @@ def _write_node(parent, node):
 
         if isinstance(current, Binop):
             element = ET.SubElement(current_parent, "Binop", op=current.op)
-            # Stack is LIFO, so push right before left to preserve XML order.
+
             stack.append((element, current.r))
             stack.append((element, current.l))
             continue
@@ -883,7 +911,7 @@ def _write_node(parent, node):
                 stack.append((item, value))
             continue
 
-        # Avoid str(current): dataclass repr/str can itself recurse on a deep tree.
+
         ET.SubElement(
             current_parent,
             "Unknown",
@@ -892,7 +920,9 @@ def _write_node(parent, node):
 
 
 def _indent_xml(root, space="    ", max_depth=20):
-    """Indent an ElementTree iteratively instead of using recursive ET.indent."""
+
+    # Formatting is iterative for the same deep-tree reason as _write_node.
+    # max_depth caps whitespace growth; it does not truncate the XML tree itself.
     stack = [(root, 0)]
 
     while stack:
@@ -933,7 +963,10 @@ def _escape_xml_attr(value):
 
 
 def _serialize_xml(root):
-    """Serialize XML iteratively, avoiding ElementTree's recursive serializer."""
+
+    # ElementTree serialization can recurse through the tree. This small iterative
+    # serializer keeps UTGen safe for unusually deep expression/dataflow trees while
+    # still escaping element text and attributes explicitly.
     parts = []
     stack = [("start", root)]
 
@@ -979,7 +1012,9 @@ def _xml_child_node(parent, tag):
 
 
 def _node_children(element):
-    """Return the actual child-node elements, excluding XML wrapper tags."""
+
+    # Return only XML elements that represent child IR nodes. Wrapper tags such as
+    # Condition/Base/Arg are unwrapped here so _read_node can use one post-order walk.
     tag = element.tag
 
     if tag in ("Unary", "Cast", "Member", "Not"):
@@ -1024,21 +1059,17 @@ def _node_children(element):
 
 
 def _read_node(element, variables):
-    """It reconstructs expression/boolean objects iteratively. """
+
     if element is None:
         return None
 
-    # Maps each XML element to the UTGen IR object already built for it.
-    # Parent nodes can only be created after their child nodes are ready.
+
+
+    # Rebuild the expression tree iteratively in post-order: visit children first,
+    # cache each reconstructed IR object, then build its parent from those cached
+    # children. This mirrors _write_node without recursive Python calls.
     built = {}
 
-    """
-    The boolean flag means:
-    False:
-        children are not processed yet
-    True:
-        children have already been processed
-    """
     stack = [(element, False)]
 
     def value(child):
@@ -1048,12 +1079,12 @@ def _read_node(element, variables):
         current, ready = stack.pop()
 
         if not ready:
-            # Put the current node back on the stack so we return to it
-            # after all of its child expressions have been built
+
+
             stack.append((current, True))
 
-            # Push children in reverse because the stack is LIFO
-            # This preserves the original left-to-right expression order
+
+
             for child in reversed(_node_children(current)):
                 stack.append((child, False))
             continue
@@ -1134,6 +1165,9 @@ def _read_variable(name, variables):
     variable = variables.get(name)
     if variable is not None or not name:
         return variable
+    # XML expressions may contain a concrete array element (for example a[3]) while
+    # the inventory stores a generic/declared array path. Match by path with indices
+    # removed and by array rank, then clone the metadata under the concrete name.
     normalized = re.sub(r"\[[^]]*\]", "", name)
     rank = len(re.findall(r"\[[^]]*\]", name))
     for declared in variables.values():
@@ -1150,7 +1184,7 @@ def _read_child_node(parent, tag, variables):
 
 
 def _write_state(parent, state):
-    """ writes a UTGen execution/dataflow state into XML."""
+
     attrs = {"reachable": str(state.reachable).lower(), "unknown": _values(state.unknown)}
     element = ET.SubElement(parent, "State", **attrs)
     if state.condition is not None:
@@ -1166,6 +1200,8 @@ def _write_state(parent, state):
         item = ET.SubElement(values, "Value", name=name)
         _write_node(item, value)
     aliases = ET.SubElement(element, "Aliases")
+    # targets=None means alias analysis lost the exact destination. Keep that distinct
+    # from an empty target tuple by writing an explicit unknown flag.
     for name, targets in state.aliases.items():
         attrs = {"name": name}
         if targets is None:
@@ -1176,6 +1212,8 @@ def _write_state(parent, state):
 
 
 def _read_dataflow(element, variables):
+    # Dataflow is split into observation points, return states, and writes because each
+    # category is consumed differently by later coverage/interpreter logic.
     points, returns, writes = [], [], []
     for item in element.findall("Point"):
         decision = item.get("decision")
@@ -1218,6 +1256,8 @@ def _read_state(element, variables):
     aliases_element = element.find("Aliases")
     if aliases_element is not None:
         for item in aliases_element.findall("Alias"):
+            # Restore unknown aliases as None; known aliases keep their concrete target
+            # tuple. The distinction affects later pointer/dataflow reasoning.
             aliases[item.get("name", "")] = None if _bool(item.get("unknown", "false")) else _read_values(item.get("targets", ""))
     return DataflowState(values, tuple(path), _bool(element.get("reachable", "true")),
                          tuple(unknown), condition, aliases)

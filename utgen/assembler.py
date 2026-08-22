@@ -1,4 +1,3 @@
-"""MC/DC row assembly under decision guards."""
 from __future__ import annotations
 
 from itertools import product
@@ -9,7 +8,7 @@ from utgen.solver import AtomConstraints, Solver
 
 
 class RowAssembler:
-    """Combine MC/DC recipes, guards, and solver results into test rows."""
+    """Build the final test rows from symbolic decision coverage requirements."""
 
     def __init__(self, solver: Solver, mcdc: McdcGenerator, fault_overrides: dict | None = None,
                  include_boundary=True, include_fault=True) -> None:
@@ -20,28 +19,46 @@ class RowAssembler:
         self.include_fault = include_fault
 
     def assemble(self, function: FunctionIR) -> list[TestRow]:
-        """Return deterministic rows for one function's decisions."""
+        """Convert MC/DC, coverage, boundary and fault requirements into concrete input rows."""
+
         inputs = self._inputs(function)
+        # Every generated row starts from a complete, valid input set. The solver only
+        # replaces variables that are needed to satisfy the current decision constraints.
         defaults = self._defaults(inputs)
         if not function.decisions:
             return [TestRow(defaults, "Nominal", "nominal path")]
+
         rows = []
+        # Different coverage goals can resolve to exactly the same concrete inputs.
+        # Keep one row per input set and merge the coverage intent into that row.
         by_values = {}
+
         from utgen.coverage import CoverageGenerator
 
         concrete = CoverageGenerator()
         for decision in function.decisions:
+            # A nested decision is only reachable when all of its enclosing guards have
+            # the required outcomes. _guards() expands those guards into compatible atom recipes.
             guard_assignments = self._guards(decision)
             if not guard_assignments:
                 continue
+
+            # MC/DC works with boolean atom outcomes first. The solver below translates
+            # those logical True/False assignments into actual C input values.
             assignments = self.mcdc.rows(decision.expr)
             for assignment in assignments:
                 for guards in guard_assignments:
                     values = self.solver.solve(self._constraints(guards, assignment))
                     if values is None:
-                        values = self.solver.solve(self._constraints(guards, assignment, midpoint_relations=False))
+                        # Variable-to-variable relations normally prefer midpoint values.
+                        # Retry without that preference when the midpoint makes the combined
+                        # guard + MC/DC constraints unsatisfiable.
+                        values = self.solver.solve(
+                            self._constraints(guards, assignment, midpoint_relations=False)
+                        )
                     if values is None:
                         continue
+
                     values = defaults | values
                     key = tuple(values.items())
                     outcome = eval_expr(decision.expr, assignment)
@@ -51,17 +68,25 @@ class RowAssembler:
                         existing.description += f"; decision {decision.id} = {outcome}"
                         existing.intent.update(intent)
                         break
+
                     kind = "Switch" if decision.kind == "case" else "MC/DC"
                     row = TestRow(values, kind, f"decision {decision.id} = {outcome}", intent)
                     by_values[key] = row
                     rows.append(row)
                     break
+
+            # Symbolic MC/DC recipes do not always guarantee that the concrete execution
+            # reaches every expected outcome. Execute/search around the current rows and
+            # add only concrete rows that close remaining coverage gaps for this decision.
             for coverage in concrete.rows(function, rows, (decision.id,)):
                 key = tuple(coverage.values.items())
                 if key not in by_values:
                     by_values[key] = coverage
                     rows.append(coverage)
+
         if self.include_boundary:
+            # Boundary rows exercise values immediately below, at and above relational
+            # thresholds while preserving the guards required to reach the decision.
             from utgen.boundary import BoundaryGenerator
 
             for boundary in BoundaryGenerator(self.solver).rows(function):
@@ -73,7 +98,10 @@ class RowAssembler:
                     continue
                 by_values[key] = boundary
                 rows.append(boundary)
+
         if self.include_fault:
+            # Fault rows deliberately inject abnormal input values (for example NULL
+            # pointers, enum overflow, or numeric extremes) and share the same dedup path.
             from utgen.fault import FaultGenerator
 
             inventory = Inventory(function.leaves, function.stubs)
@@ -97,21 +125,32 @@ class RowAssembler:
 
     @staticmethod
     def _defaults(inputs: list) -> dict:
+        """Create neutral values for inputs that are not constrained by a test objective."""
+
         out = {}
         for leaf in inputs:
+            # Address-control leaves use 1 so pointers are non-NULL by default. Normal
+            # values prefer zero, clamped into the legal range of the C type.
             out[leaf.name] = 1 if leaf.address_of else min(max(0, leaf.ctype.lo), leaf.ctype.hi)
         return out
 
     @staticmethod
     def _guards(decision) -> list:
+        """Build compatible truth assignments that make every enclosing guard reachable."""
+
         out = [{}]
         for guard in decision.guards:
             merged = []
             for current in out:
                 for recipe in RowAssembler._recipes(guard.expr, guard.outcome):
                     candidate = current | recipe
+                    # Reject recipes that require an atom to be both True and False after
+                    # combining multiple nesting guards.
                     if all(current.get(atom, outcome) == outcome for atom, outcome in recipe.items()):
                         merged.append(candidate)
+                        # Guard alternatives grow exponentially for nested boolean expressions.
+                        # A fixed cap keeps row generation bounded without losing the first
+                        # useful recipes, including the canonical masking recipe.
                         if len(merged) == 32:
                             break
                 if len(merged) == 32:
@@ -121,15 +160,23 @@ class RowAssembler:
 
     @staticmethod
     def _recipes(expr, outcome: bool) -> list:
+        """Return bounded atom assignments that force an expression to the requested outcome."""
+
+        # Start with the masking recipe because it gives a compact deterministic assignment.
         canonical = MaskingRecipes.make(expr, outcome)
         if canonical is None:
             return []
+
         atoms = []
         for atom in atoms_of(expr):
             if atom not in atoms:
                 atoms.append(atom)
+
+        # Exhaustively enumerating boolean combinations is 2^N. For large expressions,
+        # use only the canonical recipe to avoid an explosion in generation time.
         if len(atoms) > 12:
             return [canonical]
+
         out = [canonical]
         seen = {frozenset(canonical.items())}
         for values in product((False, True), repeat=len(atoms)):
@@ -140,12 +187,16 @@ class RowAssembler:
                 continue
             seen.add(frozenset(recipe.items()))
             out.append(recipe)
+            # Extra recipes improve the chance that one remains solvable with outer guards,
+            # but keeping all valid combinations would unnecessarily multiply solver work.
             if len(out) == 16:
                 break
         return out
 
     @staticmethod
     def _constraints(*assignments: dict, midpoint_relations=True) -> list:
+        """Translate boolean atom outcomes into numeric constraints understood by Solver."""
+
         out = []
         for assignment in assignments:
             for atom, outcome in assignment.items():
@@ -155,6 +206,8 @@ class RowAssembler:
 
     @staticmethod
     def _intent(function: FunctionIR, decision, outcome: bool) -> dict:
+        """Record which target and guard decision outcomes a generated row is meant to cover."""
+
         out = {decision.id: outcome}
         for guard in decision.guards:
             for candidate in function.decisions:

@@ -1,4 +1,4 @@
-"""Path-sensitive symbolic data-flow over the clang-free function IR."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, fields, is_dataclass, replace
@@ -12,12 +12,17 @@ from utgen.model import (And, Assign, Atom, Binop, Break, CallE, Cast, Const,
 
 @dataclass
 class _Flow:
+    # States in `active` continue to the next statement; states in `breaks`
+    # have left the current loop/switch body and must be handled by its caller.
     active: tuple
     breaks: tuple = ()
 
 
 class DataflowEngine:
-    """Propagate symbolic values while retaining every reachable path."""
+
+    # Symbolically propagates values, aliases and path constraints through the IR.
+    # The engine does not execute with concrete test inputs; it keeps expressions
+    # such as Ref/Binop/Phi so later stages can see where an output came from.
 
     def __init__(self, max_paths: int = 256):
         self.max_paths = max_paths
@@ -28,12 +33,14 @@ class DataflowEngine:
         self._decisions = {}
 
     def analyze(self, function_ir):
-        """Analyze one function and attach its result to the function IR."""
+
         self._points, self._returns, self._writes = [], [], []
         self._leaves = set()
         self._decisions = {decision.id: decision.expr for decision in function_ir.decisions}
         values = {}
         aliases = {}
+        # Inputs begin as symbolic references to themselves. Pointer roots also
+        # start with a known alias so *p, p->member and p[index] can be resolved.
         for leaf in function_ir.leaves:
             if leaf.direction in (Direction.IN, Direction.INOUT):
                 values[leaf.name] = Ref(leaf.name)
@@ -47,6 +54,8 @@ class DataflowEngine:
         return result
 
     def _block(self, states, statements):
+        # Each statement receives every still-reachable symbolic state. A return
+        # or break removes a state from `active`, so unreachable code is skipped.
         active, breaks = tuple(states), ()
         for statement in statements:
             if not active:
@@ -82,6 +91,8 @@ class DataflowEngine:
         if isinstance(statement, Switch):
             return self._switch(states, statement)
         if isinstance(statement, Return):
+            # Resolve the returned expression using the state of this exact path.
+            # Returning terminates that path, so no active state is propagated.
             for state in states:
                 value = self._substitute(statement.value, state) if statement.value is not None else None
                 self._returns.append((state, value))
@@ -95,6 +106,8 @@ class DataflowEngine:
         return _Flow(states)
 
     def _bind_static(self, state, declaration):
+        # A local static variable is represented by its module-level leaf. Bind the
+        # local scoped name to that leaf so later reads share the same storage.
         values = dict(state.values)
         local = self._path(Ref(declaration.name, declaration.scope))
         for name in self._leaves:
@@ -103,6 +116,9 @@ class DataflowEngine:
         return replace(state, values=values)
 
     def _if(self, states, statement):
+        # Split every incoming state into feasible true/false paths. The condition
+        # stored in DataflowPoint is the condition after symbolic substitution, not
+        # merely the original source expression.
         point_states = []
         then_states, else_states = [], []
         for state in states:
@@ -118,15 +134,23 @@ class DataflowEngine:
         self._points.append(DataflowPoint(statement.decision_id, tuple(point_states)))
         then_flow = self._block(tuple(then_states), statement.then)
         else_flow = self._block(tuple(else_states), statement.els)
+        # Both branches remain separate here; _limit() only merges them when path
+        # growth exceeds the configured safety limit.
         active = then_flow.active + else_flow.active
         return _Flow(self._limit(active), then_flow.breaks + else_flow.breaks)
 
     def _for(self, states, statement):
+        # Normalize `for (init; cond; inc)` into init + while(cond){body; inc}.
+        # This keeps one loop implementation while preserving writes from `init`.
         initialized = self._block(states, statement.init)
         loop = While(statement.cond, statement.body + statement.increment, statement.runtime_cond)
         return self._loop(initialized.active, loop, self._written(statement.init))
 
     def _loop(self, states, statement, extra_written=()):
+        # The engine models the zero-iteration exit and one pass through the body.
+        # It does not unroll an unknown number of iterations; anything the loop can
+        # write is invalidated afterwards because its final symbolic value depends
+        # on the runtime iteration count.
         if isinstance(statement, DoWhile):
             return self._do_loop(states, statement)
         exits, written = [], self._written(statement.body) | set(extra_written)
@@ -147,6 +171,9 @@ class DataflowEngine:
         return _Flow(self._limit(tuple(result)))
 
     def _do_loop(self, states, statement):
+        # A do-while executes its body at least once, so analyze the body before
+        # evaluating the loop condition. Loop-written values are invalidated for
+        # the same reason as in _loop(): later iterations are not unrolled.
         body = self._block(states, statement.body)
         exits = list(body.breaks)
         for state in body.active:
@@ -164,6 +191,8 @@ class DataflowEngine:
         return _Flow(self._limit(tuple(result)))
 
     def _switch(self, states, statement):
+        # `remaining` contains states that did not match any earlier case. This
+        # models switch selection as a sequence of mutually exclusive conditions.
         all_labels = []
         for case in statement.cases:
             for label in case.labels:
@@ -190,6 +219,8 @@ class DataflowEngine:
         return _Flow(self._limit(tuple(exits)))
 
     def _case_condition(self, subject, case, all_labels):
+        # Default is true only when the subject is unequal to every explicit label.
+        # Multiple labels on one case are combined with OR.
         if case.default:
             terms = []
             for label in all_labels:
@@ -203,6 +234,8 @@ class DataflowEngine:
         return self._fold(Or(tuple(terms)))
 
     def _branch(self, state, decision_id, condition, outcome):
+        # Constant conditions can prune an impossible branch immediately. Otherwise
+        # keep the requested outcome as a PathConstraint attached to this state.
         actual = self._const_bool(condition)
         if actual is not None and actual != outcome:
             return None
@@ -210,6 +243,8 @@ class DataflowEngine:
         return replace(state, path=state.path + (constraint,), condition=None)
 
     def _condition(self, expression, state, seen=()):
+        # Convert a decision into the current symbolic state, then constant-fold it.
+        # If any part is Unknown, returning None avoids claiming a false precision.
         if expression is None:
             return None
         if isinstance(expression, (Atom, And, Not, Or)):
@@ -220,6 +255,8 @@ class DataflowEngine:
         return None if self._has_unknown(result) else result
 
     def _node_expr(self, node, state, seen=()):
+        # Decision nodes used by MC/DC are translated back into ordinary symbolic
+        # expressions so they can share the same substitution/folding machinery.
         if isinstance(node, Atom):
             if node.var is None:
                 return Unknown(node.text)
@@ -245,6 +282,10 @@ class DataflowEngine:
         return Unknown(str(node))
 
     def _assign_lvalue(self, state, lhs, expression, operator):
+        # Resolve the storage touched by the lvalue first. `None` means the target
+        # cannot be determined safely, while an empty tuple represents no target
+        # (for example a NULL pointer). Unknown writes therefore degrade precision
+        # instead of inventing a concrete destination.
         targets = self._lvalue_targets(lhs, state)
         if targets is None:
             return self._poison(state, tuple(state.values))
@@ -254,6 +295,8 @@ class DataflowEngine:
         result = state
         for path in targets:
             result = self._assign_path(result, path, value, operator)
+        # For a direct assignment, also propagate pointer alias information. This
+        # is what lets a later dereference follow assignments such as `p = &x`.
         alias_targets = self._pointer_targets(expression, state)
         key = self._path(lhs)
         if operator == "=" and key:
@@ -263,6 +306,8 @@ class DataflowEngine:
         return result
 
     def _assign_path(self, state, path, expression, operator):
+        # Compound assignments are rewritten symbolically (x += y -> x + y), then
+        # folded when possible. A successful write also makes this path known again.
         value = expression
         if operator != "=":
             old = state.values.get(path, Ref(path))
@@ -296,6 +341,9 @@ class DataflowEngine:
         return (path,) if path else None
 
     def _pointer_targets(self, expression, state, seen=()):
+        # Pointer resolution has three distinct results:
+        #   tuple(paths) -> known possible targets, () -> NULL/no target,
+        #   None -> target is unknown/ambiguous and must be treated conservatively.
         if isinstance(expression, Unary):
             if expression.op == "&":
                 if isinstance(expression.x, (MemberE, Index)):
@@ -331,6 +379,7 @@ class DataflowEngine:
         return None
 
     def _member_targets(self, expression, state, seen=()):
+        # Preserve field identity while following the base pointer aliases.
         targets = self._pointer_targets(expression.base, state, seen)
         if targets is None:
             return None
@@ -340,6 +389,8 @@ class DataflowEngine:
         return tuple(result)
 
     def _index_targets(self, expression, state, seen=()):
+        # A constant index produces a precise element path; a symbolic index is
+        # represented as [*] so the loss of precision is explicit.
         targets = self._pointer_targets(expression.base, state, seen)
         if targets is None:
             return None
@@ -361,6 +412,8 @@ class DataflowEngine:
         return f"{target}[{index}]"
 
     def _load_targets(self, targets, state, seen=()):
+        # A read is only precise when exactly one storage location is known. Reading
+        # through an unknown or multi-target pointer becomes an Unknown expression.
         if targets is None:
             return Unknown("unknown pointer target")
         if len(targets) != 1:
@@ -368,6 +421,9 @@ class DataflowEngine:
         return self._substitute(Ref(targets[0]), state, seen)
 
     def _substitute(self, expression, state, seen=()):
+        # Resolve references without recursive Python calls. The explicit work stack
+        # handles deeply nested generated expressions safely, while `seen` stops a
+        # self/cyclic binding from expanding forever.
         stack = [("eval", expression, seen)]
         values = []
         while stack:
@@ -466,6 +522,8 @@ class DataflowEngine:
                 stack.append(("eval", current.x, current_seen))
                 continue
             if isinstance(current, Ternary):
+                # Select one arm when the condition is concrete; otherwise retain
+                # both symbolic alternatives instead of guessing an outcome.
                 condition = self._condition(current.c, state, current_seen)
                 outcome = self._const_bool(condition)
                 if outcome is not None:
@@ -476,6 +534,8 @@ class DataflowEngine:
                     stack.append(("eval", current.t, current_seen))
                 continue
             if isinstance(current, Phi):
+                # Phi represents a value produced by different control-flow paths.
+                # Collapse it only when its selecting condition is now decidable.
                 condition = self._condition(current.condition, state, current_seen)
                 outcome = self._const_bool(condition)
                 if outcome is True:
@@ -494,6 +554,8 @@ class DataflowEngine:
         return values.pop()
 
     def _path(self, expression):
+        # Build one canonical storage key used by values, aliases and unknown sets.
+        # Local scope is part of the key; an unresolved array index uses [*].
         if isinstance(expression, Ref):
             return f"{expression.path}@{expression.scope}" if expression.scope else expression.path
         if isinstance(expression, CallE):
@@ -509,6 +571,8 @@ class DataflowEngine:
         return ""
 
     def _fold(self, expression):
+        # Small constant-folder used after substitution to prune branches and keep
+        # symbolic expressions compact. Non-constant expressions remain symbolic.
         if isinstance(expression, Unary):
             value = self._const_int(expression.x)
             if value is not None:
@@ -575,6 +639,10 @@ class DataflowEngine:
         return False
 
     def _call_effect(self, state, expression):
+        # The callee body is not interpreted here, so side effects are conservative.
+        # Pointer arguments identify memory that may be modified; TESSY argument
+        # pseudo-variables are poisoned as well so later analysis does not reuse
+        # stale symbolic values across an external call.
         if isinstance(expression, CallE):
             names = list(state.values)
             pointer_arg = False
@@ -606,6 +674,8 @@ class DataflowEngine:
         return ()
 
     def _poison(self, state, names):
+        # Mark values as unreliable without deleting their symbolic mapping. Reads
+        # check `unknown` first, so the old expression cannot be trusted afterwards.
         unknown = set(state.unknown)
         for name in names:
             if name:
@@ -613,6 +683,8 @@ class DataflowEngine:
         return replace(state, unknown=tuple(sorted(unknown)))
 
     def _invalidate(self, state, names):
+        # Stronger than _poison(): discard stale value/alias facts entirely. This is
+        # used after loops where the final value depends on unmodelled iterations.
         values, unknown = dict(state.values), set(state.unknown)
         aliases = dict(state.aliases)
         if "*" in names:
@@ -628,6 +700,8 @@ class DataflowEngine:
         return replace(state, values=values, aliases=aliases, unknown=tuple(sorted(unknown)))
 
     def _written(self, statements):
+        # Recursively collect every storage path a block may modify. An unresolved
+        # lvalue is recorded as '*' because any tracked value could have been hit.
         names = set()
         for statement in statements:
             if isinstance(statement, Decl):
@@ -651,14 +725,10 @@ class DataflowEngine:
 
     @staticmethod
     def _same(left, right):
-        """Compare nested IR/dataclass values without recursive ``__eq__`` calls.
 
-        Symbolic expressions can become more than 1,000 nodes deep.  The
-        equality method generated by ``@dataclass`` compares those nodes
-        recursively and can therefore raise ``RecursionError``.  This method
-        performs the same structural comparison with an explicit stack and
-        also terminates safely if a cyclic object graph is encountered.
-        """
+        # Structural equality is implemented with an explicit stack instead of the
+        # dataclasses' recursive __eq__. Dataflow expressions can become very deep
+        # (or revisit the same objects), so recursive comparison risks RecursionError.
         stack = [(left, right)]
         seen = set()
 
@@ -701,11 +771,16 @@ class DataflowEngine:
         return True
 
     def _limit(self, states):
+        # Prevent path explosion. Once the path count is too large, replace all of
+        # them with one conservative merged state rather than dropping paths.
         if len(states) <= self.max_paths:
             return tuple(states)
         return (self._merge(states),)
 
     def _merge(self, states):
+        # Preserve only facts that agree on every merged path. Different symbolic
+        # values become unknown, differing aliases become unresolved, and only the
+        # common prefix of path constraints remains valid for the merged state.
         values, aliases, unknown = {}, {}, set()
         keys = set()
         for state in states:

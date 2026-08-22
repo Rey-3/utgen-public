@@ -1,14 +1,12 @@
-"""Type graph (structs/unions/enums) and leaf derivation — "who is who" (L2).
 
-Built once per module from clang types. The DB (Task 9) serializes these same
-StructDef/EnumDef records, so leaves can be re-derived later without clang.
-"""
 from __future__ import annotations
 
 from clang.cindex import Cursor, CursorKind, TypeKind
 
 from utgen.model import CType, Direction, EnumDef, MemberDef, StructDef, Variable
 
+# Group Clang integer kinds here so type parsing uses one consistent rule for
+# width/sign handling instead of repeating TypeKind checks throughout the graph.
 _SIGNED = {TypeKind.SCHAR, TypeKind.SHORT, TypeKind.INT,
            TypeKind.LONG, TypeKind.LONGLONG}
 _UNSIGNED = {TypeKind.UCHAR, TypeKind.USHORT, TypeKind.UINT,
@@ -19,7 +17,10 @@ _FUNC_KINDS = {TypeKind.FUNCTIONPROTO, TypeKind.FUNCTIONNOPROTO}
 
 
 def clean_name(spelling: str) -> str:
-    """Type name without const/volatile qualifiers and struct/union/enum tags (B19)."""
+    """Normalize a Clang type spelling into the type name stored by UTGen."""
+
+    # Qualifiers and C tag keywords belong to the source spelling, but keeping
+    # them here would make the same logical type appear under different names.
     out = spelling
     for word in ("const ", "volatile ", "struct ", "union ", "enum "):
         out = out.replace(word, "")
@@ -27,7 +28,8 @@ def clean_name(spelling: str) -> str:
 
 
 def dims_suffix(dims: tuple) -> str:
-    """(4, 5) -> "[4][5]" — declared dims stay on their own path segment (L2)."""
+    """Convert stored array extents back to the C-like suffix used in leaf names."""
+
     out = ""
     for d in dims:
         out += f"[{d}]"
@@ -35,19 +37,26 @@ def dims_suffix(dims: tuple) -> str:
 
 
 class TypeGraph:
-    """Registered struct/union/enum definitions, keyed by clean type name."""
+    """Translate Clang types into reusable UTGen struct, enum, and member metadata."""
+
 
     def __init__(self, char_signed: bool = False):
-        self.char_signed = char_signed          # plain `char` signedness (K8)
+        self.char_signed = char_signed
         self.structs: dict[str, StructDef] = {}
         self.enums: dict[str, EnumDef] = {}
-        self._by_usr: dict[str, str] = {}       # record decl usr -> graph name
+        # Clang USRs identify declarations independently of how their type was
+        # spelled at each use site. The map also prevents recursive records from
+        # being registered forever while their members are being traversed.
+        self._by_usr: dict[str, str] = {}
         self._anon_count = 0
 
-    # --- registration / classification from clang types ---
+
 
     def describe(self, ctype, name: str, bitfield_width: int | None = None) -> MemberDef:
-        """Classify a clang type as a MemberDef, registering referenced definitions."""
+        """Describe one Clang type without yet flattening structs/unions into leaves."""
+
+        # Peel constant arrays first so the base element can be classified once,
+        # while preserving every extent for later names such as item[2][4].
         dims = []
         elem = ctype
         canon = elem.get_canonical()
@@ -57,6 +66,8 @@ class TypeGraph:
             canon = elem.get_canonical()
         const = ctype.is_const_qualified() or elem.is_const_qualified()
 
+        # A bit-field's usable width is the declared bit width, not the size of
+        # its underlying integer storage type. Leaf bounds must therefore use it.
         if bitfield_width is not None:
             return MemberDef(name, clean_name(elem.spelling), "scalar",
                              bitfield_width, tuple(dims),
@@ -64,17 +75,25 @@ class TypeGraph:
         if canon.kind == TypeKind.POINTER:
             pointee = canon.get_pointee()
             pointee_canon = pointee.get_canonical()
+            # Function pointers are metadata only for this graph; dereferencing
+            # them cannot produce controllable scalar test-data leaves.
             if pointee_canon.kind in _FUNC_KINDS:
                 return MemberDef(name, clean_name(elem.spelling), "funcptr", 0, tuple(dims))
+            # Register record/enum pointees now so LeafDeriver can follow their
+            # type_name into the graph and expand the pointed-to data structure.
             if pointee_canon.kind in (TypeKind.RECORD, TypeKind.ENUM):
                 return MemberDef(name, self.register(pointee), "pointer",
                                  pointee_canon.get_size() * 8, tuple(dims))
+            # For scalar pointers UTGen models the pointed-to value, so the width
+            # comes from the pointee type rather than the machine pointer width.
             bits = pointee_canon.get_size() * 8 if pointee_canon.kind in _INTS else 8
             return MemberDef(name, clean_name(pointee.spelling), "pointer",
                              bits, tuple(dims), self._is_signed(pointee_canon))
         if canon.kind == TypeKind.RECORD:
             decl = canon.get_declaration()
             kind = "union" if decl.kind == CursorKind.UNION_DECL else "struct"
+            # Store only the registered type reference here. Member expansion is
+            # intentionally deferred to LeafDeriver to keep parsing and flattening separate.
             return MemberDef(name, self.register(elem), kind, 0, tuple(dims))
         if canon.kind == TypeKind.ENUM:
             return MemberDef(name, self.register(elem), "enum",
@@ -83,10 +102,13 @@ class TypeGraph:
             return MemberDef(name, clean_name(elem.spelling), "scalar",
                              canon.get_size() * 8, tuple(dims),
                              self._is_signed(canon), False, const)
+        # Unsupported types remain visible in the graph instead of being guessed
+        # as integers; LeafDeriver will deliberately skip them later.
         return MemberDef(name, clean_name(elem.spelling), "unsupported", 0, tuple(dims))
 
     def register(self, ctype) -> str:
-        """Ensure ctype's record/enum definition is in the graph; return its name."""
+        """Register reusable record/enum definitions and return their graph name."""
+
         canon = ctype.get_canonical()
         if canon.kind == TypeKind.RECORD:
             return self._register_record(ctype, canon)
@@ -102,16 +124,24 @@ class TypeGraph:
         name = self._name_for(ctype, canon)
         self._by_usr[usr] = name
         kind = "union" if decl.kind == CursorKind.UNION_DECL else "struct"
-        # Placeholder first so self-referential structs cannot recurse forever.
+
+        # Install a placeholder before visiting fields. A self-referential type
+        # such as `struct Node { struct Node *next; }` can then resolve back to
+        # this record instead of recursively registering the same declaration.
         self.structs[name] = StructDef(name, kind, (), _file_of(decl))
         members = []
         for field in canon.get_fields():
             width = field.get_bitfield_width() if field.is_bitfield() else None
+            # Unnamed bit-fields reserve layout bits only; there is no variable
+            # name that UTGen can expose as test input/output.
             if field.is_bitfield() and not field.spelling:
-                continue                              # unnamed padding bitfield
-            # Anonymous members carry clang's "(anonymous at ...)" spelling —
-            # normalize to "" so the deriver skips the path level (D8).
+                continue
+
+
             field_name = field.spelling
+            # Clang can expose anonymous struct/union fields using generated text.
+            # Emptying the name lets LeafDeriver flatten their children directly
+            # under the parent instead of creating a fake `.anonymous` path.
             if "(anonymous" in field_name or "(unnamed" in field_name:
                 field_name = ""
             members.append(self.describe(field.type, field_name, width))
@@ -119,6 +149,8 @@ class TypeGraph:
         return name
 
     def _register_enum(self, ctype, canon) -> str:
+        """Capture enum names and numeric values once for later rendering/solving."""
+
         decl = canon.get_declaration()
         usr = decl.get_usr()
         if usr in self._by_usr:
@@ -133,6 +165,8 @@ class TypeGraph:
         return name
 
     def _name_for(self, ctype, canon) -> str:
+        """Return a stable graph-local name, including synthetic names for anonymous types."""
+
         name = clean_name(ctype.spelling)
         if "(anonymous" in name or "(unnamed" in name or not name:
             self._anon_count += 1
@@ -140,6 +174,10 @@ class TypeGraph:
         return name
 
     def _is_signed(self, canon) -> bool:
+        """Resolve integer signedness, including configurable plain-char behavior."""
+
+        # Whether plain `char` is signed is implementation-defined in C, so it
+        # comes from UTGen configuration instead of being hard-coded here.
         if canon.kind in _PLAIN_CHAR:
             return self.char_signed
         return canon.kind in _SIGNED
@@ -151,48 +189,66 @@ def _file_of(decl: Cursor) -> str:
 
 
 class LeafDeriver:
-    """Derives XML leaf Variables from the graph: `lol.abc[4].ded[5]` (L2/D8/D11)."""
+    """Flatten graph members into scalar Variables consumed by test generation/XML output."""
+
 
     def __init__(self, graph: TypeGraph):
         self.graph = graph
 
     def leaves(self, member: MemberDef, direction: Direction) -> list:
+        """Expand one parameter/global/return member into its addressable leaf variables."""
+
         out: list[Variable] = []
         self._emit(out, "", member, direction, fmt=None, pointer=False, visited=frozenset())
         return out
 
     def _emit(self, out, prefix, member, direction, fmt, pointer, visited):
+        # These kinds cannot be converted into concrete scalar values for UTGen.
         if member.kind in ("funcptr", "unsupported"):
-            return                              # recorded in graph, never injectable (D11/K9)
+            return
         name = self._join(prefix, member.name) + dims_suffix(member.dims)
+        # Once traversal passes through a pointer, every resulting child leaf is
+        # marked as pointer-derived even when the child itself is a scalar field.
         pointer = pointer or member.kind == "pointer"
         if member.type_name in self.graph.structs and member.kind in ("struct", "union", "pointer"):
+            # `visited` is path-local: it stops cycles such as Node->Node while
+            # still allowing the same struct type to be expanded in separate branches.
             if member.type_name in visited:
-                return                          # self-referential guard
+                return
             struct = self.graph.structs[member.type_name]
+            # Preserve the outer composite type as XML/TESSY format metadata for
+            # all leaves produced from that struct, including its array dimensions.
             fmt = fmt or member.type_name + dims_suffix(member.dims)
             for child in struct.members:
                 self._emit(out, name, child, direction, fmt,
                            pointer, visited | {member.type_name})
             return
         if member.type_name in self.graph.enums:
-            # Covers both a direct enum member and a pointer-to-enum (D4): the
-            # injectable domain is the enum's, never a raw scalar.
+
+
             enum = self.graph.enums.get(member.type_name)
             values = enum.values if enum else ()
             ctype = CType(member.type_name, member.len_bits, member.signed, values)
+            # TESSY enum length metadata uses the maximum enumerator value, while
+            # ordinary scalar leaves use their bit width below.
             xml_len = str(ctype.enum_max) if values else str(member.len_bits)
             out.append(Variable(name, ctype, fmt or member.type_name,
                                 xml_len, direction, pointer))
             return
+        # Some fallback scalar/pointer descriptions can arrive without a usable
+        # width; 8 bits keeps the leaf representable instead of creating CType(0).
         bits = member.len_bits or 8
         ctype = CType(member.type_name, bits, member.signed)
+        # Standalone scalars use signedness as their format. If this leaf came
+        # from a composite, `fmt` keeps the owning struct/union format instead.
         sign_word = "signed" if member.signed else "unsigned"
         out.append(Variable(name, ctype, fmt or sign_word, str(bits), direction, pointer))
 
     def _join(self, prefix: str, name: str) -> str:
+        """Build dotted member paths while allowing anonymous fields to stay flattened."""
+
         if not name:
-            return prefix                       # anonymous level skipped in path (D8)
+            return prefix
         if not prefix:
             return name
         return f"{prefix}.{name}"

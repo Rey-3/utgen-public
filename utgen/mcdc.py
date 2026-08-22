@@ -1,16 +1,29 @@
-"""Masking MC/DC recipes and independence-pair generation."""
+"""Generate abstract boolean assignments used for MC/DC test generation.
+
+This module works with ``Atom -> bool`` assignments. It determines which
+conditions must be True/False to prove condition independence; the solver
+later converts those requirements into concrete C input values.
+"""
+
 from itertools import product
 
 from utgen.model import And, Atom, Not, Op, Or, atoms_of
 
 
 def eval_expr(node, assign) -> bool | None:
-    """Evaluate a boolean model node with atom outcomes from ``assign``."""
+    """Evaluate a decision using an ``Atom -> bool`` assignment.
+
+    This is used to verify that an MC/DC candidate changes the result of the
+    complete decision, not only the target condition.
+    """
+
     if isinstance(node, Atom):
         return bool(assign[node])
     if isinstance(node, Not):
         value = eval_expr(node.child, assign)
         return None if value is None else not value
+    # Keep short-circuit behaviour: masking recipes may intentionally leave
+    # conditions unassigned once an AND/OR result is already determined.
     if isinstance(node, And):
         for child in node.children:
             value = eval_expr(child, assign)
@@ -31,11 +44,15 @@ def eval_expr(node, assign) -> bool | None:
 
 
 def _merge(*assignments):
+    """Merge partial condition assignments and reject contradictions."""
+
     out = {}
     for assignment in assignments:
         if assignment is None:
             return None
         for atom, outcome in assignment.items():
+            # A candidate is invalid if the same condition is required to be
+            # both True and False in the surrounding MC/DC context.
             if atom in out and out[atom] != outcome:
                 return None
             out[atom] = outcome
@@ -43,10 +60,17 @@ def _merge(*assignments):
 
 
 class MaskingRecipes:
-    """Build canonical assignments that make a boolean node true or false."""
+    """Construct condition assignments that force a subtree to an outcome.
+
+    ``make`` fully specifies a canonical recipe. ``masked`` keeps only the
+    conditions still needed after short-circuiting, which matters when several
+    conditions are derived from the same concrete C variable.
+    """
+
     @classmethod
     def make(cls, node, outcome) -> dict | None:
-        """Return the first canonical assignment for ``node`` to have ``outcome``."""
+        """Build a canonical assignment that makes ``node`` equal ``outcome``."""
+
         if isinstance(node, Atom):
             return {node: outcome}
         if isinstance(node, Not):
@@ -54,18 +78,28 @@ class MaskingRecipes:
         if isinstance(node, And):
             values = []
             for index, child in enumerate(node.children):
+                # AND=True needs every child True. For AND=False, make the first
+                # child decisive (False) and keep later siblings neutral (True).
                 values.append(cls.make(child, outcome or index != 0))
             return cls._combine(values)
         if isinstance(node, Or):
             values = []
             for index, child in enumerate(node.children):
+                # OR=False needs every child False. For OR=True, make the first
+                # child decisive (True) and keep later siblings neutral (False).
                 values.append(cls.make(child, outcome and index == 0))
             return cls._combine(values)
         return None
 
     @classmethod
     def masked(cls, node, outcome) -> dict | None:
-        """Return the shortest short-circuit assignment for ``node``."""
+        """Force an outcome without binding short-circuited conditions.
+
+        Example: once one child makes an AND False, the other children do not
+        need values. Leaving them unbound avoids creating unnecessary or
+        impossible constraints for shared input variables.
+        """
+
         if isinstance(node, Atom):
             return {node: outcome}
         if isinstance(node, Not):
@@ -97,9 +131,15 @@ class MaskingRecipes:
 
 
 class McdcGenerator:
-    """Generate verified masking independence pairs and their unique rows."""
+    """Generate independence pairs and deduplicated rows for MC/DC coverage."""
+
     def pairs(self, expr) -> dict:
-        """Return verified independence pairs keyed by independently effective atom."""
+        """Build one MC/DC pair for each unique condition.
+
+        The two rows keep the surrounding context fixed and flip only the target
+        Atom. The pair is valid only if that change flips the whole decision.
+        """
+
         atoms = self._unique_atoms(expr)
         shared = self._needs_masking(expr)
         out = {}
@@ -107,6 +147,8 @@ class McdcGenerator:
             context = self._context(expr, atom, shared)
             off = _merge(context, {atom: False})
             on = _merge(context, {atom: True})
+            # The constructed context is only a fast recipe. Always verify the
+            # complete decision; nested/shared expressions may need fallback.
             if not self._flips(expr, off, on):
                 off, on = self._fallback_pair(expr, atom, atoms)
             if off is not None:
@@ -114,12 +156,14 @@ class McdcGenerator:
         return out
 
     def rows(self, expr) -> list:
-        """Return deterministic, deduplicated assignments covering all pairs."""
+
         pairs = self.pairs(expr)
         if not pairs:
             return []
         rows = []
         seen = set()
+        # Reuse a canonical pair endpoint as the first row when possible.
+        # Do not add it if it is not already evidence for one MC/DC pair.
         base = MaskingRecipes.make(expr, isinstance(expr, And))
         if base is not None and any(base in pair for pair in pairs.values()):
             self._append(rows, seen, base)
@@ -145,6 +189,12 @@ class McdcGenerator:
 
     @staticmethod
     def _needs_masking(expr) -> bool:
+        """Detect one variable compared to multiple equality constants.
+
+        ``x == 1`` and ``x == 2`` are separate Atoms, but their truth values are
+        not independent when both must come from one concrete value of ``x``.
+        """
+
         equalities = {}
         for atom in atoms_of(expr):
             if atom.var is None or atom.op != Op.EQ or atom.rhs is None:
@@ -157,6 +207,14 @@ class McdcGenerator:
         return False
 
     def _context(self, node, target, shared=False):
+        """Build the neutral sibling context that exposes ``target``'s effect.
+
+        The recursion follows the branch containing ``target``. Siblings are set
+        to the neutral value of the parent operator: True for AND and False for
+        OR. Shared-equality expressions use masking to leave irrelevant siblings
+        unbound.
+        """
+
         if isinstance(node, Atom):
             return {} if node == target else None
         if isinstance(node, Not):
@@ -182,6 +240,12 @@ class McdcGenerator:
         return left is not None and right is not None and left != right
 
     def _fallback_pair(self, expr, target, atoms):
+        """Exhaustively search for a fixed context when recipes cannot find one.
+
+        Every non-target Atom has the same value in both rows, while only the
+        target flips. This costs O(2^(n-1)), so the search is capped at 12 Atoms.
+        """
+
         if len(atoms) > 12:
             return None, None
         others = []

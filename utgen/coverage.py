@@ -1,4 +1,4 @@
-"""Concrete row expansion for decisions hidden behind local state and loops."""
+
 from __future__ import annotations
 
 import re
@@ -11,7 +11,12 @@ from utgen.model import (And, Atom, Const, Direction, FunctionIR, Index,
 
 
 class CoverageGenerator:
-    """Mutate injectable inputs until the statement IR reaches missing outcomes."""
+    """Generate extra concrete test rows to close remaining coverage gaps.
+
+    The generator starts from already-created rows, executes them through the
+    interpreter, then mutates input values to discover branch/condition outcomes
+    and MC/DC pairs that symbolic generation did not reach.
+    """
 
     def __init__(self, max_rounds=4, max_rows=256) -> None:
         self.max_rounds = max_rounds
@@ -21,14 +26,28 @@ class CoverageGenerator:
         self._results = {}
 
     def rows(self, function: FunctionIR, existing: list[TestRow], decision_ids=None) -> list[TestRow]:
+        """Search concrete input combinations for still-uncovered targets.
+
+        Existing rows are used as the search seeds. A candidate is retained when
+        it adds coverage, produces a new condition pattern, or is useful as an
+        intermediate state for a later multi-input combination.
+        """
         inputs = [leaf for leaf in function.leaves if leaf.direction in (Direction.IN, Direction.INOUT)]
         if not inputs or not function.body:
             return []
         interpreter = Interpreter(Inventory(function.leaves, function.stubs))
         self._set_function(function)
+        # Coverage is tracked as explicit obligations: decision outcomes, each
+        # condition's True/False outcomes, and MC/DC independence for each atom.
         targets = self._targets(function, decision_ids)
+
+        # Some decision expressions reference values through IR paths rather than
+        # directly through Atom.var. Those inputs may need several mutations before
+        # the final combination becomes useful, so they are handled separately.
         relevant, needs_combinations = self._decision_inputs(function, inputs, decision_ids)
         index_values = self._index_values(function.body)
+        # Reuse solver/MC/DC rows as the initial frontier. Concrete execution can
+        # then repair gaps caused by masking, indirect expressions, or IR behaviour.
         queue, seen = [], set()
         for row in existing:
             values = row.values.copy()
@@ -40,6 +59,8 @@ class CoverageGenerator:
         if not queue:
             queue.append(self._defaults(inputs))
             seen.add(self._key(queue[0]))
+        # Build the baseline coverage state from all seed rows before generating
+        # anything new. This prevents returning rows for coverage already achieved.
         rows, state = [], self._state(function)
         for values in queue:
             key = self._key(values)
@@ -47,6 +68,9 @@ class CoverageGenerator:
         covered = state.covered & targets
         if targets <= covered:
             return []
+        # At least one round per condition may be required because one round changes
+        # only one input from a base row. More atoms can therefore require deeper
+        # combinations even when max_rounds is configured lower.
         rounds = max(self.max_rounds, max((len(atoms_of(decision.expr)) for decision in function.decisions), default=0))
         neutral = 0
         for _ in range(rounds):
@@ -63,8 +87,15 @@ class CoverageGenerator:
                             continue
                         seen.add(key)
                         result = self._run(interpreter, function, candidate, key)
+                        # Probe without committing first. A candidate that immediately
+                        # satisfies a target is useful; otherwise a new condition
+                        # pattern may still become an MC/DC partner in a later round.
                         gained = (state.gained(result) & targets) - covered
                         if not gained and not state.novel(result, decision_ids):
+                            # Keep a bounded number of neutral mutations only when the
+                            # selected decision depends on indirect/path-based inputs.
+                            # One such mutation may be useless alone but necessary before
+                            # changing a second input in the next frontier expansion.
                             if needs_combinations and leaf.name in relevant and neutral < self.max_rows * 32:
                                 queue.append(candidate)
                                 neutral += 1
@@ -80,6 +111,7 @@ class CoverageGenerator:
         return rows
 
     def _run(self, interpreter, function, values, key=None):
+        """Execute one normalized input set, caching identical executions."""
         self._set_function(function)
         key = self._key(values) if key is None else key
         if key not in self._results:
@@ -87,6 +119,8 @@ class CoverageGenerator:
         return self._results[key]
 
     def _set_function(self, function):
+        # Cached execution results are valid only for the exact FunctionIR object.
+        # Switching functions also rebuilds the ordered input list used by _key().
         if function is self._function:
             return
         self._function, self._results = function, {}
@@ -98,6 +132,12 @@ class CoverageGenerator:
 
     @staticmethod
     def _targets(function: FunctionIR, decision_ids=None) -> set[tuple]:
+        """Encode all coverage obligations into comparable tuple keys.
+
+        A decision contributes branch True/False targets, each atom contributes
+        condition True/False targets, and controllable atoms also contribute one
+        MC/DC independence target.
+        """
         targets = set()
         decision_ids = None if decision_ids is None else set(decision_ids)
         for decision in function.decisions:
@@ -114,6 +154,7 @@ class CoverageGenerator:
 
     @staticmethod
     def _covered(results, function: FunctionIR) -> set[tuple]:
+        """Convert interpreter observations into the same keys used by _targets()."""
         if not isinstance(results, (list, tuple)):
             results = [results]
         covered = set()
@@ -137,6 +178,12 @@ class CoverageGenerator:
 
     @staticmethod
     def _independent(expr, index, patterns) -> bool:
+        """Check whether one condition independently changes the decision result.
+
+        Two observed patterns form an MC/DC pair when the target condition and the
+        overall decision both flip while every other known condition stays equal.
+        ``None`` is treated as unknown/masked and therefore does not disqualify a pair.
+        """
         atoms = atoms_of(expr)
         positions = {id(atom): position for position, atom in enumerate(atoms)}
         observed = []
@@ -155,6 +202,11 @@ class CoverageGenerator:
 
     @staticmethod
     def _outcome(expr, pattern, positions):
+        """Evaluate a boolean IR expression from a recorded condition pattern.
+
+        Returning None preserves short-circuit/masked information instead of
+        inventing an outcome for a condition the interpreter did not observe.
+        """
         if isinstance(expr, Atom):
             return pattern[positions[id(expr)]]
         if isinstance(expr, Not):
@@ -180,6 +232,8 @@ class CoverageGenerator:
 
     @staticmethod
     def _defaults(inputs) -> dict:
+        # Use zero when it fits the C type. Address-marker leaves use 1 so pointer
+        # inputs begin in a non-NULL state unless a test explicitly changes them.
         values = {}
         for leaf in inputs:
             values[leaf.name] = 1 if leaf.address_of else min(max(0, leaf.ctype.lo), leaf.ctype.hi)
@@ -187,6 +241,12 @@ class CoverageGenerator:
 
     @staticmethod
     def _values(leaf, function: FunctionIR, base=None, extra=()) -> tuple:
+        """Build high-value mutations instead of scanning the full C domain.
+
+        Besides type extremes and small nominal values, the search probes one step
+        below/at/above decision thresholds. For variable-to-variable comparisons it
+        also probes around the other variable's current concrete value.
+        """
         values = {leaf.ctype.lo, leaf.ctype.hi, 0, 1, 2, 3, *extra}
         for decision in function.decisions:
             for atom in atoms_of(decision.expr):
@@ -200,6 +260,12 @@ class CoverageGenerator:
 
     @staticmethod
     def _decision_inputs(function, inputs, decision_ids) -> tuple[set[str], bool]:
+        """Find inputs that can influence the selected decisions.
+
+        Direct symbolic variables come from decision atoms. IR expression paths are
+        scanned as well so array/member/dereferenced inputs that were not represented
+        by Atom.var can still participate in multi-step candidate combinations.
+        """
         selected = ({decision.id for decision in function.decisions}
                     if decision_ids is None else set(decision_ids))
         names = set()
@@ -225,6 +291,8 @@ class CoverageGenerator:
                     visit(item)
 
         visit(function.body)
+        # Preserve the direct symbolic set before adding path-derived leaves. The
+        # difference tells rows() whether neutral intermediate combinations are needed.
         symbolic = set(names)
         normalized = {re.sub(r"\[\d+\]", "[*]", path) for path in paths}
         for leaf in inputs:
@@ -234,6 +302,7 @@ class CoverageGenerator:
 
     @staticmethod
     def _expression_paths(value, paths) -> None:
+        # Recursively collect lvalue-like paths from the IR condition tree.
         path = CoverageGenerator._expression_path(value)
         if path:
             paths.add(path)
@@ -246,6 +315,12 @@ class CoverageGenerator:
 
     @staticmethod
     def _expression_path(value) -> str:
+        """Normalize an IR reference into a comparable leaf path.
+
+        Concrete array indices become ``[*]`` so an expression such as a[2] can be
+        matched back to the corresponding inventory leaf regardless of its index.
+        Address/dereference wrappers keep the same underlying storage path.
+        """
         if isinstance(value, Ref):
             return value.path
         if isinstance(value, MemberE):
@@ -260,6 +335,7 @@ class CoverageGenerator:
 
     @staticmethod
     def _index_values(value) -> set[int]:
+        """Collect literal array indices used by the function body as useful probes."""
         values = set()
 
         def visit(item):
@@ -276,6 +352,9 @@ class CoverageGenerator:
         return values
 
     def _key(self, values: dict) -> tuple:
+        # Normalize only actual function inputs into a stable tuple. This makes cache
+        # and duplicate detection insensitive to dictionary order or unrelated values.
+        # NULL is normalized to 0 because the interpreter uses the same representation.
         key = []
         for leaf in self._inputs:
             value = values.get(leaf.name, 1 if leaf.address_of else 0)
@@ -289,6 +368,8 @@ class CoverageGenerator:
 
 
 class _CoverageState:
+    """Incrementally track observed coverage and MC/DC-relevant condition patterns."""
+
     def __init__(self, function):
         self.decisions = {decision.id: decision for decision in function.decisions}
         self.atoms, self.positions, self.patterns, self.pattern_sets = {}, {}, {}, {}
@@ -300,12 +381,19 @@ class _CoverageState:
             self.patterns[decision.id], self.pattern_sets[decision.id] = [], set()
 
     def add(self, result):
+        # Commit both newly covered targets and unseen condition patterns.
         return self._changes(result, True)
 
     def gained(self, result):
+        # Dry-run the same calculation so rows() can judge a candidate first.
         return self._changes(result, False)
 
     def novel(self, result, decision_ids=None):
+        """Return True when execution exposes a condition pattern not seen before.
+
+        A novel pattern is worth retaining even without immediate target coverage,
+        because it can later pair with another pattern to establish MC/DC independence.
+        """
         selected = None if decision_ids is None else set(decision_ids)
         for decision_id, patterns in result.conditions.items():
             if decision_id in self.pattern_sets and (selected is None or decision_id in selected):
@@ -314,6 +402,12 @@ class _CoverageState:
         return False
 
     def _changes(self, result, commit):
+        """Calculate newly covered obligations and optionally commit them.
+
+        New condition patterns are compared against all previously committed patterns
+        to detect MC/DC pairs. Keeping calculation and commit separate lets the search
+        score candidates without corrupting its baseline state.
+        """
         gained, additions = set(), {}
         for decision_id, outcomes in result.observed.items():
             for outcome in outcomes:
@@ -351,6 +445,8 @@ class _CoverageState:
         return gained
 
     def _independent(self, decision, index, left, right):
+        # Pair checks are repeated heavily while the frontier grows, so cache the
+        # symmetric pair by frozenset: (left, right) and (right, left) are equivalent.
         key = decision.id, index, frozenset((left, right))
         if key not in self._pairs:
             left_outcome = self._outcome(decision, left)
@@ -367,6 +463,8 @@ class _CoverageState:
         return self._pairs[key]
 
     def _outcome(self, decision, pattern):
+        # Decision evaluation for a recorded pattern is deterministic and reused by
+        # multiple MC/DC pair checks, so cache it per decision and pattern.
         key = decision.id, pattern
         if key not in self._outcomes:
             self._outcomes[key] = CoverageGenerator._outcome(decision.expr, pattern, self.positions[decision.id])

@@ -1,4 +1,4 @@
-"""Concrete execution of UTGen's clang-free statement IR."""
+
 from __future__ import annotations
 
 import re
@@ -19,7 +19,12 @@ _ARRAY_INDEX = re.compile(r"\[(\d+)\]")
 
 @dataclass
 class ExecResult:
-    """Observed decision outcomes, outputs, and unknown output names."""
+    """Execution data collected from one simulated run of a C function.
+
+    The interpreter keeps decision coverage separate from output values so the
+    same execution can be reused by coverage generation and result verification.
+    """
+
     outcomes: dict[int, bool] = field(default_factory=dict)
     observed: dict[int, set[bool]] = field(default_factory=dict)
     conditions: dict[int, set[tuple[bool | None, ...]]] = field(default_factory=dict)
@@ -29,13 +34,22 @@ class ExecResult:
 
 
 class Interpreter:
-    """Execute a function IR using injectable inventory values."""
+    """Execute UTGen's C-like IR without compiling or running target code.
+
+    This is intentionally a small interpreter rather than a complete C runtime.
+    It tracks only the state needed by test generation: variable values, aliases,
+    decision outcomes, loop outcomes, outputs, and values that became unknown.
+    """
 
     def __init__(self, inventory: Inventory, execute_static_helpers: bool = True) -> None:
         self.inventory = inventory
         self.execute_static_helpers = execute_static_helpers
         self._variable_names, self._normalized_names, self._address_names = set(), {}, {}
         self._path_cache = {}
+
+        # Pre-compute alternate lookup forms. Concrete array indices can later be
+        # matched against inventory entries such as data[0] / data[1] through a
+        # common data[*] shape, while address-backed leaves remain discoverable.
         for variable in inventory.variables:
             self._variable_names.add(variable.name)
             self._normalized_names[variable.name] = _INDEX_PATH.sub("[*]", variable.name)
@@ -43,7 +57,13 @@ class Interpreter:
                 self._address_names.setdefault(variable.address_of, []).append(variable.name)
 
     def run(self, function, values: dict) -> ExecResult:
-        """Execute ``function`` and return its observable result."""
+        """Execute one FunctionIR with a concrete input mapping.
+
+        Runtime state is reset for every row. TESSY's textual ``NULL`` value is
+        represented internally as zero so pointer-related expressions can be
+        evaluated with the same numeric machinery as other C values.
+        """
+
         self.env = {}
         self.aliases = {}
         self.pointers = set()
@@ -58,6 +78,10 @@ class Interpreter:
         self.loops = {}
         self.unknown = set()
         self.result = ExecResult()
+
+        # Seed all known inputs first, then overlay the supplied row. This keeps
+        # omitted inputs deterministic while still allowing generated rows to
+        # provide concrete array elements or synthetic TESSY values.
         for variable in self.inventory.inputs():
             value = values.get(variable.name, 1 if variable.address_of else 0)
             self.env[variable.name] = 0 if value == "NULL" else value
@@ -91,12 +115,20 @@ class Interpreter:
         return None
 
     def _stmt(self, statement):
+        """Execute one IR statement and return a control-flow signal if any.
+
+        ``None`` means normal fall-through, ``_BREAK`` exits the nearest loop or
+        switch, and ``("return", value)`` propagates a function return upward.
+        """
         if isinstance(statement, Decl):
             if statement.static_name:
                 self._bind_static(statement)
             elif statement.is_pointer:
                 path = self._path(Ref(statement.name, statement.scope))
                 self.pointers.add(path)
+                # Prefer symbolic aliasing for pointer initializers. Falling back
+                # to a numeric value is only used when no address relationship can
+                # be preserved from the IR expression.
                 if not self._set_alias(path, statement.init):
                     self.env[path] = self._eval(statement.init)
             elif isinstance(statement.init, CallE) and self._struct_stub(statement.init.name):
@@ -113,6 +145,9 @@ class Interpreter:
             if path in self.pointers:
                 self.aliases.pop(path, None)
             if statement.decision_id:
+                # Some assignments themselves carry a decision (for example a
+                # boolean expression assigned to a variable). Trace it before the
+                # write so coverage records the actually evaluated conditions.
                 value, leaves = self._trace(statement.value)
                 if value is not _UNKNOWN:
                     self._record(statement.decision_id, bool(value), leaves)
@@ -148,6 +183,11 @@ class Interpreter:
         return None
 
     def _set_alias(self, path, expression):
+        """Update the symbolic target of a pointer assignment when possible.
+
+        Keeping aliases as paths lets later member/index accesses modify the same
+        backing object instead of copying a scalar snapshot of its current value.
+        """
         if isinstance(expression, Unary) and expression.op == "&":
             target = self._path(expression.x)
             if target:
@@ -164,6 +204,12 @@ class Interpreter:
         return statement.runtime_cond if statement.runtime_cond is not None else statement.cond
 
     def _bind_static(self, declaration):
+        """Map a function-local static declaration onto its inventory leaves.
+
+        Static locals are exposed to UTGen with a stable external name, but the IR
+        still refers to the source-level local name. This bridge makes both names
+        refer to the same simulated storage.
+        """
         local = self._path(Ref(declaration.name, declaration.scope))
         for variable in self.inventory.inputs():
             name = variable.name
@@ -172,14 +218,17 @@ class Interpreter:
                 self.env[path] = self._read(name)
 
     def _eval(self, expression):
+        """Evaluate an IR expression to a concrete value or ``_UNKNOWN``.
+
+        Unsupported/unsafe operations propagate ``_UNKNOWN`` rather than inventing
+        a value, allowing downstream coverage logic to distinguish uncertainty from
+        a legitimate C value of zero.
+        """
         if expression is None:
             return 0
         if isinstance(expression, Const):
             value = expression.value
 
-            # Enum names and object-like macro names may be persisted as
-            # strings in the XML database. Resolve them before evaluating
-            # arithmetic or bitwise expressions.
             if isinstance(value, str) and value in self.constants:
                 return self.constants[value]
 
@@ -195,6 +244,8 @@ class Interpreter:
         if isinstance(expression, CallE):
             helper = self.local_functions.get(expression.name)
             if helper is not None and (not helper.static or self.execute_static_helpers):
+                # Same-module helpers can be interpreted directly. External calls
+                # are represented by TESSY stub variables instead of being invoked.
                 return self._call_local(expression, helper)
             return self.env.get(f"tessy_{expression.name}", 0)
         if isinstance(expression, Ternary):
@@ -248,6 +299,9 @@ class Interpreter:
             left = self._eval(expression.l)
             if left is _UNKNOWN:
                 return _UNKNOWN
+            # Preserve C short-circuit semantics: the right-hand side may contain
+            # side effects or invalid operations and must not be evaluated unless
+            # the left operand requires it.
             if expression.op == "&&":
                 return 0 if not left else self._truth(self._eval(expression.r))
             if expression.op == "||":
@@ -268,6 +322,12 @@ class Interpreter:
         return 0
 
     def _trace(self, expression):
+        """Evaluate a decision and capture only conditions actually observed.
+
+        Short-circuited operands are deliberately absent from ``leaves``. The
+        recorder later converts those missing conditions to ``None`` in the MC/DC
+        pattern instead of pretending they evaluated to True or False.
+        """
         if isinstance(expression, Binop) and expression.op in ("&&", "||"):
             left, left_leaves = self._trace(expression.l)
             if expression.op == "&&" and not left:
@@ -301,6 +361,13 @@ class Interpreter:
         return value, ()
 
     def _call_local(self, expression, helper):
+        """Execute a local helper in an isolated simulated stack frame.
+
+        Pointer arguments keep aliases to caller storage, aggregate arguments copy
+        their member leaves, and local names are restored after the call. Recursive
+        helper execution is rejected because this interpreter has no recursive C
+        stack model and could otherwise loop indefinitely.
+        """
         if helper.name in self._local_stack or len(expression.args) != len(helper.params):
             return _UNKNOWN
         actuals = []
@@ -321,6 +388,9 @@ class Interpreter:
                 return _UNKNOWN
             actuals.append(("scalar", value))
         roots = {name for _, name in helper.params} | self._decl_roots(helper.body)
+        # Only names owned by the helper frame are snapshotted. Global/output state
+        # intentionally remains live so pointer writes and global writes can escape
+        # the helper exactly as they would in C.
         snapshot = self._save_frame(roots)
         recording = self.recording
         self._local_stack.append(helper.name)
@@ -334,6 +404,9 @@ class Interpreter:
                         self.env[formal + suffix] = member
                 else:
                     self.env[formal] = value
+            # Helper-internal decisions are not part of the caller FunctionIR's
+            # decision map, so suspend coverage recording while still executing its
+            # data effects.
             self.recording = False
             signal = self._block(helper.body)
             return _UNKNOWN if not signal or signal[0] != "return" else signal[1]
@@ -367,6 +440,7 @@ class Interpreter:
         return roots
 
     def _save_frame(self, roots):
+        """Snapshot environment entries that belong to a local helper frame."""
         owned = lambda name: any(name == root or name.startswith((root + ".", root + "[")) for root in roots)
         return (roots, {name: value for name, value in self.env.items() if owned(name)},
                 {name: value for name, value in self.aliases.items() if owned(name)},
@@ -374,6 +448,7 @@ class Interpreter:
                 {name for name in self.unknown if owned(name)})
 
     def _restore_frame(self, snapshot):
+        """Remove helper-local mutations and restore the caller's local frame."""
         roots, env, aliases, pointers, unknown = snapshot
         owned = lambda name: any(name == root or name.startswith((root + ".", root + "[")) for root in roots)
         for mapping in (self.env, self.aliases):
@@ -388,6 +463,12 @@ class Interpreter:
         self.unknown.update(unknown)
 
     def _loop(self, body, condition, do_first=False, increment=(), loop_id=None):
+        """Execute while/for/do-while using one shared bounded loop engine.
+
+        The iteration cap is a safety boundary for generated or non-terminating
+        paths. If it is reached, variables written by the loop are marked unknown
+        because their final values can no longer be trusted.
+        """
         ran = False
         outcomes = self.loops.setdefault(loop_id, set())
         for _ in range(1024):
@@ -411,6 +492,7 @@ class Interpreter:
         return None
 
     def _record(self, decision_id, outcome, leaves=()):
+        """Record decision coverage plus the observed short-circuit pattern."""
         if not self.recording or decision_id not in self.decision_expr:
             return
         self.outcomes[decision_id] = outcome
@@ -419,6 +501,11 @@ class Interpreter:
             self.conditions.setdefault(decision_id, set()).add(self._pattern(decision_id, leaves))
 
     def _pattern(self, decision_id, leaves):
+        """Align observed condition values with the decision's atom positions.
+
+        ``None`` means an atom was not evaluated because an earlier AND/OR operand
+        determined the result. This distinction is important for masking MC/DC.
+        """
         expr = self.decision_expr.get(decision_id)
         atoms = atoms_of(expr) if expr is not None else ()
         if not atoms:
@@ -430,10 +517,9 @@ class Interpreter:
 
         def trace(node):
             if isinstance(node, Atom):
-                # The runtime condition and the extracted decision expression
-                # are not always structurally identical. When fewer observed
-                # leaf outcomes are available, keep the remaining positions
-                # as None rather than raising StopIteration.
+
+
+
                 value = next(values, missing)
                 if value is missing:
                     return None
@@ -468,6 +554,12 @@ class Interpreter:
         return tuple(pattern)
 
     def _read(self, path, address=True):
+        """Resolve a value through unknown-state, address, and array fallbacks.
+
+        Exact paths win. If no exact array element exists, the normalized ``[*]``
+        form allows a dynamically indexed access to match an inventory leaf with
+        the same structural path. Missing values intentionally default to zero.
+        """
         if path in self.unknown:
             return _UNKNOWN
         if address:
@@ -495,6 +587,7 @@ class Interpreter:
         return self._path_cache[path]
 
     def _legacy_atom(self, atom):
+        """Evaluate older text-only Atom nodes kept for backward compatibility."""
         match = _LEGACY_ATOM.fullmatch(atom.text)
         if match is None:
             return 0
@@ -516,6 +609,7 @@ class Interpreter:
         return bound
 
     def _path(self, expression):
+        """Convert an lvalue-like IR expression into the environment key used for storage."""
         if isinstance(expression, Ref):
             return self.aliases.get(expression.path, expression.path)
         if isinstance(expression, MemberE):
@@ -527,6 +621,7 @@ class Interpreter:
         return ""
 
     def _switch(self, statement):
+        """Execute switch selection and preserve C case fall-through behavior."""
         subject, selected, default = self._eval(statement.subject), None, None
         for index, case in enumerate(statement.cases):
             matched = subject in case.labels
@@ -540,6 +635,8 @@ class Interpreter:
             return None
         if statement.cases[selected].default:
             self._record(statement.cases[selected].decision_id, True)
+        # Continue from the selected case until a break/return is encountered;
+        # this intentionally models C fall-through rather than executing one case.
         for case in statement.cases[selected:]:
             signal = self._block(case.body)
             if signal is _BREAK:
@@ -550,6 +647,7 @@ class Interpreter:
 
     @staticmethod
     def _writes(statements):
+        """Collect direct assignment targets used when a loop hits its safety cap."""
         names = set()
         for statement in statements:
             if isinstance(statement, Assign):
@@ -566,6 +664,11 @@ class Interpreter:
         return False
 
     def _wrap(self, path, value):
+        """Apply the target C integer width/sign rules after a simulated write.
+
+        Python integers do not overflow, so values are masked to the declared bit
+        width and then converted back from two's-complement for signed C types.
+        """
         variable = self.inventory.find(path)
         if variable is None or not isinstance(value, int):
             return value
@@ -619,13 +722,13 @@ class Interpreter:
         return left - Interpreter._divide(left, right) * right if right else 0
 
 class Verifier:
-    """Attach concrete expected outputs to every row."""
+    """Populate generated test rows with outputs predicted by the interpreter."""
 
     def __init__(self, interpreter: Interpreter) -> None:
         self.interpreter = interpreter
 
     def check(self, function, rows: list[TestRow]) -> None:
-        """Execute every row and fill its known expected outputs."""
+
         for row in rows:
             result = self.interpreter.run(function, row.values)
             row.expected = result.outputs

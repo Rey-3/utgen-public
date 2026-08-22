@@ -1,4 +1,4 @@
-"""TESSY value/stub XML and human-readable report emitters."""
+
 from __future__ import annotations
 
 from collections import Counter
@@ -9,12 +9,22 @@ from utgen.model import Direction, FunctionIR, TestRow, expand_array_names
 
 
 class ValueXmlWriter:
-    """Write row-aligned injectable and observable function arguments."""
+    """Serialize generated test rows into the value XML used by the test pipeline."""
 
     def write(self, function: FunctionIR, rows: list[TestRow], path: str | Path,
               default_range: str | None = None) -> None:
-        """Write a TESSY-compatible value XML file for ``function``."""
+        """Write one XML argument entry for each externally visible function leaf.
+
+        Input values are emitted as ``range`` data, while OUT/INOUT values are
+        emitted as ``output`` data. Their ordering follows ``rows`` so every
+        comma-separated position represents the same test case across arguments.
+        """
+
         root = ET.Element("function", name=function.name, file=_source(function))
+
+        # Pointer parameters have an extra ``@name`` pseudo-leaf that controls
+        # whether the real pointee is valid or NULL. It is metadata for rendering
+        # the pointee value, not a separate argument in the generated XML.
         addresses = {leaf.address_of: leaf for leaf in function.leaves if leaf.address_of}
         for leaf in function.leaves:
             if leaf.address_of:
@@ -32,9 +42,14 @@ class ValueXmlWriter:
 
 
 def _row_range(leaf, rows, address=None, name=None):
+    """Render one scalar/array-element input value for every generated test row."""
+
     values = []
     for row in rows:
         value = row.values.get(name or leaf.name, row.values.get(leaf.name, 0))
+
+        # A pointer's pointee must become NULL whenever its associated address
+        # control is disabled, regardless of the numeric value stored for it.
         values.append("NULL" if address is not None and
                       row.values.get(address.name, 1) in (0, "NULL") else
                       _render(leaf, value))
@@ -42,14 +57,20 @@ def _row_range(leaf, rows, address=None, name=None):
 
 
 def _output_range(leaf, rows, name=None):
+    """Render expected output values while preserving one slot per test row."""
+
     name = name or leaf.name
     values = []
     for row in rows:
+        # Keep the output list aligned with the input test rows even when the
+        # interpreter did not produce an expected value for this leaf.
         values.append(_render(leaf, row.expected[name]) if name in row.expected else "0")
     return ",".join(values)
 
 
 def _array_range(leaf, rows):
+    """Serialize arrays as ``element0|element1|...``, each element holding all rows."""
+
     names = expand_array_names(leaf.name)
     if not any(name in row.values for name in names for row in rows):
         return ""
@@ -62,17 +83,20 @@ def _array_output_range(leaf, rows):
 
 
 def _pointer_address(name, addresses):
+    """Find the address-control leaf that owns a pointer, member, or array element."""
+
     for root, address in addresses.items():
         if name == root or name.startswith((root + ".", root + "[")):
             return address
     return None
 
-    
+
 class StubXmlWriter:
-    """Write the TESSY called-function and argument schema."""
+    """Write the called-function metadata and TESSY-facing stub variable names."""
 
     def write(self, function: FunctionIR, path: str | Path) -> None:
-        """Write one stub XML file for ``function``."""
+        """Describe each external call, its return value, and captured arguments."""
+
         root = ET.Element("function_analysis", function_name=function.name,
                           file=_stub_path(_source(function)), line=str(function.line))
         called = ET.SubElement(root, "called_functions", count=str(len(function.stubs)))
@@ -83,6 +107,9 @@ class StubXmlWriter:
             return_type = stub.ret_ctype.name if stub.ret_ctype is not None else stub.ret_struct or "void"
             return_element = ET.SubElement(element, "return")
             ET.SubElement(return_element, "type").text = return_type
+
+            # These names match the synthetic stub leaves created by StubFinder;
+            # emit.py must keep the same convention so generated values line up.
             ET.SubElement(return_element, "name").text = f"tessy_{stub.name}"
             if stub.params:
                 arguments = ET.SubElement(element, "arguments")
@@ -95,10 +122,8 @@ class StubXmlWriter:
 
 
 class ReportWriter:
-    """Write deterministic row traceability Markdown."""
 
     def write(self, function: FunctionIR, rows: list[TestRow], path: str | Path) -> None:
-        """Write a report containing every row and expected output."""
         lines = [f"# UTGen report: {function.name}", "",
                  f"- Function: `{function.name}`", f"- File: `{_source(function)}`",
                  f"- Test cases: {len(rows)}",
@@ -113,10 +138,14 @@ class ReportWriter:
 
 
 def _source(function: FunctionIR) -> str:
+    """Support both current ``file`` and legacy ``source_file`` FunctionIR fields."""
+
     return str(getattr(function, "file", "") or getattr(function, "source_file", ""))
 
 
 def _stub_path(value: str) -> str:
+    """Normalize paths and keep the project-relative suffix beginning at app_source."""
+
     parts = str(value or "").replace("\\", "/").split("/")
     for index, part in enumerate(parts):
         if part.lower() == "app_source":
@@ -137,6 +166,8 @@ def _bool(value: bool) -> str:
 
 
 def _render(leaf, value) -> str:
+    """Prefer symbolic enum names in XML; otherwise preserve the raw value."""
+
     if isinstance(value, str):
         return value
     for name, number in leaf.ctype.enum_values:
@@ -146,9 +177,13 @@ def _render(leaf, value) -> str:
 
 
 def _validation_len(leaf) -> str:
+    """Return the XML length expected by validation for the leaf's format."""
+
     if leaf.ctype.signed or leaf.ctype.enum_values or leaf.fmt.startswith(("signed", "unsigned")):
         return leaf.xml_len
     try:
+        # Preserve the emitter's +1 convention only when xml_len is numeric;
+        # symbolic/non-numeric lengths must pass through unchanged.
         return str(int(leaf.xml_len) + 1)
     except ValueError:
         return leaf.xml_len

@@ -1,17 +1,17 @@
-"""Fault-injection rows for injectable inputs."""
+
 from __future__ import annotations
 
 from utgen.model import Inventory, TestRow, Variable
 
 
 class FaultGenerator:
-    """Generate type-extreme rows, optionally replaced by type-name overrides."""
+
 
     def __init__(self, overrides: dict | None = None) -> None:
         self.overrides = overrides or {}
 
     def rows(self, inventory: Inventory) -> list[TestRow]:
-        """Return deterministic fault-injection rows for every input variable."""
+
         from utgen.assembler import RowAssembler
 
         defaults = RowAssembler._defaults(inventory.inputs())

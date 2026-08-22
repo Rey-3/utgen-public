@@ -1,4 +1,4 @@
-"""Boundary-row generation for relational decisions."""
+
 from __future__ import annotations
 
 from utgen.model import Atom, Constraint, FunctionIR, Op, TestRow, atoms_of
@@ -9,13 +9,13 @@ RELATIONAL = {Op.EQ, Op.NE, Op.LT, Op.LE, Op.GT, Op.GE}
 
 
 class BoundaryGenerator:
-    """Generate clamped k-1/k/k+1 rows while satisfying decision guards."""
+
 
     def __init__(self, solver: Solver) -> None:
         self.solver = solver
 
     def rows(self, function: FunctionIR) -> list[TestRow]:
-        """Return deterministic boundary rows for all relational decision atoms."""
+
         from utgen.assembler import RowAssembler
 
         defaults = RowAssembler._defaults(RowAssembler._inputs(function))
