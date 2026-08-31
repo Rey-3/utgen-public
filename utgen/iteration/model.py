@@ -1319,6 +1319,32 @@ def canonical_json_bytes(value: Any) -> bytes:
     return encoded
 
 
+def pretty_json_bytes(value: Any) -> bytes:
+    """Encode a model/native value as deterministic, human-readable JSON."""
+
+    native = _to_json_value(value)
+    encoded = json.dumps(
+        native,
+        ensure_ascii=False,
+        sort_keys=True,
+        indent=2,
+        separators=(",", ": "),
+        allow_nan=False,
+    ).encode("utf-8")
+    if encoded.startswith(b"\xef\xbb\xbf") or encoded.endswith(b"\n"):
+        raise AssertionError("pretty JSON unexpectedly contains BOM or trailing newline")
+    return encoded
+
+
+def is_canonical_json_bytes(value: Any, data: bytes) -> bool:
+    """Accept valid JSON formatting when the canonical content is unchanged."""
+
+    try:
+        return canonical_json_bytes(loads(data)) == canonical_json_bytes(value)
+    except (TypeError, UnicodeError, ValueError):
+        return False
+
+
 def loads(
     data: str | bytes | bytearray,
     model_type: type[T] | None = None,
@@ -1395,6 +1421,8 @@ __all__ = [
     "UnsupportedSchemaError",
     "VersionedState",
     "canonical_json_bytes",
+    "is_canonical_json_bytes",
+    "pretty_json_bytes",
     "from_dict",
     "loads",
     "migrate_state",

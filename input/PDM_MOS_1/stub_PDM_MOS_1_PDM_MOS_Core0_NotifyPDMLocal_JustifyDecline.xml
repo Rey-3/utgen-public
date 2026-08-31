@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='utf-8'?>
+<function_analysis function_name="PDM_MOS_Core0_NotifyPDMLocal_JustifyDecline" file="" line="3749">
+  <called_functions count="1">
+    <function name="Rte_PDMMOS_1_PDMLocalCtrl_1_IndicatorStateCore0ASILB_1ms_GetMsg" file="" line="">
+      <return>
+        <type>PDM_IndOperationStat_Type</type>
+        <name>tessy_Rte_PDMMOS_1_PDMLocalCtrl_1_IndicatorStateCore0ASILB_1ms_GetMsg</name>
+      </return>
+    </function>
+  </called_functions>
+</function_analysis>

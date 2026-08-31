@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<function name="PDM_Core0_Indicator_ErrorStsPriorityResolve" file="" utgen_version="2.0" utgen_updated_at="2026-08-31T13:55:54Z">
+    <argument name="ShortCirSts" len="8" format="unsigned" direction="in" pointer="false" range="0,1,0,1" testmethod="decision" />
+    <argument name="StuckClsSts" len="8" format="unsigned" direction="in" pointer="false" range="0,0,0,0" testmethod="decision" />
+    <argument name="StuckOpnSts" len="8" format="unsigned" direction="in" pointer="false" range="0,0,1,1" testmethod="decision" />
+    <argument name="PDM_Core0_Indicator_ErrorStsPriorityResolve()" len="2" format="PDM_IndicatorError_type" direction="out" pointer="false" output="SHORTCIRCUIT,NOERROR,SHORTCIRCUIT,OPENCIRCUIT" />
+</function>

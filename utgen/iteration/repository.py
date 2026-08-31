@@ -8,9 +8,9 @@ Callers must provide an already validated :class:`CandidateBundle`.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 import os
 from pathlib import Path, PurePosixPath
+import re
 import shutil
 import uuid
 from typing import Any, Callable, Iterable, Mapping, Protocol
@@ -24,11 +24,12 @@ from .model import (
     RootManifest,
     StubState,
     UnknownFieldError,
-    canonical_json_bytes,
     from_dict,
+    is_canonical_json_bytes,
     loads,
+    pretty_json_bytes,
 )
-from .analysis_store import ContentAddressedAnalysisStore
+from .analysis_store import ContentAddressedAnalysisStore, LatestAnalysisStore
 from .transaction import (
     AdvisoryFileLock,
     ArtifactRecord,
@@ -133,15 +134,20 @@ class FileSystemIterationRepository:
         failure_injector: Callable[[str], None] | None = None,
         artifact_validators: Mapping[str, Callable[[bytes], Any]] | None = None,
         analysis_store: Any | None = None,
+        current_only: bool = False,
     ) -> None:
         self.root = Path(root)
         self.utgen_root = self.root if self.root.name == ".utgen" else self.root / ".utgen"
         self.iteration_root = self.utgen_root / "iteration"
         self.manifest_path = self.iteration_root / "manifest.json"
         self.revision_root = self.iteration_root / "revisions"
+        self.modules_root = self.iteration_root / "modules"
         self.staging_root = self.iteration_root / ".staging"
         self.locks_root = self.iteration_root / "locks"
         self.pointer_lock_path = self.iteration_root / ".pointer.lock"
+        if type(current_only) is not bool:
+            raise TypeError("current_only must be a boolean")
+        self.current_only = current_only
         if not callable(uuid_factory):
             raise TypeError("uuid_factory must be callable")
         self.uuid_factory = uuid_factory
@@ -151,9 +157,9 @@ class FileSystemIterationRepository:
         # its AnalysisRef.  ``None`` therefore means "use the project-local
         # content-addressed store", never "skip analysis validation".
         self.analysis_store = (
-            ContentAddressedAnalysisStore(self.root)
-            if analysis_store is None
-            else analysis_store
+            analysis_store
+            if analysis_store is not None
+            else (LatestAnalysisStore(self.root) if self.current_only else ContentAddressedAnalysisStore(self.root))
         )
 
     def _inject(self, stage: str) -> None:
@@ -181,6 +187,8 @@ class FileSystemIterationRepository:
         self._ensure_directory(self.iteration_root, create=True)
         self._ensure_directory(self.locks_root, create=True)
         self._ensure_directory(self.revision_root, create=True)
+        if self.current_only:
+            self._ensure_directory(self.modules_root, create=True)
         self._ensure_directory(self.staging_root, create=True)
 
     def _read_root(self, *, missing_ok: bool = True) -> RootManifest:
@@ -197,7 +205,7 @@ class FileSystemIterationRepository:
             parsed = loads(raw, RootManifest)
         except (OSError, TypeError, ValueError, UnknownFieldError) as exc:
             raise RepositorySchemaError(f"root manifest failed strict v2 parsing: {self.manifest_path}") from exc
-        if canonical_json_bytes(parsed) != raw:
+        if not is_canonical_json_bytes(parsed, raw):
             raise RepositoryIntegrityError("root manifest is not canonical UTF-8 JSON")
         return parsed
 
@@ -253,8 +261,15 @@ class FileSystemIterationRepository:
         module_key: str,
         revision_id: str,
         root_manifest: RootManifest,
+        *,
+        revision_path: Path | None = None,
+        analysis_store: Any | None = None,
     ) -> AcceptedBundle:
-        revision_path = self._safe_revision_path(self.revision_root, module_key, revision_id)
+        revision_path = (
+            self._safe_revision_path(self.revision_root, module_key, revision_id)
+            if revision_path is None
+            else Path(revision_path)
+        )
         if revision_path.is_symlink() or not revision_path.is_dir():
             raise RepositoryIntegrityError(f"revision path is missing or unsafe: {revision_path}")
         bundle_path = revision_path / "bundle_manifest.json"
@@ -265,7 +280,7 @@ class FileSystemIterationRepository:
             bundle_manifest = loads(bundle_raw, BundleManifest)
         except (OSError, TypeError, ValueError, UnknownFieldError) as exc:
             raise RepositorySchemaError(f"bundle manifest failed strict v2 parsing: {bundle_path}") from exc
-        if canonical_json_bytes(bundle_manifest) != bundle_raw:
+        if not is_canonical_json_bytes(bundle_manifest, bundle_raw):
             raise RepositoryIntegrityError(f"bundle manifest is not canonical: {bundle_path}")
         if bundle_manifest.module_key != module_key or bundle_manifest.revision_id != revision_id:
             raise RepositoryIntegrityError("bundle manifest does not match its path")
@@ -283,7 +298,10 @@ class FileSystemIterationRepository:
                 data = path.read_bytes()
             except OSError as exc:
                 raise RepositoryIntegrityError(f"revision artifact cannot be read: {path}") from exc
-            if hashlib.sha256(data).hexdigest() != bundle_manifest.artifact_hashes[relative]:
+            if (
+                ArtifactRecord(relative, bundle_manifest.artifact_kinds[relative], data).sha256
+                != bundle_manifest.artifact_hashes[relative]
+            ):
                 raise RepositoryIntegrityError(f"revision artifact hash mismatch: {relative}")
             kind = bundle_manifest.artifact_kinds[relative]
             expected_kind = {
@@ -307,7 +325,7 @@ class FileSystemIterationRepository:
             module_manifest = loads(module_raw, ModuleManifest)
         except (OSError, TypeError, ValueError, UnknownFieldError) as exc:
             raise RepositorySchemaError("module manifest failed strict v2 parsing") from exc
-        if canonical_json_bytes(module_manifest) != module_raw:
+        if not is_canonical_json_bytes(module_manifest, module_raw):
             raise RepositoryIntegrityError("module manifest is not canonical")
         if module_manifest.module_key != module_key:
             raise RepositoryIntegrityError("module manifest module_key mismatch")
@@ -337,7 +355,7 @@ class FileSystemIterationRepository:
                 function_state = loads(base_data, FunctionIterationState)
             except (TypeError, ValueError, UnknownFieldError) as exc:
                 raise RepositorySchemaError(f"function state failed strict v2 parsing: {base_path}") from exc
-            if canonical_json_bytes(function_state) != base_data:
+            if not is_canonical_json_bytes(function_state, base_data):
                 raise RepositoryIntegrityError(f"function state is not canonical: {base_path}")
             function_states.append(function_state)
             if function_states[-1].function_key != relative_function:
@@ -381,9 +399,10 @@ class FileSystemIterationRepository:
                 # current root to point at a newer revision.
                 pass
 
-        if self.analysis_store is not None:
+        effective_analysis_store = self.analysis_store if analysis_store is None else analysis_store
+        if effective_analysis_store is not None:
             try:
-                resolved = self.analysis_store.resolve(bundle_manifest.analysis.analysis_id)
+                resolved = effective_analysis_store.resolve(bundle_manifest.analysis.analysis_id)
             except Exception as exc:
                 raise RepositoryIntegrityError("accepted AnalysisRef cannot be resolved") from exc
             if resolved.ref != bundle_manifest.analysis:
@@ -400,12 +419,251 @@ class FileSystemIterationRepository:
             tuple(artifacts),
         )
 
+    def _current_bundle_path(self, module_key: str) -> Path:
+        validate_path_component(module_key, "module_key")
+        return self.modules_root / module_key
+
+    def _current_manifest_matches(self, module_key: str, revision_id: str) -> bool:
+        path = self._current_bundle_path(module_key)
+        if not path.exists():
+            return False
+        if path.is_symlink() or not path.is_dir():
+            raise RepositoryIntegrityError(f"current module path is missing or unsafe: {path}")
+        manifest_path = path / "module_manifest.json"
+        if manifest_path.is_symlink() or not manifest_path.is_file():
+            raise RepositoryIntegrityError(f"current module manifest is missing or unsafe: {manifest_path}")
+        try:
+            raw = manifest_path.read_bytes()
+            manifest = loads(raw, ModuleManifest)
+        except (OSError, TypeError, ValueError, UnknownFieldError) as exc:
+            raise RepositorySchemaError(
+                f"current module manifest failed strict v2 parsing: {manifest_path}"
+            ) from exc
+        if not is_canonical_json_bytes(manifest, raw):
+            raise RepositoryIntegrityError(f"current module manifest is not canonical: {manifest_path}")
+        return manifest.module_key == module_key and manifest.revision_id == revision_id
+
+    @staticmethod
+    def _format_json_file(path: Path) -> None:
+        if path.is_symlink() or not path.is_file():
+            raise RepositoryIntegrityError(f"JSON path is missing or unsafe: {path}")
+        try:
+            parsed = loads(path.read_bytes())
+            path.write_bytes(pretty_json_bytes(parsed))
+        except (OSError, TypeError, UnicodeError, ValueError) as exc:
+            raise RepositoryError(f"could not format JSON file: {path}") from exc
+
+    @classmethod
+    def _format_json_files(cls, root: Path) -> None:
+        for path in sorted(root.rglob("*.json")):
+            if path.is_symlink() or not path.is_file():
+                raise RepositoryIntegrityError(f"JSON path is missing or unsafe: {path}")
+            try:
+                parsed = loads(path.read_bytes())
+            except (OSError, TypeError, UnicodeError, ValueError):
+                continue
+            path.write_bytes(pretty_json_bytes(parsed))
+
+    def _copy_current_bundle(self, source: Path, module_key: str) -> Path:
+        """Copy one validated bundle into a private staging directory."""
+
+        self._ensure_iteration_layout()
+        operation_id = new_persistent_id("op", self.uuid_factory)
+        staged = self.staging_root / f"current.{module_key}.{operation_id}"
+        if staged.exists() or staged.is_symlink():
+            raise RepositoryIntegrityError(f"current staging path already exists: {staged}")
+        try:
+            shutil.copytree(source, staged, symlinks=False)
+            self._format_json_files(staged)
+        except OSError as exc:
+            if staged.exists() and staged.is_dir() and not staged.is_symlink():
+                shutil.rmtree(staged)
+            raise RepositoryError(f"could not stage current module bundle: {source}") from exc
+        return staged
+
+    def _swap_current_bundle(self, staged: Path, module_key: str) -> Path:
+        """Replace a module directory and restore the old one if the swap fails."""
+
+        current = self._current_bundle_path(module_key)
+        operation_id = new_persistent_id("op", self.uuid_factory)
+        backup = self.modules_root / f".{module_key}.{operation_id}.backup"
+        if backup.exists() or backup.is_symlink():
+            raise RepositoryIntegrityError(f"current backup path already exists: {backup}")
+        if current.exists() or current.is_symlink():
+            if current.is_symlink() or not current.is_dir():
+                raise RepositoryIntegrityError(f"current module path is unsafe: {current}")
+            os.replace(current, backup)
+        try:
+            os.replace(staged, current)
+        except OSError:
+            if backup.exists() and not current.exists():
+                os.replace(backup, current)
+            raise
+        if backup.exists():
+            shutil.rmtree(backup)
+        return current
+
+    def _remove_module_revisions(self, module_key: str) -> None:
+        module_root = self.revision_root / module_key
+        if not module_root.exists():
+            return
+        if module_root.is_symlink() or not module_root.is_dir():
+            raise RepositoryIntegrityError(f"revision module root is unsafe: {module_root}")
+        shutil.rmtree(module_root)
+
+    def _remove_legacy_analysis(self) -> None:
+        analysis_root = self.utgen_root / "analysis"
+        if not analysis_root.exists():
+            return
+        if analysis_root.is_symlink() or not analysis_root.is_dir():
+            raise RepositoryIntegrityError(f"analysis root is unsafe: {analysis_root}")
+        pattern = re.compile(r"analysis_v1_[0-9a-f]{64}\Z")
+        for path in sorted(analysis_root.iterdir()):
+            if not pattern.fullmatch(path.name):
+                continue
+            if path.is_symlink() or not path.is_dir():
+                raise RepositoryIntegrityError(f"legacy analysis path is unsafe: {path}")
+            shutil.rmtree(path)
+
+    def _remove_all_revisions(self) -> None:
+        if not self.revision_root.exists():
+            return
+        if self.revision_root.is_symlink() or not self.revision_root.is_dir():
+            raise RepositoryIntegrityError(f"revision root is unsafe: {self.revision_root}")
+        for path in sorted(self.revision_root.iterdir()):
+            if path.is_symlink() or not path.is_dir():
+                raise RepositoryIntegrityError(f"legacy revision path is unsafe: {path}")
+            validate_path_component(path.name, "module_key")
+            shutil.rmtree(path)
+
+    def compact_current(self, module_key: str) -> AcceptedBundle:
+        """Publish the accepted revision into the current-only module path."""
+
+        if not self.current_only:
+            raise RepositoryError("compact_current requires current_only=True")
+        module_key = validate_path_component(module_key, "module_key")
+        root_manifest = self._read_root(missing_ok=False)
+        module_manifest = root_manifest.modules.get(module_key)
+        if module_manifest is None:
+            raise RepositoryNotInitialized(f"module has no accepted revision: {module_key}")
+        self._ensure_iteration_layout()
+        current_path = self._current_bundle_path(module_key)
+        if self._current_manifest_matches(module_key, module_manifest.revision_id):
+            source_bundle = self._load_revision(
+                module_key,
+                module_manifest.revision_id,
+                root_manifest,
+                revision_path=current_path,
+            )
+        else:
+            source_bundle = self._load_revision(module_key, module_manifest.revision_id, root_manifest)
+        staged = self._copy_current_bundle(source_bundle.revision_path, module_key)
+        try:
+            self._load_revision(
+                module_key,
+                module_manifest.revision_id,
+                root_manifest,
+                revision_path=staged,
+            )
+            self._swap_current_bundle(staged, module_key)
+            activate = getattr(self.analysis_store, "activate", None)
+            if callable(activate):
+                activate(module_manifest.analysis.analysis_id)
+            self._remove_module_revisions(module_key)
+            return self._load_revision(
+                module_key,
+                module_manifest.revision_id,
+                root_manifest,
+                revision_path=current_path,
+            )
+        except Exception:
+            if staged.exists() or staged.is_symlink():
+                if staged.is_symlink() or not staged.is_dir():
+                    raise RepositoryIntegrityError(f"current staging path is unsafe: {staged}")
+                shutil.rmtree(staged)
+            raise
+
+    def migrate_current(self) -> None:
+        """Migrate accepted legacy bundles and DBs before deleting old paths."""
+
+        if not self.current_only:
+            return
+        if not self.manifest_path.exists():
+            return
+        root_manifest = self._read_root(missing_ok=False)
+        legacy_store = ContentAddressedAnalysisStore(self.root)
+        importer = getattr(self.analysis_store, "import_snapshot", None)
+        migrated_staging: list[Path] = []
+        try:
+            for module_key, module_manifest in sorted(root_manifest.modules.items()):
+                current_path = self._current_bundle_path(module_key)
+                if self._current_manifest_matches(module_key, module_manifest.revision_id):
+                    bundle = self._load_revision(
+                        module_key,
+                        module_manifest.revision_id,
+                        root_manifest,
+                        revision_path=current_path,
+                    )
+                else:
+                    effective_store = self.analysis_store
+                    staged_available = False
+                    if callable(importer):
+                        try:
+                            self.analysis_store.resolve(module_manifest.analysis.analysis_id)
+                            staged_available = True
+                        except Exception:
+                            effective_store = legacy_store
+                    bundle = self._load_revision(
+                        module_key,
+                        module_manifest.revision_id,
+                        root_manifest,
+                        analysis_store=effective_store,
+                    )
+                    if callable(importer) and not staged_available:
+                        snapshot = legacy_store.resolve(module_manifest.analysis.analysis_id)
+                        imported = importer(snapshot)
+                        if imported != module_manifest.analysis:
+                            raise RepositoryIntegrityError(
+                                f"migrated AnalysisRef differs for module {module_key!r}"
+                            )
+                staged = self._copy_current_bundle(bundle.revision_path, module_key)
+                migrated_staging.append(staged)
+                self._load_revision(
+                    module_key,
+                    module_manifest.revision_id,
+                    root_manifest,
+                    revision_path=staged,
+                )
+                self._swap_current_bundle(staged, module_key)
+                activate = getattr(self.analysis_store, "activate", None)
+                if callable(activate):
+                    activate(module_manifest.analysis.analysis_id)
+                migrated_staging.remove(staged)
+            if callable(importer):
+                self._remove_legacy_analysis()
+            self._remove_all_revisions()
+            self._format_json_file(self.manifest_path)
+        except Exception as exc:
+            for staged in migrated_staging:
+                if staged.exists() and staged.is_dir() and not staged.is_symlink():
+                    shutil.rmtree(staged)
+            if isinstance(exc, RepositoryError):
+                raise
+            raise RepositoryIntegrityError("current-only migration failed; legacy state was retained") from exc
+
     def load(self, module_key: str) -> AcceptedBundle:
         module_key = validate_path_component(module_key, "module_key")
         root_manifest = self._read_root(missing_ok=False)
         module_manifest = root_manifest.modules.get(module_key)
         if module_manifest is None:
             raise RepositoryNotInitialized(f"module has no accepted revision: {module_key}")
+        if self.current_only and self._current_manifest_matches(module_key, module_manifest.revision_id):
+            return self._load_revision(
+                module_key,
+                module_manifest.revision_id,
+                root_manifest,
+                revision_path=self._current_bundle_path(module_key),
+            )
         return self._load_revision(module_key, module_manifest.revision_id, root_manifest)
 
     def load_revision(self, module_key: str, revision_id: str) -> AcceptedBundle:
@@ -467,6 +725,9 @@ class FileSystemIterationRepository:
     def history(self, module_key: str) -> tuple[AcceptedBundle, ...]:
         """Return prior accepted bundles, newest parent first."""
 
+        if self.current_only:
+            self.load(module_key)
+            return ()
         current = self.load(module_key)
         chain = self._validated_parent_chain(module_key, current.module_manifest, current.root_manifest)
         return tuple(bundle for _, bundle in chain[1:])
@@ -506,6 +767,7 @@ class FileSystemIterationRepository:
                 load_revision=lambda key, revision_id: self.load_revision(key, revision_id),
                 read_root=lambda: self._read_root(missing_ok=True),
                 validate_analysis=(None if self.analysis_store is None else self.analysis_store.validate),
+                pretty_json=self.current_only,
             )
         except Exception:
             lock.release()
@@ -524,8 +786,27 @@ class FileSystemIterationRepository:
             incomplete.extend(sorted(self.staging_root.iterdir()))
         reachable: set[Path] = set()
         for module_key, current in root_manifest.modules.items():
-            for revision_path, _ in self._validated_parent_chain(module_key, current, root_manifest):
-                reachable.add(revision_path.resolve())
+            if self.current_only:
+                current_path = self._current_bundle_path(module_key)
+                if self._current_manifest_matches(module_key, current.revision_id):
+                    self._load_revision(
+                        module_key,
+                        current.revision_id,
+                        root_manifest,
+                        revision_path=current_path,
+                    )
+                    reachable.add(current_path.resolve())
+                else:
+                    legacy_path = self._safe_revision_path(
+                        self.revision_root,
+                        module_key,
+                        current.revision_id,
+                    )
+                    self._load_revision(module_key, current.revision_id, root_manifest)
+                    reachable.add(legacy_path.resolve())
+            else:
+                for revision_path, _ in self._validated_parent_chain(module_key, current, root_manifest):
+                    reachable.add(revision_path.resolve())
 
         unreferenced: list[Path] = []
         invalid: list[Path] = []

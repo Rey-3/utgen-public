@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<function name="PDM_LocalCtrl_Core1_100ms" file="" utgen_version="1.0" utgen_updated_at="2026-08-31T13:21:28Z">
+    <argument name="PDMLocalCtrl_Core1_MosStat.LocalMosCtrl[13]" len="9" format="PDM_LocalCtrlStat_Type" direction="in" pointer="false" range="0" testmethod="decision" />
+</function>

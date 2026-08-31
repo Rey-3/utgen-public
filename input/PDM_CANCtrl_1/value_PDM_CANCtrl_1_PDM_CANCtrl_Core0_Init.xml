@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<function name="PDM_CANCtrl_Core0_Init" file="">
+    <argument name="PDM_Core0_EEPROM_SyncFlag" len="8" format="unsigned" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_Config.PDM_Load_Enable[13]" len="9" format="NvmApp_PDMCAN_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_Config.PDM_DVTest_CANControlOverwriteEn" len="9" format="NvmApp_PDMCAN_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_CANCtrl_Core0_MosStat.CANMosCtrl[13]" len="9" format="PDM_CANCtrlStat_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_MosCtrlReq[13]" len="8" format="unsigned" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_MosCtrlReqSyncDone" len="8" format="unsigned" direction="out" pointer="false" output="0,0" />
+    <argument name="tessy_Rte_PDMCANCtrl_1_NvmApp_EEPROMInfo1Core0ASILB_Event_GetMsg.EEPROM_InputSampling_SyncFlag" len="9" format="NvmApp_EEPROM_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_1_NvmApp_EEPROMInfo1Core0ASILB_Event_GetMsg.EEPROM_PDM_SyncFlag" len="9" format="NvmApp_EEPROM_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_1_NvmApp_EEPROMInfo1Core0ASILB_Event_GetMsg.EEPROM_PNG_SyncFlag" len="9" format="NvmApp_EEPROM_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_1_NvmApp_PDMCANCfgCore0ASILB_Event_GetMsg.PDM_Load_Enable[13]" len="9" format="NvmApp_PDMCAN_Type" direction="in" pointer="false" range="0,1" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_1_NvmApp_PDMCANCfgCore0ASILB_Event_GetMsg.PDM_DVTest_CANControlOverwriteEn" len="9" format="NvmApp_PDMCAN_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_1_NvmApp_LastOpCANCtrlReqCore0ASILB_Event_GetMsg.PDM_CANCtrlReq[13]" len="9" format="NvmApp_CANCtrlStat_PDM_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+</function>

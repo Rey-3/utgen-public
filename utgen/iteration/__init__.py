@@ -42,8 +42,10 @@ from .model import (
     WorkingSnapshot,
     canonical_json_bytes,
     from_dict,
+    is_canonical_json_bytes,
     loads,
     migrate_state,
+    pretty_json_bytes,
     to_dict,
 )
 from .versioning import (
@@ -99,6 +101,7 @@ from .analysis_store import (
     AnalysisStoreIntegrityError,
     ContentAddressedAnalysisStore,
     FilesystemAnalysisStore,
+    LatestAnalysisStore,
 )
 from .fingerprint import (
     DEFAULT_GENERATOR_SCHEMA,
@@ -389,6 +392,7 @@ __all__ = [
     "ExcelColumnKey",
     "FunctionIterationState",
     "FilesystemAnalysisStore",
+    "LatestAnalysisStore",
     "FileSystemIterationRepository",
     "FilesystemIterationRepository",
     "FAILURE_STAGES",
@@ -448,6 +452,8 @@ __all__ = [
     "VersionedState",
     "WorkingSnapshot",
     "canonical_json_bytes",
+    "is_canonical_json_bytes",
+    "pretty_json_bytes",
     "canonical_payload_bytes",
     "allocate_case_name",
     "allocate_row_id",

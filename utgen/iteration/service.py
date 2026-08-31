@@ -3006,7 +3006,8 @@ class MergeBService:
             return tuple(sorted(
                 (
                     state.function_name,
-                    stub_signature_tuple(state),
+                    state.return_type,
+                    tuple((item.type_name, item.name) for item in state.parameters),
                     tuple(sorted(state.owners)),
                 )
                 for state in states
@@ -3295,6 +3296,7 @@ class MergeBService:
     def _projection_stream(
         groups: tuple[tuple[str, ...], ...],
         dimensions: tuple[int, ...],
+        encoding: str | None = None,
     ) -> str | None:
         """Encode expanded element streams using canonical XML policy."""
 
@@ -3302,6 +3304,12 @@ class MergeBService:
             return None
         if not dimensions:
             return join_stream((groups[0],))
+        # Preserve an explicitly expanded source stream, including repeated
+        # element groups.  Collapsing those groups changes the wire encoding
+        # from ``expanded`` to ``shared`` and makes a lossless candidate differ
+        # from the generator's XML even when every element has the same value.
+        if encoding == "expanded":
+            return join_stream(groups)
         if all(group == groups[0] for group in groups[1:]):
             return join_stream((groups[0],))
         return join_stream(groups)
@@ -3349,6 +3357,17 @@ class MergeBService:
                 for index, row in enumerate(merged_rows):
                     if input_required:
                         input_value = self._projection_row_value(row, "values", name)
+                        if (
+                            input_value is _PROJECTION_MISSING
+                            and argument.name != name
+                            and argument.name in getattr(row, "values", {})
+                        ):
+                            # The legacy generator can keep an array-valued
+                            # leaf under its ``field[N]`` aggregate spelling
+                            # while XML exposes logical ``field[0..N-1]``
+                            # elements.  A shared stream represents the same
+                            # testcase value for every logical element.
+                            input_value = row.values[argument.name]
                         if input_value is _PROJECTION_INVALID:
                             raise MergeBProjectionError(
                                 "UNRESOLVED_VALUE_CELL",
@@ -3362,6 +3381,31 @@ class MergeBService:
                         input_tokens.append("" if input_lexeme is None else input_lexeme)
                     if output_required:
                         output_value = self._projection_row_value(row, "expected", name)
+                        if (
+                            output_value is _PROJECTION_MISSING
+                            and argument.name != name
+                            and argument.name in getattr(row, "expected", {})
+                        ):
+                            output_value = row.expected[argument.name]
+                        if (
+                            output_value is _PROJECTION_MISSING
+                            and argument.name != name
+                            and index < len(source_rows)
+                        ):
+                            # Generated aggregate array leaves may not have
+                            # per-element expected keys in TestRow.expected;
+                            # reuse the corresponding NEW XML element stream
+                            # for those untouched aggregate elements.
+                            output_value = self._projection_row_value(
+                                source_rows[index], "expected", name
+                            )
+                            if (
+                                output_value is _PROJECTION_MISSING
+                                and index < len(fallback_rows)
+                            ):
+                                output_value = self._projection_row_value(
+                                    fallback_rows[index], "expected", name
+                                )
                         if output_value is _PROJECTION_INVALID:
                             raise MergeBProjectionError(
                                 "UNRESOLVED_EXPECTED_OUTPUT",
@@ -3387,8 +3431,20 @@ class MergeBService:
                     "UNRESOLVED_EXPECTED_OUTPUT",
                     f"merged WORKING snapshot has no resolvable expected output for {argument.name!r}",
                 )
-            input_raw = self._projection_stream(tuple(input_groups), argument.dimensions) if input_present else None
-            output_raw = self._projection_stream(tuple(output_groups), argument.dimensions) if output_present else None
+            input_raw = (
+                self._projection_stream(
+                    tuple(input_groups), argument.dimensions, argument.range_encoding
+                )
+                if input_present
+                else None
+            )
+            output_raw = (
+                self._projection_stream(
+                    tuple(output_groups), argument.dimensions, argument.output_encoding
+                )
+                if output_present
+                else None
+            )
             projected.append(argument.with_values(range=input_raw, output=output_raw))
         return replace(snapshot, arguments=tuple(projected))
 
@@ -3904,7 +3960,23 @@ class MergeBService:
                 )
             )
             actual = tuple(sorted((called.signature for called in snapshot.called_functions), key=repr))
-            if actual != expected:
+            expected_by_name = {signature[0]: signature for signature in expected}
+            actual_by_name = {signature[0]: signature for signature in actual}
+            signatures_agree = (
+                len(expected_by_name) == len(expected)
+                and len(actual_by_name) == len(actual)
+                and expected_by_name.keys() == actual_by_name.keys()
+                and all(
+                    expected_by_name[name][1] == actual_by_name[name][1]
+                    and expected_by_name[name][3] == actual_by_name[name][3]
+                    and (
+                        expected_by_name[name][2] is None
+                        or expected_by_name[name][2] == actual_by_name[name][2]
+                    )
+                    for name in expected_by_name
+                )
+            )
+            if not signatures_agree:
                 raise MergeBProjectionError(
                     "XML_ARTIFACT_STATE_MISMATCH",
                     f"stub XML artifact {path!r} signatures disagree with state",
@@ -4656,6 +4728,23 @@ class MergeBService:
                         message="explicit NEW stub state disagrees with ANALYSIS_NEW signatures or ownership",
                     )
                 )
+            supplied_storage: dict[str, str] = {}
+            for supplied_state in supplied_new_stub_tuple:
+                if supplied_state.return_storage_name:
+                    for alias in (supplied_state.stub_key, supplied_state.function_name):
+                        if alias:
+                            supplied_storage.setdefault(alias, supplied_state.return_storage_name)
+            analysis_stub_tuple = tuple(
+                replace(
+                    state,
+                    return_storage_name=(
+                        state.return_storage_name
+                        or supplied_storage.get(state.stub_key)
+                        or supplied_storage.get(state.function_name)
+                    ),
+                )
+                for state in analysis_stub_tuple
+            )
             new_stub_tuple = analysis_stub_tuple
             effective_required_stubs: Iterable[str] | Mapping[str, object] | None = (
                 required_stubs if required_stubs is not None else analysis_required

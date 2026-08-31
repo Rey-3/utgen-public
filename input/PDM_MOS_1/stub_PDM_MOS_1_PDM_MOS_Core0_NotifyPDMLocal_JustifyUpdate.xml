@@ -1,0 +1,35 @@
+<?xml version='1.0' encoding='utf-8'?>
+<function_analysis function_name="PDM_MOS_Core0_NotifyPDMLocal_JustifyUpdate" file="" line="3667">
+  <called_functions count="5">
+    <function name="Rte_PDMMOS_1_DiagApp_Srvc2F_PDMMOSCtrlCore0ASILB_Event_GetMsg" file="" line="">
+      <return>
+        <type>DiagApp_MOSCtrlStat_t</type>
+        <name>tessy_Rte_PDMMOS_1_DiagApp_Srvc2F_PDMMOSCtrlCore0ASILB_Event_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_DiagApp_SIDBE_IndicatorControlCore0ASILB_Event_GetMsg" file="" line="">
+      <return>
+        <type>DiagApp_SrvBE_PDMLghtControl_Type</type>
+        <name>tessy_Rte_PDMMOS_1_DiagApp_SIDBE_IndicatorControlCore0ASILB_Event_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_PDMCANCtrl_1_CANCtrlReqCore0ASILB_10ms_GetMsg" file="" line="">
+      <return>
+        <type>PDM_CANCtrlStat_Type</type>
+        <name>tessy_Rte_PDMMOS_1_PDMCANCtrl_1_CANCtrlReqCore0ASILB_10ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_PDMLocalCtrl_1_LocalCtrlReqCore0ASILB_100ms_GetMsg" file="" line="">
+      <return>
+        <type>PDM_LocalCtrlStat_Type</type>
+        <name>tessy_Rte_PDMMOS_1_PDMLocalCtrl_1_LocalCtrlReqCore0ASILB_100ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_DiagApp_Srvc31_PDMLampCheckCore0ASILB_Event_GetMsg" file="" line="">
+      <return>
+        <type>PDM_LampCheckRoutine_Type</type>
+        <name>tessy_Rte_PDMMOS_1_DiagApp_Srvc31_PDMLampCheckCore0ASILB_Event_GetMsg</name>
+      </return>
+    </function>
+  </called_functions>
+</function_analysis>

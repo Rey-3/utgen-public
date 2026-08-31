@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<function_analysis function_name="PDM_LocalCtrl_Core1_Init" file="" line="149" utgen_version="1.0" utgen_updated_at="2026-08-31T13:21:28Z">
+    <called_functions count="2">
+        <function name="Rte_PDMLocalCtrl_2_NvmApp_PDMLocalCfgCore1ASILB_Event_GetMsg" file="" line="">
+            <return>
+                <type>NvmApp_PDMLocal_Type</type>
+                <name>tessy_Rte_PDMLocalCtrl_2_NvmApp_PDMLocalCfgCore1ASILB_Event_GetMsg</name>
+            </return>
+        </function>
+        <function name="Rte_PDMLocalCtrl_2_PDMMOS_2_LocalCtrlReqCore1ASILB_100ms_SendMsg" file="" line="">
+            <return>
+                <type>void</type>
+                <name>tessy_Rte_PDMLocalCtrl_2_PDMMOS_2_LocalCtrlReqCore1ASILB_100ms_SendMsg</name>
+            </return>
+            <arguments>
+                <argument type="PDM_LocalCtrlStat_Type" name="Arg0">
+                    <type>PDM_LocalCtrlStat_Type</type>
+                    <name>tessy_Rte_PDMLocalCtrl_2_PDMMOS_2_LocalCtrlReqCore1ASILB_100ms_SendMsg__Arg0</name>
+                </argument>
+            </arguments>
+        </function>
+    </called_functions>
+</function_analysis>

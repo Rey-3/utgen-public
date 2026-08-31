@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<function name="PDM_MOS_Core0_MOSOpenConfirmCheckCnt1" file="">
+    <argument name="i" len="8" format="unsigned" direction="in" pointer="false" range="0,0,0" testmethod="decision" />
+    <argument name="KL30Volt" len="16" format="unsigned" direction="in" pointer="false" range="32767,32766,32766" testmethod="decision" />
+    <argument name="PDM_Cfg_Core0[13].MOSType" len="3" format="PDM_Cfg_Type[13]" direction="in" pointer="false" range="HSD,HSD,HSD" testmethod="decision" />
+    <argument name="PDM_Cfg_Core0[13].MOSType2" len="1" format="PDM_Cfg_Type[13]" direction="in" pointer="false" range="HSDChip,HSDChip,HSDChip" testmethod="decision" />
+    <argument name="PDM_Cfg_Core0[13].VoltSrcType" len="1" format="PDM_Cfg_Type[13]" direction="in" pointer="false" range="PDM_SRC_KL30A,PDM_SRC_KL30A,PDM_SRC_KL30A" testmethod="decision" />
+    <argument name="PDM_Cfg_Core0[13].MOSDriverOpVoltBelow" len="17" format="PDM_Cfg_Type[13]" direction="in" pointer="false" range="32767,32767,32767" testmethod="decision" />
+    <argument name="PDM_Cfg_Core0[13].MOSDriverOpVoltNormal" len="17" format="PDM_Cfg_Type[13]" direction="in" pointer="false" range="0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_MOSOpenConfirmCnt1[13]" len="8" format="unsigned" direction="inout" pointer="false" range="0,0,50" testmethod="decision" output="0,1,0|0,0,0|0,0,0|0,0,0|0,0,0|0,0,0|0,0,0|0,0,0|0,0,0|0,0,0|0,0,0|0,0,0|0,0,0" />
+</function>

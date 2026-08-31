@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<function name="PDM_MOS_Core0_NotifyPDMLocal" file="">
+    <argument name="Fault" len="8" format="unsigned" direction="in" pointer="false" range="0,0,1,2" testmethod="decision" />
+    <argument name="IndId" len="8" format="unsigned" direction="in" pointer="false" range="6,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_LightIndUpdateLocal[6].RolCnt_ShortCircuit" len="9" format="PDM_LightIndFault_Type[6]" direction="in" pointer="false" range="0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_LightIndUpdateLocal[6].RolCnt_OpenCircuit" len="9" format="PDM_LightIndFault_Type[6]" direction="in" pointer="false" range="0,0,0,0" testmethod="decision" />
+</function>

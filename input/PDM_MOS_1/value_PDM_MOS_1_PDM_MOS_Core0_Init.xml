@@ -1,0 +1,268 @@
+<?xml version="1.0" encoding="utf-8"?>
+<function name="PDM_MOS_Core0_Init" file="">
+    <argument name="PDM_Core0_EEPROM_SyncFlag" len="8" format="unsigned" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckClose_UB_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckClose_VoltDiff_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckClose_Time" len="17" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckClose_Recovery_UB_Thresh1000x" len="17" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckClose_Recovery_VoltDiff_Thresh1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckClose_RecoveryTime" len="17" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckOpen_UB_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckOpen_LoadVoltage_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckOpen_Time" len="17" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckOpen_Recovery_UB_Thresh1000x" len="17" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckOpen_Recovery_VoltDiff_Thresh1000x" len="17" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckOpen_RecoveryTime" len="17" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_Load_Enable[13]" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_DriverFault_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckClose_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckOpen_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_LRTURN_HardwireFault_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_RRTURN_HardwireFault_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_LightInd_ShortCircuit_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_LightInd_OpenCircuit_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_LightInd_StuckClose_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_DVTest_LoadMOSSelfDiagEn" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_DVTest_LightIndSelfDiagEn" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_DVTest_LightIndOpenCircuitEn" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_InitDone" len="8" format="unsigned" direction="out" pointer="false" output="1,1" />
+    <argument name="PDM_Core0_SequentialCloseStat[3].Load_id" len="9" format="PDM_SequentialCloseStat_Type[3]" direction="out" pointer="false" output="0,0|0,0|0,0" />
+    <argument name="PDM_Core0_SequentialCloseStat[3].Load_id_Other1" len="9" format="PDM_SequentialCloseStat_Type[3]" direction="out" pointer="false" output="0,0|0,0|0,0" />
+    <argument name="PDM_Core0_SequentialCloseStat[3].Load_id_Other2" len="9" format="PDM_SequentialCloseStat_Type[3]" direction="out" pointer="false" output="0,0|0,0|0,0" />
+    <argument name="PDM_Core0_SequentialCloseStat[3].ChangeToCloseTimer" len="9" format="PDM_SequentialCloseStat_Type[3]" direction="out" pointer="false" output="0,0|0,0|0,0" />
+    <argument name="PDM_Core0_SequentialCloseStat[3].ChangeToCloseTimeFlg" len="9" format="PDM_SequentialCloseStat_Type[3]" direction="out" pointer="false" output="0,0|0,0|0,0" />
+    <argument name="PDM_SequentialCloseConfig[3].Load_id" len="9" format="PDM_SequentialCloseConfig_Type[3]" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="PDM_SequentialCloseConfig[3].Load_id_Other1" len="9" format="PDM_SequentialCloseConfig_Type[3]" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="PDM_SequentialCloseConfig[3].Load_id_Other2" len="9" format="PDM_SequentialCloseConfig_Type[3]" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="PDM_Core0_IndBlinkStat[6].Stat" len="9" format="PDM_SlfDiagLightIndBlinkStat_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_IndBlinkStat[6].BlinkCnt" len="17" format="PDM_SlfDiagLightIndBlinkStat_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_IndBlinkStat[6].CtrlStat" len="9" format="PDM_SlfDiagLightIndBlinkStat_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_PrevPDMDtcClrEvent_PZCUFireWarningCnt" len="8" format="unsigned" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_PrevPDMDtcClrEvent_StuckCloseCnt[13]" len="8" format="unsigned" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_PrevPDMDtcClrEvent_StuckOpenCnt[13]" len="8" format="unsigned" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_PrevPDMDtcClrEvent_DriverFaultCnt[13]" len="8" format="unsigned" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_StuckCloseStat[13].Stat" len="9" format="PDM_SlfDiagStuckcloseStat_Type[13]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_StuckCloseStat[13].FaultCnt" len="17" format="PDM_SlfDiagStuckcloseStat_Type[13]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_StuckCloseStat[13].RecoveryCnt" len="17" format="PDM_SlfDiagStuckcloseStat_Type[13]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_StuckCloseStat_Stat_Prev[13]" len="8" format="unsigned" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_StuckOpenStat[13].Stat" len="9" format="PDM_SlfDiagStuckopenStat_Type[13]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_StuckOpenStat[13].FaultCnt" len="17" format="PDM_SlfDiagStuckopenStat_Type[13]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_StuckOpenStat[13].RecoveryCnt" len="17" format="PDM_SlfDiagStuckopenStat_Type[13]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_StuckOpenStat_Stat_Prev[13]" len="8" format="unsigned" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_DriverFaultStat[13].Stat" len="9" format="PDM_SlfDiagDriverFaultStat_Type[13]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_DriverFaultStat[13].FaultCnt" len="17" format="PDM_SlfDiagDriverFaultStat_Type[13]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_DriverFaultStat[13].RecoveryCnt" len="17" format="PDM_SlfDiagDriverFaultStat_Type[13]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_DriverFaultStat[13].RecoveryPrecondCnt" len="17" format="PDM_SlfDiagDriverFaultStat_Type[13]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_DriverFaultStat[13].RecoveryPrecondConfirmed" len="9" format="PDM_SlfDiagDriverFaultStat_Type[13]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_LoadStat.LoadCtrl[13]" len="9" format="PDM_LoadMosType" direction="in" pointer="false" range="0,1" testmethod="decision" />
+    <argument name="PDM_Core0_LoadStat.LoadCtrlSource[13]" len="9" format="PDM_LoadMosType" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="PDM_Core0_MosStatInfo.LoadMosStateResult[13]" len="9" format="PDM_MOSStat_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,1|0,1|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_MosStatInfo_Prev.LoadMosStateResult[13]" len="9" format="PDM_MOSStat_Type" direction="out" pointer="false" output="0,1|0,1|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_MOSCloseConfirmCnt[13]" len="8" format="unsigned" direction="out" pointer="false" output="0,50|0,50|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_MOSOpenConfirmCnt1[13]" len="8" format="unsigned" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_MOSOpenConfirmCnt2[13]" len="8" format="unsigned" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_PrevPDMDtcClrEvent_IndOpenCircuitCnt[6]" len="8" format="unsigned" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_PrevPDMDtcClrEvent_IndShortCircuitCnt[6]" len="8" format="unsigned" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_PrevPDMDtcClrEvent_IndStuckCloseCnt[6]" len="8" format="unsigned" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_OpenCircuitStat[6].Stat" len="9" format="PDM_SlfDiagLightIndStat_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_OpenCircuitStat[6].FaultTriggerCnt" len="9" format="PDM_SlfDiagLightIndStat_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_OpenCircuitStat[6].FaultCnt" len="17" format="PDM_SlfDiagLightIndStat_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_OpenCircuitStat[6].RecoveryCnt" len="17" format="PDM_SlfDiagLightIndStat_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_OpenCircuitStat[6].NextActiveCycle" len="9" format="PDM_SlfDiagLightIndStat_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_ShortCircuitStat[6].Stat" len="9" format="PDM_SlfDiagLightIndStat_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_ShortCircuitStat[6].FaultTriggerCnt" len="9" format="PDM_SlfDiagLightIndStat_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_ShortCircuitStat[6].FaultCnt" len="17" format="PDM_SlfDiagLightIndStat_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_ShortCircuitStat[6].RecoveryCnt" len="17" format="PDM_SlfDiagLightIndStat_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_ShortCircuitStat[6].NextActiveCycle" len="9" format="PDM_SlfDiagLightIndStat_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_IndStuckCloseStat[6].Stat" len="9" format="PDM_SlfDiagLightIndStat_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_IndStuckCloseStat[6].FaultTriggerCnt" len="9" format="PDM_SlfDiagLightIndStat_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_IndStuckCloseStat[6].FaultCnt" len="17" format="PDM_SlfDiagLightIndStat_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_IndStuckCloseStat[6].RecoveryCnt" len="17" format="PDM_SlfDiagLightIndStat_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_IndStuckCloseStat[6].NextActiveCycle" len="9" format="PDM_SlfDiagLightIndStat_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_LightIndUpdateLocal[6].RolCnt_ShortCircuit" len="9" format="PDM_LightIndFault_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_LightIndUpdateLocal[6].RolCnt_OpenCircuit" len="9" format="PDM_LightIndFault_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_IndLocalCtrlOpStat.LightIndState[6]" len="9" format="PDM_IndOperationStat_Type" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_IndLocalCtrlOpStatPrev.LightIndState[6]" len="9" format="PDM_IndOperationStat_Type" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_IndIdleStat[6].Stat" len="9" format="PDM_SlfDiagLightIndIdleStat_Type[6]" direction="out" pointer="false" output="1,1|1,1|1,1|1,1|1,1|1,1" />
+    <argument name="PDM_Core0_IndIdleStat[6].IdleCnt" len="17" format="PDM_SlfDiagLightIndIdleStat_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_IndFaultConfig[6].Load_id" len="9" format="PDM_LightIndFaultConfig_Type[6]" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="PDM_IndFaultConfig[6].IdleTime" len="17" format="PDM_LightIndFaultConfig_Type[6]" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="PDM_Core0_ShortCircuitExtStat[6].RecoveryWhileStuckCloseCnt" len="17" format="PDM_SlfDiagLightIndShortCirExtStat_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_IndStuckCloseExtStat[6].FaultSlfDiagTimer" len="17" format="PDM_SlfDiagLightIndStuckClsExtStat_Type[6]" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_LightIndHardwireFaultStat[2].Stat" len="9" format="PDM_SlfDiagIndHardwireStat_Type[2]" direction="out" pointer="false" output="0,0|0,0" />
+    <argument name="PDM_Core0_LightIndHardwireFaultStat[2].FaultTriggerCnt" len="9" format="PDM_SlfDiagIndHardwireStat_Type[2]" direction="out" pointer="false" output="0,0|0,0" />
+    <argument name="PDM_Core0_LightIndHardwireFaultStat[2].FaultCnt" len="17" format="PDM_SlfDiagIndHardwireStat_Type[2]" direction="out" pointer="false" output="0,0|0,0" />
+    <argument name="PDM_Core0_LightIndHardwireFaultStat[2].RecoveryCnt" len="17" format="PDM_SlfDiagIndHardwireStat_Type[2]" direction="out" pointer="false" output="0,0|0,0" />
+    <argument name="PDM_Core0_LightIndHardwireFaultStat[2].Prev_CtrlStat" len="9" format="PDM_SlfDiagIndHardwireStat_Type[2]" direction="out" pointer="false" output="0,0|0,0" />
+    <argument name="PDM_Core0_LightIndHardwireFaultStat[2].DelayCnt" len="9" format="PDM_SlfDiagIndHardwireStat_Type[2]" direction="out" pointer="false" output="0,0|0,0" />
+    <argument name="PDM_Core0_LightIndHardwireFaultStat[2].CtrlCycleRenew" len="9" format="PDM_SlfDiagIndHardwireStat_Type[2]" direction="out" pointer="false" output="0,0|0,0" />
+    <argument name="PDM_Core0_SysPwrMode" len="1" format="PDCModeManager_SysPwrMode_Type" direction="out" pointer="false" output="SysPowerMode_Off,SysPowerMode_Off" />
+    <argument name="PDM_Core0_PrevSysPwrMode" len="1" format="PDCModeManager_SysPwrMode_Type" direction="out" pointer="false" output="SysPowerMode_Off,SysPowerMode_Off" />
+    <argument name="PDM_Core0_PDCMode" len="3" format="PDCModeManager_Mode_Type" direction="out" pointer="false" output="Mode_Silent,Mode_Silent" />
+    <argument name="PDM_Core0_PrevPDCMode" len="3" format="PDCModeManager_Mode_Type" direction="out" pointer="false" output="Mode_Silent,Mode_Silent" />
+    <argument name="PDM_Core0_DiagResetMosOpenCnt" len="8" format="unsigned" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_DiagResetMosOpenCnt_Prev" len="8" format="unsigned" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_ResetEventFlag" len="8" format="unsigned" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_HSDTstartResetCheckStage" len="2" format="PDM_HSD_TstartResetCheck_Stage_t" direction="out" pointer="false" output="PDM_HSD_TstartResetCheck_Step1,PDM_HSD_TstartResetCheck_Step1" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_EEPROMInfo1Core0ASILB_Event_GetMsg.EEPROM_InputSampling_SyncFlag" len="9" format="NvmApp_EEPROM_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_EEPROMInfo1Core0ASILB_Event_GetMsg.EEPROM_PDM_SyncFlag" len="9" format="NvmApp_EEPROM_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_EEPROMInfo1Core0ASILB_Event_GetMsg.EEPROM_PNG_SyncFlag" len="9" format="NvmApp_EEPROM_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckClose_UB_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckClose_VoltDiff_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckClose_Time" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckClose_Recovery_UB_Thresh1000x" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckClose_Recovery_VoltDiff_Thresh1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckClose_RecoveryTime" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckOpen_UB_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckOpen_LoadVoltage_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckOpen_Time" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckOpen_Recovery_UB_Thresh1000x" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckOpen_Recovery_VoltDiff_Thresh1000x" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckOpen_RecoveryTime" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_Load_Enable[13]" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_DriverFault_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckClose_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckOpen_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_LRTURN_HardwireFault_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_RRTURN_HardwireFault_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_LightInd_ShortCircuit_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_LightInd_OpenCircuit_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_LightInd_StuckClose_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_DVTest_LoadMOSSelfDiagEn" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_DVTest_LightIndSelfDiagEn" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_DVTest_LightIndOpenCircuitEn" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="PDM_Core0_NvmInfo_3.PDM_MosOpenCnt[13]" len="9" format="NvmApp_PDM3Info_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_NvmInfo_3.PDM_CANCtrlReq[13]" len="9" format="NvmApp_PDM3Info_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_NvmInfo_3.PDM_AppReqReset" len="9" format="NvmApp_PDM3Info_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_NvmInfo_3.PDM_HSDTstart_MCUR" len="33" format="NvmApp_PDM3Info_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_NvmInfo_3.PDM_HSDTstart_MCUR_PUMP" len="33" format="NvmApp_PDM3Info_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_NvmInfo_3.PDM_HSDTstart_RWS" len="33" format="NvmApp_PDM3Info_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_NvmInfo_3.PDM_HSDCtrlOut_MCUR" len="9" format="NvmApp_PDM3Info_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_NvmInfo_3.PDM_HSDCtrlOut_MCUR_PUMP" len="9" format="NvmApp_PDM3Info_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_NvmInfo_3.PDM_HSDCtrlOut_RWS" len="9" format="NvmApp_PDM3Info_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_NvmInfo_3.SyncFlag" len="9" format="NvmApp_PDM3Info_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_MOS_Core0_SyncNvm::AppReqReset_Record#1" len="8" format="unsigned" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDM3NvmInfoCore0ASILB_Event_GetMsg.PDM_MosOpenCnt[13]" len="9" format="NvmApp_PDM3Info_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDM3NvmInfoCore0ASILB_Event_GetMsg.PDM_CANCtrlReq[13]" len="9" format="NvmApp_PDM3Info_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDM3NvmInfoCore0ASILB_Event_GetMsg.PDM_AppReqReset" len="9" format="NvmApp_PDM3Info_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDM3NvmInfoCore0ASILB_Event_GetMsg.PDM_HSDTstart_MCUR" len="33" format="NvmApp_PDM3Info_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDM3NvmInfoCore0ASILB_Event_GetMsg.PDM_HSDTstart_MCUR_PUMP" len="33" format="NvmApp_PDM3Info_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDM3NvmInfoCore0ASILB_Event_GetMsg.PDM_HSDTstart_RWS" len="33" format="NvmApp_PDM3Info_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDM3NvmInfoCore0ASILB_Event_GetMsg.PDM_HSDCtrlOut_MCUR" len="9" format="NvmApp_PDM3Info_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDM3NvmInfoCore0ASILB_Event_GetMsg.PDM_HSDCtrlOut_MCUR_PUMP" len="9" format="NvmApp_PDM3Info_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDM3NvmInfoCore0ASILB_Event_GetMsg.PDM_HSDCtrlOut_RWS" len="9" format="NvmApp_PDM3Info_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDM3NvmInfoCore0ASILB_Event_GetMsg.SyncFlag" len="9" format="NvmApp_PDM3Info_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_DiagResetEventCore0ASILB_Event_GetMsg" len="8" format="unsigned" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_IoHwSig_PwrRstStatCore0ASILB_Event_GetMsg" len="8" format="unsigned" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_ResetCodeInfoCore0ASILB_Event_GetMsg.ResetVerifyCode" len="15" format="Diagm_ResetVerifyCode_t" direction="in" pointer="false" range="Reserved,Reserved" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_ResetCodeInfoCore0ASILB_Event_GetMsg.CAN_Format" len="9" format="Diagm_ResetVerifyCode_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_ResetCodeInfoCore0ASILB_Event_GetMsg.reserved" len="9" format="Diagm_ResetVerifyCode_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_IoHwSig_MCUResetReasonInfoCore0ASILB_Event_GetMsg" len="32" format="unsigned" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_IoHwSig_PMICResetReasonInfoCore0ASILB_1ms_GetMsg.Ready" len="9" format="IoHwSig_PMICFaultCheck_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_IoHwSig_PMICResetReasonInfoCore0ASILB_1ms_GetMsg.FS0B_Status" len="9" format="IoHwSig_PMICFaultCheck_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_IoHwSig_PMICResetReasonInfoCore0ASILB_1ms_GetMsg.FaultReset" len="9" format="IoHwSig_PMICFaultCheck_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_IoHwSig_PMICResetReasonInfoCore0ASILB_1ms_GetMsg.LimpHomeEnabled" len="9" format="IoHwSig_PMICFaultCheck_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc31_PDMMOSCtrlCore0ASILB_Event_GetMsg.LZCU_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc31_PDMMOSCtrlCore0ASILB_Event_GetMsg.RZCU_B2_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc31_PDMMOSCtrlCore0ASILB_Event_GetMsg.MCUR_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc31_PDMMOSCtrlCore0ASILB_Event_GetMsg.OPR_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc31_PDMMOSCtrlCore0ASILB_Event_GetMsg.ALTurnLght_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc31_PDMMOSCtrlCore0ASILB_Event_GetMsg.BLTurnLght_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc31_PDMMOSCtrlCore0ASILB_Event_GetMsg.ARTurnLght_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc31_PDMMOSCtrlCore0ASILB_Event_GetMsg.BRTurnLght_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc31_PDMMOSCtrlCore0ASILB_Event_GetMsg.HighBrkLght_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc31_PDMMOSCtrlCore0ASILB_Event_GetMsg.BrkLght_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc31_PDMMOSCtrlCore0ASILB_Event_GetMsg.RZCU_B1_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc31_PDMMOSCtrlCore0ASILB_Event_GetMsg.RWS_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc31_PDMMOSCtrlCore0ASILB_Event_GetMsg.BZCU_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc31_PDMMOSCtrlCore0ASILB_Event_GetMsg.MosCtrlPNG" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc31_PDMMOSCtrlCore0ASILB_Event_GetMsg.MosCtrlChgOrDisChg" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc31_PDMMOSCtrlCore0ASILB_Event_GetMsg.MosCtrlHeat" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc2F_PDMMOSCtrlCore0ASILB_Event_GetMsg.LZCU_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc2F_PDMMOSCtrlCore0ASILB_Event_GetMsg.RZCU_B2_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc2F_PDMMOSCtrlCore0ASILB_Event_GetMsg.MCUR_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc2F_PDMMOSCtrlCore0ASILB_Event_GetMsg.OPR_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc2F_PDMMOSCtrlCore0ASILB_Event_GetMsg.ALTurnLght_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc2F_PDMMOSCtrlCore0ASILB_Event_GetMsg.BLTurnLght_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc2F_PDMMOSCtrlCore0ASILB_Event_GetMsg.ARTurnLght_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc2F_PDMMOSCtrlCore0ASILB_Event_GetMsg.BRTurnLght_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc2F_PDMMOSCtrlCore0ASILB_Event_GetMsg.HighBrkLght_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc2F_PDMMOSCtrlCore0ASILB_Event_GetMsg.BrkLght_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc2F_PDMMOSCtrlCore0ASILB_Event_GetMsg.RZCU_B1_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc2F_PDMMOSCtrlCore0ASILB_Event_GetMsg.RWS_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc2F_PDMMOSCtrlCore0ASILB_Event_GetMsg.BZCU_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc2F_PDMMOSCtrlCore0ASILB_Event_GetMsg.MosCtrlPNG" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc2F_PDMMOSCtrlCore0ASILB_Event_GetMsg.MosCtrlChgOrDisChg" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc2F_PDMMOSCtrlCore0ASILB_Event_GetMsg.MosCtrlHeat" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_SIDBE_PDMMosControlCore0ASILB_Event_GetMsg.LZCU_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_SIDBE_PDMMosControlCore0ASILB_Event_GetMsg.RZCU_B2_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_SIDBE_PDMMosControlCore0ASILB_Event_GetMsg.MCUR_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_SIDBE_PDMMosControlCore0ASILB_Event_GetMsg.OPR_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_SIDBE_PDMMosControlCore0ASILB_Event_GetMsg.ALTurnLght_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_SIDBE_PDMMosControlCore0ASILB_Event_GetMsg.BLTurnLght_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_SIDBE_PDMMosControlCore0ASILB_Event_GetMsg.ARTurnLght_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_SIDBE_PDMMosControlCore0ASILB_Event_GetMsg.BRTurnLght_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_SIDBE_PDMMosControlCore0ASILB_Event_GetMsg.HighBrkLght_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_SIDBE_PDMMosControlCore0ASILB_Event_GetMsg.BrkLght_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_SIDBE_PDMMosControlCore0ASILB_Event_GetMsg.RZCU_B1_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_SIDBE_PDMMosControlCore0ASILB_Event_GetMsg.RWS_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_SIDBE_PDMMosControlCore0ASILB_Event_GetMsg.BZCU_MosCtrl" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_SIDBE_PDMMosControlCore0ASILB_Event_GetMsg.MosCtrlPNG" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_SIDBE_PDMMosControlCore0ASILB_Event_GetMsg.MosCtrlChgOrDisChg" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_SIDBE_PDMMosControlCore0ASILB_Event_GetMsg.MosCtrlHeat" len="9" format="DiagApp_MOSCtrlStat_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_SIDBE_IndicatorControlCore0ASILB_Event_GetMsg.L_A_TurnIndicator" len="9" format="DiagApp_SrvBE_PDMLghtControl_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_SIDBE_IndicatorControlCore0ASILB_Event_GetMsg.L_B_TurnIndicator" len="9" format="DiagApp_SrvBE_PDMLghtControl_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_SIDBE_IndicatorControlCore0ASILB_Event_GetMsg.R_A_TurnIndicator" len="9" format="DiagApp_SrvBE_PDMLghtControl_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_SIDBE_IndicatorControlCore0ASILB_Event_GetMsg.R_B_TurnIndicator" len="9" format="DiagApp_SrvBE_PDMLghtControl_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_SIDBE_IndicatorControlCore0ASILB_Event_GetMsg.BrkIndicator" len="9" format="DiagApp_SrvBE_PDMLghtControl_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_SIDBE_IndicatorControlCore0ASILB_Event_GetMsg.HBrkIndicator" len="9" format="DiagApp_SrvBE_PDMLghtControl_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_PDMProtectionCtrl_1_ProtectionCtrlReqCore0ASILB_1ms_GetMsg.ProtectionMosCtrl[13]" len="9" format="PDM_ProtectionCtrlStat_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_PDMCANCtrl_1_CANCtrlReqCore0ASILB_10ms_GetMsg.CANMosCtrl[13]" len="9" format="PDM_CANCtrlStat_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_PDMLocalCtrl_1_LocalCtrlReqCore0ASILB_100ms_GetMsg.LocalMosCtrl[13]" len="9" format="PDM_LocalCtrlStat_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_PDCModeManager_LogisticLZCUMosReqCore0ASILB_1ms_GetMsg" len="8" format="unsigned" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_PDCModeManager_LogisticPDMMosReqCore0ASILB_1ms_GetMsg" len="8" format="unsigned" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_PDMLocalCtrl_1_IndicatorStateCore0ASILB_1ms_GetMsg.LightIndState[6]" len="9" format="PDM_IndOperationStat_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="LogisticCtrlReq_LZCU" len="8" format="unsigned" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="LogisticCtrlReq_PDMMOS" len="8" format="unsigned" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="LightInd_BlinkCtrlReq_Out" len="8" format="unsigned" direction="inout" pointer="true" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="CANCtrlReq_Out.CANMosCtrl[13]" len="9" format="PDM_CANCtrlStat_Type" direction="inout" pointer="true" range="0,0" testmethod="decision" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="LocalCtrlReq_Out.LocalMosCtrl[13]" len="9" format="PDM_LocalCtrlStat_Type" direction="inout" pointer="true" range="0,0" testmethod="decision" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc31_PDMLampCheckCore0ASILB_Event_GetMsg.BrkHighBrkALTurnARTurn_LghtCheckEnable" len="9" format="PDM_LampCheckRoutine_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc31_PDMLampCheckCore0ASILB_Event_GetMsg.BLTurnBRTurn_LghtCheckEnable" len="9" format="PDM_LampCheckRoutine_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="LoadIndex" len="8" format="unsigned" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="CtrlReq.CANMosCtrl[13]" len="9" format="PDM_CANCtrlStat_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="PDM_Cfg_Core0[13].MOSType" len="3" format="PDM_Cfg_Type[13]" direction="in" pointer="false" range="HSD,HSD" testmethod="decision" />
+    <argument name="PDM_Cfg_Core0[13].MOSType2" len="1" format="PDM_Cfg_Type[13]" direction="in" pointer="false" range="HSDChip,HSDChip" testmethod="decision" />
+    <argument name="PDM_Cfg_Core0[13].VoltSrcType" len="1" format="PDM_Cfg_Type[13]" direction="in" pointer="false" range="PDM_SRC_KL30A,PDM_SRC_KL30A" testmethod="decision" />
+    <argument name="PDM_Cfg_Core0[13].MOSDriverOpVoltBelow" len="17" format="PDM_Cfg_Type[13]" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="PDM_Cfg_Core0[13].MOSDriverOpVoltNormal" len="17" format="PDM_Cfg_Type[13]" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_PDMLocalCtrl_1_HSDReadySleepCore0ASILB_100ms_GetMsg" len="8" format="unsigned" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="PDM_MOS_Core0_BZCUDelayClose::PNGHwOvCurDisableReq#1" len="8" format="unsigned" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="PDM_MOS_Core0_BZCUDelayClose::BZCUPreCloseTimer#1" len="8" format="unsigned" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="PDM_MOS_Core0_BZCUDelayClose::BZCUCloseTimer#1" len="8" format="unsigned" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="PDM_Core0_TurnIndicator_FaultSts.ALStOpDiagRsltCnt" len="9" format="PDM_TurnIndicator_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_TurnIndicator_FaultSts.ALStClsDiagRsltCnt" len="9" format="PDM_TurnIndicator_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_TurnIndicator_FaultSts.ALStOpFaultCnt" len="9" format="PDM_TurnIndicator_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_TurnIndicator_FaultSts.ALStClsFaultCnt" len="9" format="PDM_TurnIndicator_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_TurnIndicator_FaultSts.ARStOpDiagRsltCnt" len="9" format="PDM_TurnIndicator_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_TurnIndicator_FaultSts.ARStClsDiagRsltCnt" len="9" format="PDM_TurnIndicator_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_TurnIndicator_FaultSts.ARStOpFaultCnt" len="9" format="PDM_TurnIndicator_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_TurnIndicator_FaultSts.ARStClsFaultCnt" len="9" format="PDM_TurnIndicator_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_TurnIndicator_FaultSts.BLStOpDiagRsltCnt" len="9" format="PDM_TurnIndicator_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_TurnIndicator_FaultSts.BLStClsDiagRsltCnt" len="9" format="PDM_TurnIndicator_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_TurnIndicator_FaultSts.BLStOpFaultCnt" len="9" format="PDM_TurnIndicator_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_TurnIndicator_FaultSts.BLStClsFaultCnt" len="9" format="PDM_TurnIndicator_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_TurnIndicator_FaultSts.BRStOpDiagRsltCnt" len="9" format="PDM_TurnIndicator_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_TurnIndicator_FaultSts.BRStClsDiagRsltCnt" len="9" format="PDM_TurnIndicator_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_TurnIndicator_FaultSts.BRStOpFaultCnt" len="9" format="PDM_TurnIndicator_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_TurnIndicator_FaultSts.BRStClsFaultCnt" len="9" format="PDM_TurnIndicator_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_BrkLght_FaultSts.BrkLghtStkOpDiagRsltCnt" len="9" format="PDM_BrkLght_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_BrkLght_FaultSts.BrkLghtStkClsDiagRsltCnt" len="9" format="PDM_BrkLght_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_BrkLght_FaultSts.BrkLghtStOpFaultCnt" len="9" format="PDM_BrkLght_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_BrkLght_FaultSts.BrkLghtStClsFaultCnt" len="9" format="PDM_BrkLght_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_BrkLght_FaultSts.HighBrkLghtStkOpDiagRsltCnt" len="9" format="PDM_BrkLght_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_BrkLght_FaultSts.HighBrkLghtStkClsDiagRsltCnt" len="9" format="PDM_BrkLght_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_BrkLght_FaultSts.HighBrkLghtStOpFaultCnt" len="9" format="PDM_BrkLght_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_BrkLght_FaultSts.HighBrkLghtStClsFaultCnt" len="9" format="PDM_BrkLght_FaultSts_Type" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0" />
+    <argument name="PDM_Core0_LoadCtrlSourceDebug[13]" len="8" format="unsigned" direction="in" pointer="false" range="0,0" testmethod="decision" />
+</function>

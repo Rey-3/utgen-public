@@ -1,0 +1,283 @@
+{
+  "schema_version": 1,
+  "purpose": "PR01 golden fixture registry; paths are relative to input/.",
+  "fixtures": {
+    "pointer_value": {
+      "path": "PDM_LocalCtrl_1/value_PDM_LocalCtrl_1_PDM_Core0_Indicator_Handler.xml",
+      "sha256": "0B4D1FC7CEA73C6317D4D136EBE217D2C39B44FA7AA03093EDE5E0A641224DBD",
+      "size_bytes": 2180,
+      "xml_root": "function",
+      "payload": {
+        "arguments": 10,
+        "directions": {"in": 5, "out": 0, "inout": 5},
+        "pointer_arguments": 5,
+        "testcase_positions": 12,
+        "array_arguments": 0
+      }
+    },
+    "array_value": {
+      "path": "PDM_MOS_1/value_PDM_MOS_1_PDM_MOS_Core0_DriverFaultSlfDiag.xml",
+      "sha256": "A6C23A26678693455CD0A618AA55F69D72F127A69B007D08C062FDB4D05FC3AB",
+      "size_bytes": 11367,
+      "xml_root": "function",
+      "payload": {
+        "arguments": 43,
+        "directions": {"in": 38, "out": 0, "inout": 5},
+        "array_arguments": 15,
+        "testcase_positions": 15,
+        "pipe_output_arguments": 5,
+        "output_element_streams": 13
+      }
+    },
+    "syncnvm_value_baseline": {
+      "path": "PDM_MOS_1/value_PDM_MOS_1_PDM_MOS_Core0_SyncNvm.xml",
+      "sha256": "511D19B0A1C83B18C76945BC5C413F5394DC2ADE6F250870A78B6428BBAA294F",
+      "size_bytes": 8434,
+      "xml_root": "function",
+      "payload": {
+        "function_name": "PDM_MOS_Core0_SyncNvm",
+        "arguments": 33,
+        "directions": {"in": 22, "out": 0, "inout": 11},
+        "array_arguments": 4,
+        "testcase_positions": 10,
+        "pipe_output_arguments": 2,
+        "output_element_streams": 13
+      }
+    },
+    "syncnvm_stub_baseline": {
+      "path": "PDM_MOS_1/stub_PDM_MOS_1_PDM_MOS_Core0_SyncNvm.xml",
+      "sha256": "D05640B6F764022883C16A72594D1E9201685C3E1F1BAADA88B3191DC04C106F",
+      "size_bytes": 2831,
+      "xml_root": "function_analysis",
+      "payload": {
+        "function_name": "PDM_MOS_Core0_SyncNvm",
+        "called_functions": 8,
+        "non_void_returns": 6,
+        "void_returns": 2,
+        "captured_argument_functions": 2,
+        "captured_arguments": 2
+      }
+    },
+    "stub_analysis": {
+      "path": "PDM_MOS_1/stub_PDM_MOS_1_PDM_MOS_Core0_UpdateFireWarning_Handler.xml",
+      "sha256": "8D312ECE08580433D76A1B7F711E91019A8FAA274B981DF282A14E93B38BE1DB",
+      "size_bytes": 4651,
+      "xml_root": "function_analysis",
+      "payload": {
+        "called_functions": 14,
+        "non_void_returns": 12,
+        "void_returns": 2,
+        "captured_argument_functions": 2,
+        "captured_arguments": 2
+      }
+    },
+    "tool_generated_workbook_negative": {
+      "fixture_kind": "tool_generated_values_with_general_identity_mismatch",
+      "path": "PDM_MOS_1/PDM_MOS_Core0_SyncNvm_tool_generated_negative_general_mismatch.xlsx",
+      "sha256": "D011F932ECDCB796E73EAA61DE0E2F1676AAE96B48C3C7902F3A1F07A63E1BC2",
+      "size_bytes": 18701,
+      "lineage": {
+        "intended_module": "PDM_MOS_1.c",
+        "intended_testobject": "PDM_MOS_Core0_SyncNvm",
+        "value_baseline_fixture": "syncnvm_value_baseline",
+        "stub_baseline_fixture": "syncnvm_stub_baseline",
+        "general_identity_match": false,
+        "complete_import_lineage": "blocked_by_general_identity_mismatch",
+        "invalidity_scope": "General identity only; Properties/Values/Stubs remain expected tool baseline payload",
+        "testcase_equivalence": "not_asserted"
+      },
+      "sheet_order": [
+        "General",
+        "Properties",
+        "User Code",
+        "Stubs",
+        "Call Trace",
+        "Values",
+        "Fault Injections"
+      ],
+      "dimensions": {
+        "General": "A1:D15",
+        "Properties": "A1:H19",
+        "User Code": "A1:E8",
+        "Stubs": "A1:D67",
+        "Call Trace": "A1:D4",
+        "Values": "A1:DM17",
+        "Fault Injections": "A1:F4"
+      },
+      "general_identity_cells": {
+        "B9": "tessy_ut_adc_sampling_convertion",
+        "B10": "IoHw_An.c",
+        "B11": "IoHw_ADCIn_AFECurrentSampling10ms",
+        "B13": "2025-12-03",
+        "B15": "5.1.8"
+      },
+      "properties_mapping": {
+        "header_row": 4,
+        "data_rows": [5, 14],
+        "header": [
+          "Test Case",
+          "Test Step",
+          "Repeat Count",
+          "Name",
+          "Description",
+          "Specification",
+          "Comment",
+          "Is Fault Injection Test Case"
+        ],
+        "case_count": 10,
+        "test_step_values": ["0"],
+        "name_values": [""]
+      },
+      "values_mapping": {
+        "data_rows": [3, 12],
+        "case_count": 10,
+        "active_column_range": "B:DM",
+        "active_column_count": 116,
+        "input_column_range": "B:CD",
+        "input_column_count": 81,
+        "output_column_range": "CE:DM",
+        "output_column_count": 35,
+        "formula_count": 0
+      },
+      "stubs_mapping": {
+        "data_rows": [5, 67],
+        "stub_count": 63,
+        "unique_stub_count": 63,
+        "test_case_values": ["0"],
+        "test_step_values": ["0"],
+        "nonempty_body_count": 40,
+        "empty_body_count": 23,
+        "baseline_stub_name_relationship": "all_8_baseline_names_present"
+      }
+    },
+    "analysis_db": {
+      "path": "PDM_LocalCtrl_1/db_PDM_LocalCtrl_1.xml",
+      "sha256": "B78935958CE7422E02DA2A6FBC66F6E1A22C6DD12D2813097C446E31E487AC94",
+      "size_bytes": 3246818,
+      "line_count": 41645,
+      "xml_root": "SourceAnalysis",
+      "payload": {
+        "include_dirs": 13,
+        "headers": 39,
+        "macros": 1506,
+        "enums": 32,
+        "structs": 40,
+        "variables": 58,
+        "functions": 18,
+        "parameters": 45,
+        "leaves": 320,
+        "decisions": 68,
+        "stubs": 37,
+        "calls": 920,
+        "dataflow_models": 18,
+        "expression_base_nodes": 461
+      },
+      "root_attributes": {
+        "file_suffix": "PDM_LocalCtrl_1.c",
+        "sha256": "04a968e3fadddbaa0ff005bf16bdab047754601d1f6f4c84f58988dd9ae8bf8e",
+        "tool": "utgen 0.1",
+        "iteration_metadata_absent": ["analysis_id", "db_schema_version", "generated_at"]
+      }
+    },
+    "tessy_workbook": {
+      "fixture_kind": "user_edited_complete_export",
+      "path": "PDM_MOS_1/PDM_MOS_Core0_SyncNvm.xlsx",
+      "sha256": "8BB8F4888D9D794ADDDB009D8D2792F5143017C47A022558771651A52F0648BB",
+      "size_bytes": 29431,
+      "lineage": {
+        "module": "PDM_MOS_1.c",
+        "testobject": "PDM_MOS_Core0_SyncNvm",
+        "value_baseline_fixture": "syncnvm_value_baseline",
+        "stub_baseline_fixture": "syncnvm_stub_baseline",
+        "complete_export": true,
+        "testcase_equivalence": "not_asserted",
+        "relationship": "user_edited_after_tool_generation"
+      },
+      "sheet_order": [
+        "General",
+        "Properties",
+        "User Code",
+        "Stubs",
+        "Call Trace",
+        "Values",
+        "Fault Injections"
+      ],
+      "dimensions": {
+        "General": "A1:D15",
+        "Properties": "A1:H22",
+        "User Code": "A1:E8",
+        "Stubs": "A1:D12",
+        "Call Trace": "A1:D110",
+        "Values": "A1:BN20",
+        "Fault Injections": "A1:F4"
+      },
+      "general_identity_cells": {
+        "B9": "tessy_ut_pdm",
+        "B10": "PDM_MOS_1.c",
+        "B11": "PDM_MOS_Core0_SyncNvm",
+        "B13": "2026-07-30",
+        "B15": "5.1.14"
+      },
+      "properties_mapping": {
+        "header_row": 4,
+        "data_rows": [5, 22],
+        "header": [
+          "Test Case",
+          "Test Step",
+          "Repeat Count",
+          "Name",
+          "Description",
+          "Specification",
+          "Comment",
+          "Is Fault Injection Test Case"
+        ],
+        "case_count": 18,
+        "test_step_values": ["0"],
+        "name_values": [""],
+        "external_test_case_id_count": 18
+      },
+      "values_mapping": {
+        "header_row": 1,
+        "direction_row": 2,
+        "data_rows": [3, 20],
+        "case_label_range": "A3:A20",
+        "case_labels": ["tc1.1", "tc2.1", "tc3.1", "tc4.1", "tc5.1", "tc6.1", "tc7.1", "tc8.1", "tc9.1", "tc10.1", "tc11.1", "tc12.1", "tc13.1", "tc14.1", "tc15.1", "tc16.1", "tc17.1", "tc18.1"],
+        "active_column_range": "B:BN",
+        "active_column_count": 65,
+        "input_column_range": "B:AT",
+        "input_column_count": 45,
+        "output_column_range": "AU:BN",
+        "output_column_count": 20,
+        "input_output_pair_count": 20,
+        "array_channel_groups": {
+          "i:PDM_Core0_NvmInfo_3.PDM_MosOpenCnt[]": 13,
+          "i:tessy_Rte_PDM3NvmInfo.PDM_MosOpenCnt[]": 13,
+          "o:PDM_Core0_NvmInfo_3.PDM_MosOpenCnt[]": 13
+        },
+        "typed_input_column_count": 6,
+        "formula_count": 0,
+        "cell_examples": {
+          "B1": "PDM_Core0_HSDTstartResetCheckStage",
+          "B2": "i",
+          "B3": "PDM_HSD_TstartResetCheck_Step1",
+          "AU1": "PDM_Core0_HSDTstartResetCheckStage",
+          "AU2": "o",
+          "AU3": "PDM_HSD_TstartResetCheck_Step1",
+          "BN1": "PDM_MOS_Core0_SyncNvm::AppReqReset_Record#1",
+          "BN2": "o",
+          "BN3": "255"
+        }
+      },
+      "stubs_mapping": {
+        "header_row": 4,
+        "data_rows": [5, 12],
+        "header": ["Test Case", "Test Step", "Stub", "Stub Body"],
+        "stub_count": 8,
+        "test_case_values": ["0"],
+        "test_step_values": ["0"],
+        "nonempty_body_count": 6,
+        "empty_body_count": 2
+      }
+    }
+  }
+}

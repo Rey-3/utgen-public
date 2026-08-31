@@ -1,0 +1,26 @@
+PDM_LocalCtrl_1: worker init time 0.52s
+PDM_LocalCtrl_1: PDM_Core0_Indicator_Handler: 12 rows; time 0.41s
+PDM_LocalCtrl_1: PDM_Core0_Indicator_ErrorStsPriorityResolve: 4 rows; time 0.08s
+PDM_LocalCtrl_1: PDM_Core0_UpdateALTurnLghtDrvSts: 3 rows; time 0.08s
+PDM_LocalCtrl_1: PDM_Core0_UpdateALTurnLghtFlrSts: 3 rows; time 0.08s
+PDM_LocalCtrl_1: PDM_Core0_UpdateBLTurnLghtDrvSts: 3 rows; time 0.07s
+PDM_LocalCtrl_1: PDM_Core0_UpdateBLTurnLghtFlrSts: 3 rows; time 0.07s
+PDM_LocalCtrl_1: PDM_Core0_UpdateARTurnLghtDrvSts: 3 rows; time 0.08s
+PDM_LocalCtrl_1: PDM_Core0_UpdateARTurnLghtFlrSts: 3 rows; time 0.08s
+PDM_LocalCtrl_1: PDM_Core0_UpdateBRTurnLghtDrvSts: 3 rows; time 0.08s
+PDM_LocalCtrl_1: PDM_Core0_UpdateBRTurnLghtFlrSts: 3 rows; time 0.08s
+PDM_LocalCtrl_1: PDM_TurnIndicator_Core0_1ms: 10 rows; time 1.51s
+PDM_LocalCtrl_1: PDM_Core0_UpdateBrkLghtDrvSts: 3 rows; time 0.08s
+PDM_LocalCtrl_1: PDM_Core0_UpdateBrkLghtFlrSts: 3 rows; time 0.07s
+PDM_LocalCtrl_1: PDM_Core0_UpdateHighBrkLghtDrvSts: 3 rows; time 0.07s
+PDM_LocalCtrl_1: PDM_Core0_UpdateHighBrkLghtFlrSts: 3 rows; time 0.07s
+PDM_LocalCtrl_1: PDM_BrakeLamp_Core0_1ms: 8 rows; time 0.45s
+PDM_LocalCtrl_1: PDM_LocalCtrl_Core0_Init: 4 rows; time 0.23s
+PDM_LocalCtrl_1: PDM_LocalCtrl_Core0_100ms: 10 rows; time 0.70s
+PDM_LocalCtrl_1: total time 44.51s
+PDM_LocalCtrl_2: worker init time 0.46s
+PDM_LocalCtrl_2: PDM_LocalCtrl_Core1_Init: 2 rows; time 0.03s
+PDM_LocalCtrl_2: PDM_LocalCtrl_Core1_100ms: 1 rows; time 0.01s
+PDM_LocalCtrl_2: total time 12.58s
+PDM: total time 57.09s
+ALL PROJECTS: total time 57.09s

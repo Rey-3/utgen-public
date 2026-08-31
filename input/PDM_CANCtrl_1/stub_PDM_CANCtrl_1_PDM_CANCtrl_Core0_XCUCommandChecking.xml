@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='utf-8'?>
+<function_analysis function_name="PDM_CANCtrl_Core0_XCUCommandChecking" file="" line="128">
+  <called_functions count="1">
+    <function name="Rte_PDMCANCtrl_1_HwAbsCANSig_MOSControlCore0ASILB_1ms_GetMsg" file="" line="">
+      <return>
+        <type>CANSig_PDM_MosCtrl_Type</type>
+        <name>tessy_Rte_PDMCANCtrl_1_HwAbsCANSig_MOSControlCore0ASILB_1ms_GetMsg</name>
+      </return>
+    </function>
+  </called_functions>
+</function_analysis>

@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<function_analysis function_name="PDM_CANCtrl_Core1_Init" file="" line="222">
+  <called_functions count="3">
+    <function name="Rte_PDMCANCtrl_2_NvmApp_PDMCANCfgCore1ASILB_Event_GetMsg" file="" line="">
+      <return>
+        <type>NvmApp_PDMCAN_Type</type>
+        <name>tessy_Rte_PDMCANCtrl_2_NvmApp_PDMCANCfgCore1ASILB_Event_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMCANCtrl_2_NvmApp_LastOpCANCtrlReqCore1ASILB_Event_GetMsg" file="" line="">
+      <return>
+        <type>NvmApp_CANCtrlStat_PDM_Core1_Type</type>
+        <name>tessy_Rte_PDMCANCtrl_2_NvmApp_LastOpCANCtrlReqCore1ASILB_Event_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMCANCtrl_2_PDMMOS_2_CANCtrlReqCore1ASILB_10ms_SendMsg" file="" line="">
+      <return>
+        <type>void</type>
+        <name>tessy_Rte_PDMCANCtrl_2_PDMMOS_2_CANCtrlReqCore1ASILB_10ms_SendMsg</name>
+      </return>
+      <arguments>
+        <argument type="PDM_CANCtrlStat_Type" name="Arg0">
+          <type>PDM_CANCtrlStat_Type</type>
+          <name>tessy_Rte_PDMCANCtrl_2_PDMMOS_2_CANCtrlReqCore1ASILB_10ms_SendMsg__Arg0</name>
+        </argument>
+      </arguments>
+    </function>
+  </called_functions>
+</function_analysis>

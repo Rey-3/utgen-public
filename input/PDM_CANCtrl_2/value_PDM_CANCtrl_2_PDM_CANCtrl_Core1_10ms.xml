@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<function name="PDM_CANCtrl_Core1_10ms" file="">
+    <argument name="PDM_CANCtrl_Core1_MosStat.CANMosCtrl[13]" len="9" format="PDM_CANCtrlStat_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_DtcApp_CommDtcInfoCore1ASILB_1ms_GetMsg.DTC_BUSOFF_STAT" len="9" format="DtcApp_PdcModeManagerCommDTCInfo_t" direction="in" pointer="false" range="0,1" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_DtcApp_CommDtcInfoCore1ASILB_1ms_GetMsg.DTC_DZCUMISSING_STAT" len="9" format="DtcApp_PdcModeManagerCommDTCInfo_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_DtcApp_CommDtcInfoCore1ASILB_1ms_GetMsg.DTC_DZCUINVALIDCHKSUM_STAT" len="9" format="DtcApp_PdcModeManagerCommDTCInfo_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_DtcApp_CommDtcInfoCore1ASILB_1ms_GetMsg.DTC_DZCUINVALIDCTR_STAT" len="9" format="DtcApp_PdcModeManagerCommDTCInfo_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_DtcApp_CommDtcInfoCore1ASILB_1ms_GetMsg.DTC_PZCUMISSING_STAT" len="9" format="DtcApp_PdcModeManagerCommDTCInfo_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_DtcApp_CommDtcInfoCore1ASILB_1ms_GetMsg.DTC_PZCUINVALIDCHKSUM_STAT" len="9" format="DtcApp_PdcModeManagerCommDTCInfo_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_DtcApp_CommDtcInfoCore1ASILB_1ms_GetMsg.DTC_PZCUINVALIDCTR_STAT" len="9" format="DtcApp_PdcModeManagerCommDTCInfo_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_DtcApp_CommDtcInfoCore1ASILB_1ms_GetMsg.CCU_INVALIDCHKSUMORCRT_5A0_STAT" len="9" format="DtcApp_PdcModeManagerCommDTCInfo_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_DtcApp_CommDtcInfoCore1ASILB_1ms_GetMsg.CCU_MISSINGMSG_5A0_STAT" len="9" format="DtcApp_PdcModeManagerCommDTCInfo_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_DtcApp_CommDtcInfoCore1ASILB_1ms_GetMsg.PZCU_INVALIDCHKSUMORCRT_100_STAT" len="9" format="DtcApp_PdcModeManagerCommDTCInfo_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_DtcApp_CommDtcInfoCore1ASILB_1ms_GetMsg.PZCU_MISSINGMSG_100_STAT" len="9" format="DtcApp_PdcModeManagerCommDTCInfo_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_DtcApp_CommDtcInfoCore1ASILB_1ms_GetMsg.DTC_PZCUMISSING_108_STAT" len="9" format="DtcApp_PdcModeManagerCommDTCInfo_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_DtcApp_CommDtcInfoCore1ASILB_1ms_GetMsg.DZCU_MISSINGMSG_209_STAT" len="9" format="DtcApp_PdcModeManagerCommDTCInfo_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_DtcApp_CommDtcInfoCore1ASILB_1ms_GetMsg.DZCU_INVALIDCHKSUMORCRT_209_STAT" len="9" format="DtcApp_PdcModeManagerCommDTCInfo_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_DiagApp_SID28_CAN_NM_StsCore1ASILB_Event_GetMsg.CANSw_Rx" len="9" format="DiagApp_Srvc28_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_DiagApp_SID28_CAN_NM_StsCore1ASILB_Event_GetMsg.CANSw_Tx" len="9" format="DiagApp_Srvc28_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_DiagApp_SID28_CAN_NM_StsCore1ASILB_Event_GetMsg.NM_Rx" len="9" format="DiagApp_Srvc28_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_DiagApp_SID28_CAN_NM_StsCore1ASILB_Event_GetMsg.NM_Tx" len="9" format="DiagApp_Srvc28_t" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="PDM_Core1_MosCtrlReqSyncDone" len="8" format="unsigned" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,1" />
+    <argument name="PDM_Core1_MosCtrlReq[13]" len="8" format="unsigned" direction="inout" pointer="false" range="0,0" testmethod="decision" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core1_Config.PDM_Load_Enable[13]" len="9" format="NvmApp_PDMCAN_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="PDM_Core1_Config.PDM_DVTest_CANControlOverwriteEn" len="9" format="NvmApp_PDMCAN_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="PDM_CANCtrl_Core1_XCUCommandChecking::newRequest#1[13]" len="8" format="unsigned" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="PDM_CANCtrl_Core1_XCUCommandChecking::prevRequest#1[13]" len="8" format="unsigned" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_HwAbsCANSig_MOSControlCore1ASILB_1ms_GetMsg.CMD_LvB1BZCUMosCtrl" len="3" format="CANSig_PDM_MosCtrl_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_HwAbsCANSig_MOSControlCore1ASILB_1ms_GetMsg.CMD_LvB1RWSMosCtrl" len="3" format="CANSig_PDM_MosCtrl_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_HwAbsCANSig_MOSControlCore1ASILB_1ms_GetMsg.CMD_LvB1RZCUMosCtrl" len="3" format="CANSig_PDM_MosCtrl_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_HwAbsCANSig_MOSControlCore1ASILB_1ms_GetMsg.CMD_LvB2ALTurnLghtMosCtrl" len="3" format="CANSig_PDM_MosCtrl_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_HwAbsCANSig_MOSControlCore1ASILB_1ms_GetMsg.CMD_LvB2ARTurnLghtMosCtrl" len="3" format="CANSig_PDM_MosCtrl_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_HwAbsCANSig_MOSControlCore1ASILB_1ms_GetMsg.CMD_LvB2BLTurnLghtMosCtrl" len="3" format="CANSig_PDM_MosCtrl_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_HwAbsCANSig_MOSControlCore1ASILB_1ms_GetMsg.CMD_LvB2BrkLghtMosCtrl" len="3" format="CANSig_PDM_MosCtrl_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_HwAbsCANSig_MOSControlCore1ASILB_1ms_GetMsg.CMD_LvB2BRTurnLghtMosCtrl" len="3" format="CANSig_PDM_MosCtrl_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_HwAbsCANSig_MOSControlCore1ASILB_1ms_GetMsg.CMD_LvB2HighBrkLghtMosCtrl" len="3" format="CANSig_PDM_MosCtrl_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_HwAbsCANSig_MOSControlCore1ASILB_1ms_GetMsg.CMD_LvB2LZCUMosCtrl" len="3" format="CANSig_PDM_MosCtrl_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_HwAbsCANSig_MOSControlCore1ASILB_1ms_GetMsg.CMD_LvB2MCURMosCtrl" len="3" format="CANSig_PDM_MosCtrl_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_HwAbsCANSig_MOSControlCore1ASILB_1ms_GetMsg.CMD_LvB2OPRMosCtrl" len="3" format="CANSig_PDM_MosCtrl_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_HwAbsCANSig_MOSControlCore1ASILB_1ms_GetMsg.CMD_LvB2RZCUMosCtrl" len="3" format="CANSig_PDM_MosCtrl_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_HwAbsCANSig_MOSControlCore1ASILB_1ms_GetMsg.Msg_Status" len="2" format="CANSig_PDM_MosCtrl_Type" direction="in" pointer="false" range="CANSIG_MSG_INITIALIZED,CANSIG_MSG_INITIALIZED" testmethod="decision" />
+    <argument name="tessy_Rte_PDMCANCtrl_2_HwAbsCANSig_MOSControlCore1ASILB_1ms_GetMsg.Msg_Error_Info" len="9" format="CANSig_PDM_MosCtrl_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+</function>

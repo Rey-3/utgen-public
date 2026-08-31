@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<function name="PDM_MOS_Core0_StuckCloseSlfDiag_HSD_UpdateTstart" file="">
+    <argument name="PDM_Core0_LoadStatPrev.LoadCtrl[13]" len="9" format="PDM_LoadMosType" direction="in" pointer="false" range="0,1,0,0,1,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_LoadStatPrev.LoadCtrlSource[13]" len="9" format="PDM_LoadMosType" direction="in" pointer="false" range="0,0,0,0,0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_LoadStat.LoadCtrl[13]" len="9" format="PDM_LoadMosType" direction="in" pointer="false" range="0,0,0,0,1,0,0,0,0|0,0,0,0,1,0,0,0,0|0,0,0,1,1,0,0,0,0|0,0,0,0,1,0,1,0,0|0,0,0,0,1,0,0,0,0|0,0,0,0,1,0,0,0,0|0,0,0,0,1,0,0,0,0|0,0,0,0,1,0,0,0,0|0,0,0,0,1,0,0,0,0|0,0,0,0,1,0,0,0,0|0,0,0,0,1,0,0,0,0|0,0,0,0,1,0,0,0,1|0,0,0,0,1,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_LoadStat.LoadCtrlSource[13]" len="9" format="PDM_LoadMosType" direction="in" pointer="false" range="0,0,0,0,0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_NvmInfo_3.PDM_MosOpenCnt[13]" len="9" format="NvmApp_PDM3Info_Type" direction="out" pointer="false" output="0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0" />
+    <argument name="PDM_Core0_NvmInfo_3.PDM_CANCtrlReq[13]" len="9" format="NvmApp_PDM3Info_Type" direction="out" pointer="false" output="0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0|0,0,0,0,0,0,0,0,0" />
+    <argument name="PDM_Core0_NvmInfo_3.PDM_AppReqReset" len="9" format="NvmApp_PDM3Info_Type" direction="out" pointer="false" output="0,0,0,0,0,0,0,0,0" />
+    <argument name="PDM_Core0_NvmInfo_3.PDM_HSDTstart_MCUR" len="33" format="NvmApp_PDM3Info_Type" direction="out" pointer="false" output="0,0,0,0,4294967295,0,0,0,0" />
+    <argument name="PDM_Core0_NvmInfo_3.PDM_HSDTstart_MCUR_PUMP" len="33" format="NvmApp_PDM3Info_Type" direction="out" pointer="false" output="0,0,0,0,4294967295,0,0,0,0" />
+    <argument name="PDM_Core0_NvmInfo_3.PDM_HSDTstart_RWS" len="33" format="NvmApp_PDM3Info_Type" direction="out" pointer="false" output="0,0,0,0,4294967295,0,0,0,0" />
+    <argument name="PDM_Core0_NvmInfo_3.PDM_HSDCtrlOut_MCUR" len="9" format="NvmApp_PDM3Info_Type" direction="out" pointer="false" output="0,0,0,0,0,0,0,0,0" />
+    <argument name="PDM_Core0_NvmInfo_3.PDM_HSDCtrlOut_MCUR_PUMP" len="9" format="NvmApp_PDM3Info_Type" direction="out" pointer="false" output="0,0,0,0,0,0,0,0,0" />
+    <argument name="PDM_Core0_NvmInfo_3.PDM_HSDCtrlOut_RWS" len="9" format="NvmApp_PDM3Info_Type" direction="out" pointer="false" output="0,0,0,0,0,0,0,0,0" />
+    <argument name="PDM_Core0_NvmInfo_3.SyncFlag" len="9" format="NvmApp_PDM3Info_Type" direction="out" pointer="false" output="0,0,0,0,0,0,0,0,0" />
+    <argument name="PDM_Core0_RTCTimeInSec" len="32" format="unsigned" direction="in" pointer="false" range="0,0,0,0,0,0,0,0,0" testmethod="decision" />
+</function>

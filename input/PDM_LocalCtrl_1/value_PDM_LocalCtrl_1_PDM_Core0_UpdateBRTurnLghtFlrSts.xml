@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<function name="PDM_Core0_UpdateBRTurnLghtFlrSts" file="" utgen_version="2.0" utgen_updated_at="2026-08-31T13:55:54Z">
+    <argument name="BRTurn_ErrorSts" len="2" format="PDM_IndicatorError_type" direction="in" pointer="false" range="NOERROR,SHORTCIRCUIT,OPENCIRCUIT" testmethod="decision" />
+    <argument name="PDM_Core0_TurnIndicator_FlsDrvSts.ALTurnLghtDrvSts_PDCFedbck" len="9" format="PDM_TurnIndicator_FlsDrvSts_Type" direction="out" pointer="false" output="0,0,0" />
+    <argument name="PDM_Core0_TurnIndicator_FlsDrvSts.ARTurnLghtDrvSts_PDCFedbck" len="9" format="PDM_TurnIndicator_FlsDrvSts_Type" direction="out" pointer="false" output="0,0,0" />
+    <argument name="PDM_Core0_TurnIndicator_FlsDrvSts.BLTurnLghtDrvSts_PDCFedbck" len="9" format="PDM_TurnIndicator_FlsDrvSts_Type" direction="out" pointer="false" output="0,0,0" />
+    <argument name="PDM_Core0_TurnIndicator_FlsDrvSts.BRTurnLghtDrvSts_PDCFedbck" len="9" format="PDM_TurnIndicator_FlsDrvSts_Type" direction="out" pointer="false" output="0,0,0" />
+    <argument name="PDM_Core0_TurnIndicator_FlsDrvSts.ALTurnLghtFlrSts_PDCFedbck" len="9" format="PDM_TurnIndicator_FlsDrvSts_Type" direction="out" pointer="false" output="0,0,0" />
+    <argument name="PDM_Core0_TurnIndicator_FlsDrvSts.ARTurnLghtFlrSts_PDCFedbck" len="9" format="PDM_TurnIndicator_FlsDrvSts_Type" direction="out" pointer="false" output="0,0,0" />
+    <argument name="PDM_Core0_TurnIndicator_FlsDrvSts.BLTurnLghtFlrSts_PDCFedbck" len="9" format="PDM_TurnIndicator_FlsDrvSts_Type" direction="out" pointer="false" output="0,0,0" />
+    <argument name="PDM_Core0_TurnIndicator_FlsDrvSts.BRTurnLghtFlrSts_PDCFedbck" len="9" format="PDM_TurnIndicator_FlsDrvSts_Type" direction="out" pointer="false" output="0,2,1" />
+</function>

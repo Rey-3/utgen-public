@@ -36,7 +36,9 @@ from .model import (
     _validate_portable_relative_path,
     canonical_json_bytes,
     from_dict,
+    is_canonical_json_bytes,
     loads,
+    pretty_json_bytes,
 )
 
 
@@ -191,6 +193,11 @@ class ArtifactRecord:
 
     @property
     def sha256(self) -> str:
+        if self.relative_path.endswith(".json"):
+            try:
+                return hashlib.sha256(canonical_json_bytes(loads(self.data))).hexdigest()
+            except (TypeError, UnicodeError, ValueError):
+                pass
         return hashlib.sha256(self.data).hexdigest()
 
 
@@ -445,7 +452,7 @@ def candidate_identity_issues(candidate: CandidateBundle) -> tuple[ValidationIss
                     )
                 )
 
-        working_ids = tuple(meta.row_id for row in snapshot_rows["working"].values())
+        working_ids = tuple(row.row_id for row in snapshot_rows["working"].values())
         # ``rows_by_id`` preserves row insertion order, so this is the exact
         # order of the decoded WORKING rows rather than a set comparison.
         if working_ids != state.working.row_order:
@@ -674,20 +681,19 @@ def fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-def _collection_bytes(schema_name: str, values: Iterable[Any]) -> bytes:
-    return canonical_json_bytes(
-        {
-            "schema_version": CURRENT_SCHEMA_VERSION,
-            "items": [value.to_dict() for value in values],
-        }
-    )
+def _collection_bytes(schema_name: str, values: Iterable[Any], *, pretty: bool = False) -> bytes:
+    payload = {
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "items": [value.to_dict() for value in values],
+    }
+    return pretty_json_bytes(payload) if pretty else canonical_json_bytes(payload)
 
 
 def parse_collection_bytes(data: bytes, model_type: type) -> tuple[Any, ...]:
     parsed = loads(data)
     if type(parsed) is not dict or set(parsed) != {"schema_version", "items"}:
         raise ArtifactRoundtripError("collection state must contain only schema_version and items")
-    if canonical_json_bytes(parsed) != data:
+    if not is_canonical_json_bytes(parsed, data):
         raise ArtifactRoundtripError("collection state is not canonical UTF-8 JSON")
     if parsed["schema_version"] != CURRENT_SCHEMA_VERSION:
         raise ArtifactRoundtripError("collection state has unsupported schema_version")
@@ -721,6 +727,7 @@ class IterationTransaction:
         load_revision: Callable[[str, str], Any] | None,
         read_root: Callable[[], RootManifest],
         validate_analysis: Callable[[str], Any] | None = None,
+        pretty_json: bool = False,
     ) -> None:
         self.module_key = validate_path_component(module_key, "module_key")
         if type(expected_revision) is not int or expected_revision < 0:
@@ -742,6 +749,10 @@ class IterationTransaction:
         self._load_revision = load_revision
         self._read_root = read_root
         self._validate_analysis = validate_analysis
+        if type(pretty_json) is not bool:
+            raise TypeError("pretty_json must be a boolean")
+        self._pretty_json = pretty_json
+        self._json_bytes = pretty_json_bytes if pretty_json else canonical_json_bytes
         self.operation_id = new_persistent_id("op", uuid_factory)
         self.revision_id = new_persistent_id("rev", uuid_factory)
         self._candidate: CandidateBundle | None = None
@@ -785,28 +796,28 @@ class IterationTransaction:
 
         for state in candidate.function_states:
             component = validate_path_component(state.function_key, "function_key")
-            state_bytes = canonical_json_bytes(state)
+            state_bytes = self._json_bytes(state)
             add(ArtifactRecord(f"base/{component}/state.json", "state", state_bytes))
             add(ArtifactRecord(f"working/{component}/state.json", "state", state_bytes))
         add(
             ArtifactRecord(
                 "module_manifest.json",
                 "manifest",
-                canonical_json_bytes(published_manifest),
+                self._json_bytes(published_manifest),
             )
         )
         add(
             ArtifactRecord(
                 "module_stub_state.json",
                 "module_stub_state",
-                _collection_bytes("module_stub_state", candidate.module_stub_state),
+                _collection_bytes("module_stub_state", candidate.module_stub_state, pretty=self._pretty_json),
             )
         )
         add(
             ArtifactRecord(
                 "conflicts.json",
                 "conflicts",
-                _collection_bytes("conflicts", candidate.conflicts),
+                _collection_bytes("conflicts", candidate.conflicts, pretty=self._pretty_json),
             )
         )
         return tuple(records)
@@ -987,7 +998,7 @@ class IterationTransaction:
         temporary = pointer_parent / f"manifest.json.{self.operation_id}.tmp"
         if temporary.exists() or temporary.is_symlink():
             raise AtomicCommitError(f"manifest temporary path already exists: {temporary}")
-        data = canonical_json_bytes(root_manifest)
+        data = self._json_bytes(root_manifest)
         try:
             with temporary.open("xb") as stream:
                 stream.write(data)
@@ -1053,7 +1064,7 @@ class IterationTransaction:
             self._inject("candidate_reparsed")
             staged_bytes = self._read_staged_records(staging_path, records)
             for record in records:
-                if hashlib.sha256(staged_bytes[record.relative_path]).hexdigest() != record.sha256:
+                if ArtifactRecord(record.relative_path, record.kind, staged_bytes[record.relative_path]).sha256 != record.sha256:
                     raise ArtifactRoundtripError(f"candidate hash changed: {record.relative_path}")
                 self._validate_internal_record(record, staged_bytes[record.relative_path])
                 validator = record.validator or self._artifact_validators.get(record.kind)
@@ -1088,7 +1099,7 @@ class IterationTransaction:
             )
             bundle_path = staging_path / "bundle_manifest.json"
             with bundle_path.open("xb") as stream:
-                stream.write(canonical_json_bytes(bundle_manifest))
+                stream.write(self._json_bytes(bundle_manifest))
                 stream.flush()
                 os.fsync(stream.fileno())
             fsync_directory(staging_path)

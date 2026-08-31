@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<function name="PDM_MOS_Core0_LightInd_StuckCloseSlfDiag" file="">
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckClose_UB_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckClose_VoltDiff_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckClose_Time" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckClose_Recovery_UB_Thresh1000x" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckClose_Recovery_VoltDiff_Thresh1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckClose_RecoveryTime" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckOpen_UB_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckOpen_LoadVoltage_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckOpen_Time" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckOpen_Recovery_UB_Thresh1000x" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckOpen_Recovery_VoltDiff_Thresh1000x" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckOpen_RecoveryTime" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_Load_Enable[13]" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,1" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_DriverFault_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckClose_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckOpen_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_LRTURN_HardwireFault_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_RRTURN_HardwireFault_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_LightInd_ShortCircuit_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_LightInd_OpenCircuit_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_LightInd_StuckClose_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,1,0,1,1" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_DVTest_LoadMOSSelfDiagEn" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_DVTest_LightIndSelfDiagEn" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_DVTest_LightIndOpenCircuitEn" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_IndFaultConfig[6].Load_id" len="9" format="PDM_LightIndFaultConfig_Type[6]" direction="inout" pointer="false" range="0,0,13,13,0" testmethod="decision" output="0,0,0,0,0|0,0,0,0,0|0,0,0,0,0|0,0,0,0,0|0,0,0,0,0|0,0,0,0,0" />
+    <argument name="PDM_IndFaultConfig[6].IdleTime" len="17" format="PDM_LightIndFaultConfig_Type[6]" direction="inout" pointer="false" range="0,0,0,0,0" testmethod="decision" output="0,0,0,0,0|0,0,0,0,0|0,0,0,0,0|0,0,0,0,0|0,0,0,0,0|0,0,0,0,0" />
+    <argument name="PDM_Cfg_Core0[13].MOSType" len="3" format="PDM_Cfg_Type[13]" direction="in" pointer="false" range="HSD,HSD,HSD,HSD,HSD" testmethod="decision" />
+    <argument name="PDM_Cfg_Core0[13].MOSType2" len="1" format="PDM_Cfg_Type[13]" direction="in" pointer="false" range="HSDChip,HSDChip,HSDChip,HSDChip,HSDChip" testmethod="decision" />
+    <argument name="PDM_Cfg_Core0[13].VoltSrcType" len="1" format="PDM_Cfg_Type[13]" direction="in" pointer="false" range="PDM_SRC_KL30A,PDM_SRC_KL30A,PDM_SRC_KL30A,PDM_SRC_KL30A,PDM_SRC_KL30A" testmethod="decision" />
+    <argument name="PDM_Cfg_Core0[13].MOSDriverOpVoltBelow" len="17" format="PDM_Cfg_Type[13]" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Cfg_Core0[13].MOSDriverOpVoltNormal" len="17" format="PDM_Cfg_Type[13]" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_LoadStat.LoadCtrl[13]" len="9" format="PDM_LoadMosType" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_LoadStat.LoadCtrlSource[13]" len="9" format="PDM_LoadMosType" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_DTCEnableFlagCore0ASILB_Event_GetMsg" len="8" format="unsigned" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_IoHwAn_KL30VoltCore0ASILB_1ms_GetMsg.SwVar_KL30A_Volt1000x" len="17" format="IoHw_KL30Volt_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_IoHwAn_KL30VoltCore0ASILB_1ms_GetMsg.SwVar_KL30B_Volt1000x" len="17" format="IoHw_KL30Volt_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_IoHwAn_KL30VoltCore0ASILB_1ms_GetMsg.Swvar_KL30A_FaultState" len="9" format="IoHw_KL30Volt_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_IoHwAn_KL30VoltCore0ASILB_1ms_GetMsg.Swvar_KL30B_FaultState" len="9" format="IoHw_KL30Volt_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_IoHwAn_LoadVoltCore0ASILB_1ms_GetMsg.SwVar_Load_Volt1000x[13]" len="17" format="IoHw_LoadVolt_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_IoHwAn_LoadVoltCore0ASILB_1ms_GetMsg.SwVar_Load_VoltageFaultState[13]" len="9" format="IoHw_LoadVolt_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_IoHwSig_PMICResetReasonInfoCore0ASILB_1ms_GetMsg.Ready" len="9" format="IoHwSig_PMICFaultCheck_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_IoHwSig_PMICResetReasonInfoCore0ASILB_1ms_GetMsg.FS0B_Status" len="9" format="IoHwSig_PMICFaultCheck_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_IoHwSig_PMICResetReasonInfoCore0ASILB_1ms_GetMsg.FaultReset" len="9" format="IoHwSig_PMICFaultCheck_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_IoHwSig_PMICResetReasonInfoCore0ASILB_1ms_GetMsg.LimpHomeEnabled" len="9" format="IoHwSig_PMICFaultCheck_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="LoadIndex" len="8" format="unsigned" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="KL30VoltInfo.SwVar_KL30A_Volt1000x" len="17" format="IoHw_KL30Volt_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="KL30VoltInfo.SwVar_KL30B_Volt1000x" len="17" format="IoHw_KL30Volt_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="KL30VoltInfo.Swvar_KL30A_FaultState" len="9" format="IoHw_KL30Volt_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="KL30VoltInfo.Swvar_KL30B_FaultState" len="9" format="IoHw_KL30Volt_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="i" len="8" format="unsigned" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_StuckClose_UB_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_StuckClose_VoltDiff_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_StuckClose_Time" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_StuckClose_Recovery_UB_Thresh1000x" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_StuckClose_Recovery_VoltDiff_Thresh1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_StuckClose_RecoveryTime" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_StuckOpen_UB_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_StuckOpen_LoadVoltage_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_StuckOpen_Time" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_StuckOpen_Recovery_UB_Thresh1000x" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_StuckOpen_Recovery_VoltDiff_Thresh1000x" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_StuckOpen_RecoveryTime" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_Load_Enable[13]" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_DriverFault_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_StuckClose_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_StuckOpen_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_LRTURN_HardwireFault_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_RRTURN_HardwireFault_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_LightInd_ShortCircuit_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_LightInd_OpenCircuit_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_LightInd_StuckClose_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_DVTest_LoadMOSSelfDiagEn" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_DVTest_LightIndSelfDiagEn" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_SlfDiagCfg.PDM_DVTest_LightIndOpenCircuitEn" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="DTCEnabled" len="8" format="unsigned" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="MosCtrl" len="8" format="unsigned" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="KL30Volt1000x" len="16" format="unsigned" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="KL30VoltFaultState" len="8" format="unsigned" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="LoadVolt1000x" len="16" format="unsigned" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="LoadVoltFaultState" len="8" format="unsigned" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="KL30Volt1000xFaultCfg" len="16" format="unsigned" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="VoltDiff1000xFaultCfg" len="16" format="unsigned" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="VoltDiff1000xRecoveryCfg" len="16" format="unsigned" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="FaultCntCfg" len="16" format="unsigned" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="RecoveryCntCfg" len="16" format="unsigned" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_IndStuckCloseStat[6].Stat" len="9" format="PDM_SlfDiagLightIndStat_Type[6]" direction="inout" pointer="false" range="0,0,0,0,0" testmethod="decision" output="0,0,0,0,1|0,0,0,0,1|0,0,0,0,1|0,0,0,0,1|0,0,0,0,1|0,0,0,0,1" />
+    <argument name="PDM_Core0_IndStuckCloseStat[6].FaultTriggerCnt" len="9" format="PDM_SlfDiagLightIndStat_Type[6]" direction="inout" pointer="false" range="0,0,0,0,0" testmethod="decision" output="0,0,0,0,0|0,0,0,0,0|0,0,0,0,0|0,0,0,0,0|0,0,0,0,0|0,0,0,0,0" />
+    <argument name="PDM_Core0_IndStuckCloseStat[6].FaultCnt" len="17" format="PDM_SlfDiagLightIndStat_Type[6]" direction="inout" pointer="false" range="0,0,0,0,0" testmethod="decision" output="0,0,0,0,0|0,0,0,0,0|0,0,0,0,0|0,0,0,0,0|0,0,0,0,0|0,0,0,0,0" />
+    <argument name="PDM_Core0_IndStuckCloseStat[6].RecoveryCnt" len="17" format="PDM_SlfDiagLightIndStat_Type[6]" direction="inout" pointer="false" range="0,0,0,0,0" testmethod="decision" output="0,0,0,0,0|0,0,0,0,0|0,0,0,0,0|0,0,0,0,0|0,0,0,0,0|0,0,0,0,0" />
+    <argument name="PDM_Core0_IndStuckCloseStat[6].NextActiveCycle" len="9" format="PDM_SlfDiagLightIndStat_Type[6]" direction="inout" pointer="false" range="0,0,0,0,0" testmethod="decision" output="0,0,0,0,0|0,0,0,0,0|0,0,0,0,0|0,0,0,0,0|0,0,0,0,0|0,0,0,0,0" />
+    <argument name="PDM_Core0_IndStuckCloseExtStat[6].FaultSlfDiagTimer" len="17" format="PDM_SlfDiagLightIndStuckClsExtStat_Type[6]" direction="inout" pointer="false" range="0,0,0,0,0" testmethod="decision" output="0,0,0,0,400|0,0,0,0,400|0,0,0,0,400|0,0,0,0,400|0,0,0,0,400|0,0,0,0,400" />
+    <argument name="Fault" len="8" format="unsigned" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="IndId" len="8" format="unsigned" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_LightIndUpdateLocal[6].RolCnt_ShortCircuit" len="9" format="PDM_LightIndFault_Type[6]" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_LightIndUpdateLocal[6].RolCnt_OpenCircuit" len="9" format="PDM_LightIndFault_Type[6]" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+    <argument name="LimpHomeMosCtrl" len="8" format="unsigned" direction="in" pointer="false" range="0,0,0,0,0" testmethod="decision" />
+</function>
