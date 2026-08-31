@@ -3,6 +3,7 @@ import sys
 import re
 import yaml
 from itertools import product
+from datetime import date
 from tessy_excel import *
 from tessy_create_testlist import *
 from pathlib import Path
@@ -83,7 +84,8 @@ def applyNullPointerRows(testCases, variableNames, variableValidRanges, testClas
 
 
 
-def list_files_recursive( path , output_tessy_path , list_of_files ):
+def list_files_recursive(path, output_tessy_path, list_of_files,
+                         project_name=None, module_name=None, export_date=None):
     for entry in os.listdir(path):
         value_path = os.path.join(path, entry)
         if os.path.isdir(value_path):
@@ -94,18 +96,23 @@ def list_files_recursive( path , output_tessy_path , list_of_files ):
                 os.mkdir(sub_output_path)
             except Exception as e:
                 pass
-            list_files_recursive( value_path , sub_output_path , list_of_files )
+            list_files_recursive(value_path, sub_output_path, list_of_files,
+                                 project_name, module_name, export_date)
         else:
             list_of_files.append(value_path)
             if entry[:5] == 'value':
                 # [zb] output excel is named after the function (resolved inside Decode_Functions)
                 # rather than the full value_*.xml entry name.
-                Decode_Functions(value_path , path , output_tessy_path)
+                Decode_Functions(value_path, path, output_tessy_path,
+                                 project_name=project_name,
+                                 module_name=module_name,
+                                 export_date=export_date)
     
 
 def mainBody():
     input_path = os.path.join(ROOT, 'input')
     config = yaml.safe_load((ROOT / 'config.yaml').read_text(encoding='utf-8'))
+    export_date = date.today().isoformat()
     for project in config['projects']:
         for module in project['modules']:
             module_input = os.path.join(input_path, module['module_name'])
@@ -113,12 +120,16 @@ def mainBody():
                 continue
             output_tessy_path = module['excel_input_dir']
             os.makedirs(output_tessy_path, exist_ok=True)
-            list_files_recursive(module_input, output_tessy_path, [])
+            list_files_recursive(module_input, output_tessy_path, [],
+                                 project_name=project['name'],
+                                 module_name=os.path.basename(module['source_file']),
+                                 export_date=export_date)
 
 
 ### https://www.geeksforgeeks.org/python/reading-and-writing-xml-files-in-python/
 ### https://stackoverflow.com/questions/57351894/how-to-read-xml-file-using-python
-def Decode_Functions(inputFile , stubDir , outputDir , row_aligned=False ):
+def Decode_Functions(inputFile, stubDir, outputDir, row_aligned=False,
+                     project_name=None, module_name=None, export_date=None):
     tree = ET.parse(inputFile)
     func = tree.getroot()
     if func.tag == "function":
@@ -251,7 +262,12 @@ def Decode_Functions(inputFile , stubDir , outputDir , row_aligned=False ):
             testCase_list , testMethod_list = createTestListforFunction(func_name , variableName_list, variableLength_list, variableFormat_list, variableDirection_list , variableValidRange_list ,testClassification_list)
         applyNullPointerRows(testCase_list, variableName_list, variableValidRange_list,
                              testClassification_list, variableDirection_list)
-        updateTestlistToExcel(func_name , os.path.join(RES_ROOT, 'template.xlsx'), outputFile ,  testCase_list , testMethod_list , stub_list ,  variableName_list , variableDirection_list , variableFormat_list)
+        updateTestlistToExcel(func_name, os.path.join(RES_ROOT, 'template.xlsx'), outputFile,
+                              testCase_list, testMethod_list, stub_list,
+                              variableName_list, variableDirection_list, variableFormat_list,
+                              project_name=project_name,
+                              module_name=module_name,
+                              export_date=export_date)
         print("testCase_list:")
         for i in range(len(testCase_list)):
             print("    Test Cases (",i,") input : ", testCase_list[i] , "; method : " , testMethod_list[i])

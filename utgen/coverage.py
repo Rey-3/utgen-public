@@ -102,7 +102,12 @@ class CoverageGenerator:
                             continue
                         state.add(result)
                         covered.update(gained)
-                        rows.append(TestRow(candidate, "Coverage", self._description(gained)))
+                        rows.append(TestRow(
+                            candidate,
+                            "Coverage",
+                            self._description(gained),
+                            obligation_keys=self._obligation_keys(function, gained),
+                        ))
                         queue.append(candidate)
                         if len(rows) >= self.max_rows or targets <= covered:
                             return rows
@@ -365,6 +370,57 @@ class CoverageGenerator:
     def _description(gained: set[tuple]) -> str:
         decision = next((item for item in gained if len(item) == 2), None)
         return "concrete condition combination" if decision is None else f"concrete decision {decision[0]} = {decision[1]}"
+
+    @staticmethod
+    def _obligation_keys(function: FunctionIR, gained: set[tuple]) -> tuple[str, ...]:
+        """Convert transient execution targets into stable structured objectives."""
+
+        from utgen.iteration.fingerprint import atom_key, decision_key_for, obligation_key
+
+        decisions = {decision.id: decision for decision in function.decisions}
+        result: set[str] = set()
+        for target in gained:
+            if not target:
+                continue
+            decision = decisions.get(target[0])
+            if decision is None:
+                continue
+            d_key = decision_key_for(function, decision)
+            if len(target) == 2:
+                result.add(obligation_key("branch", decision_key_value=d_key, outcome=target[1]))
+                continue
+            if len(target) != 3:
+                continue
+            if target[1] == "mcdc":
+                index = target[2]
+                atoms = atoms_of(decision.expr)
+                if isinstance(index, int) and 0 <= index < len(atoms):
+                    result.add(obligation_key(
+                        "mcdc",
+                        decision_key_value=d_key,
+                        atom_key_value=atom_key(atoms[index], occurrence=index),
+                    ))
+                continue
+            # Condition targets retain the atom's position as the occurrence
+            # disambiguator when duplicate textual atoms appear in one decision.
+            atoms = atoms_of(decision.expr)
+            # Legacy execution targets carry atom text but not its position.  A
+            # repeated text must not silently map to the first atom; emit every
+            # stable occurrence matching that text (the conservative set) so no
+            # objective is lost.  Newer target producers may include an explicit
+            # index and are handled without the fallback.
+            atom_indices = [
+                index for index, atom in enumerate(atoms)
+                if atom.text == target[1]
+            ]
+            for atom_index in atom_indices:
+                result.add(obligation_key(
+                    "condition",
+                    decision_key_value=d_key,
+                    atom_key_value=atom_key(atoms[atom_index], occurrence=atom_index),
+                    outcome=target[2],
+                ))
+        return tuple(sorted(result))
 
 
 class _CoverageState:

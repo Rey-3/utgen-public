@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import re
 from dataclasses import dataclass, field, fields, is_dataclass
 
@@ -726,6 +727,43 @@ class Verifier:
 
     def __init__(self, interpreter: Interpreter) -> None:
         self.interpreter = interpreter
+
+    def predict(self, function, row_or_values):
+        """Predict outputs without changing the supplied row.
+
+        Merge B must be able to validate a candidate containing user-owned
+        expected outputs.  The historical :meth:`check` method intentionally
+        mutates rows, so callers that use it while inspecting WORKING can
+        silently overwrite manual data.  ``predict`` is the read-only
+        counterpart: it accepts either a :class:`TestRow` or the raw values
+        mapping and returns a detached :class:`ExecResult`.
+
+        The returned execution record is also detached from the interpreter's
+        mutable per-run state.  This makes it safe for callers to inspect or
+        modify ``outputs`` while the accepted row and interpreter remain
+        untouched.
+        """
+
+        if isinstance(row_or_values, TestRow):
+            values = row_or_values.values
+        elif isinstance(row_or_values, dict):
+            values = row_or_values
+        else:
+            raise TypeError("predict expects a TestRow or values dict")
+        # ``Interpreter.run`` mutates its environment while evaluating nested
+        # aggregates, pointers, and array leaves.  A shallow ``dict`` copy
+        # protects only the top-level mapping and used to let verification
+        # silently rewrite accepted WORKING values.  Prediction is explicitly
+        # non-destructive, so detach the complete input graph here.
+        result = self.interpreter.run(function, deepcopy(values))
+        return ExecResult(
+            outcomes=dict(result.outcomes),
+            observed={key: set(value) for key, value in result.observed.items()},
+            conditions={key: set(value) for key, value in result.conditions.items()},
+            loops={key: set(value) for key, value in result.loops.items()},
+            outputs=dict(result.outputs),
+            unknown=set(result.unknown),
+        )
 
     def check(self, function, rows: list[TestRow]) -> None:
 

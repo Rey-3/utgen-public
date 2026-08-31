@@ -196,7 +196,7 @@ class CopyPropagation:
             sources = [state[1][path] for state in states if path in state[1]]
             if sources and all(source is sources[0] for source in sources):
                 members[path] = sources[0]
-            elif path in sources:
+            elif any(isinstance(source, str) and source == path for source in sources):
                 members[path] = path
             else:
                 members.pop(path, None)

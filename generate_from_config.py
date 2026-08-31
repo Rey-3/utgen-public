@@ -7,7 +7,7 @@ from time import perf_counter
 import yaml
 
 from utgen.assembler import RowAssembler
-from utgen.db import ModuleIndexer
+from utgen.db import ModuleIndexer, XmlDbReader, XmlDbWriter
 from utgen.emit import StubXmlWriter, ValueXmlWriter
 from utgen.interp import Interpreter, Verifier
 from utgen.mcdc import McdcGenerator
@@ -62,27 +62,27 @@ def write_timeout_outputs(function, name, output):
     return len(rows)
 
 
-_WORKER_ANALYSIS = None
+_WORKER_DATABASE = None
 
 
-def initialize_worker(analysis):
-    """Retain the indexed module when the persistent worker starts."""
-    global _WORKER_ANALYSIS
-    _WORKER_ANALYSIS = analysis
+def initialize_worker(database):
+    """Retain only the on-disk database path when the worker starts."""
+    global _WORKER_DATABASE
+    _WORKER_DATABASE = Path(database)
 
 
 def worker_ready():
     """Small handshake used to wait until the worker initializer completes."""
-    return _WORKER_ANALYSIS is not None
+    return _WORKER_DATABASE is not None
 
 
 def generate_function(function_name, name, output):
-    """Generate one function using the module already loaded in the worker."""
+    """Generate one function by reloading its module database from disk."""
     try:
-        if _WORKER_ANALYSIS is None:
-            raise RuntimeError("worker analysis is not initialized")
+        if _WORKER_DATABASE is None:
+            raise RuntimeError("worker database is not initialized")
 
-        function = _WORKER_ANALYSIS.function(function_name)
+        function = XmlDbReader().read(_WORKER_DATABASE).function(function_name)
         if function is None:
             raise ValueError(f"Function {function_name!r} was not found")
 
@@ -99,12 +99,12 @@ def generate_function(function_name, name, output):
         return "error", f"{type(error).__name__}: {error}"
 
 
-def start_worker(context, analysis):
-    """Start one persistent child process with the indexed module."""
+def start_worker(context, database):
+    """Start persistent child processes with only the database path."""
     pool = context.Pool(
         processes=4,
         initializer=initialize_worker,
-        initargs=(analysis,),
+        initargs=(database,),
     )
     try:
         if not pool.apply(worker_ready):
@@ -167,12 +167,14 @@ def run():
                         output.mkdir(parents=True, exist_ok=True)
                         print(f"{name}: indexing {source}", flush=True)
                         analysis = indexer.index(source, root)
+                        database = output / f"db_{name}.xml"
+                        XmlDbWriter().write(analysis, database)
                         print(f"{name}: generating {len(analysis.functions)} functions", flush=True)
 
                         worker_pool = None
                         try:
                             worker_start = perf_counter()
-                            worker_pool = start_worker(context, analysis)
+                            worker_pool = start_worker(context, database)
                             report_time(f"{name}: worker init time {elapsed(worker_start)}")
 
                             function_count = len(analysis.functions)
@@ -194,7 +196,7 @@ def run():
                                         worker_pool = None
                                         if function_index + 1 < function_count:
                                             worker_start = perf_counter()
-                                            worker_pool = start_worker(context, analysis)
+                                            worker_pool = start_worker(context, database)
                                             report_time(
                                                 f"{name}: worker restart time "
                                                 f"{elapsed(worker_start)}"

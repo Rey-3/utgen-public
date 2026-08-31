@@ -31,7 +31,7 @@ from utgen.model import (And, Atom, Binop, Break, CallE, Cast, Const, CType,
 class ModuleIndexer:
 
     def __init__(self, config=None):
-
+        # All the include, marco, library will store in here and read by clang
         self.config = config or {}
 
     def index(self, source: Path, root_path: Path | None = None) -> ModuleAnalysis:
@@ -40,7 +40,7 @@ class ModuleIndexer:
         # discovered type information, function IR, and the derived dataflow model.
         source = Path(source)
         root_path = Path(root_path or self._get("include_root", source.parent))
-        include_dirs, headers = self._includes(source, root_path)
+        include_dirs, headers = self._includes(source, root_path) 
 
         configure_libclang(self._get("libclang"))
 
@@ -111,7 +111,7 @@ class ModuleIndexer:
                 builder.type_graph.describe(cursor.type, cursor.spelling)
 
     def _globals(self, tu, builder):
-
+        # get all the global variable in target file
         result, seen = [], set()
         for cursor in _walk(tu.cursor):
             if cursor.kind != CursorKind.VAR_DECL or not _is_global(cursor):
@@ -131,7 +131,7 @@ class ModuleIndexer:
         return result
 
     def _macros(self, tu):
-
+        # get all the marco in target file
         result, seen = [], set()
         for cursor in _walk(tu.cursor):
             if cursor.kind != CursorKind.MACRO_DEFINITION or cursor.spelling.startswith("__"):

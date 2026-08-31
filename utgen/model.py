@@ -482,6 +482,14 @@ class TestRow:
     description: str
     intent: dict = field(default_factory=dict)     
     expected: dict = field(default_factory=dict)   
+    # Iteration provenance is optional so existing generator positional
+    # constructors continue to mean exactly the same thing.
+    meta: object = None
+    # Structured generator objectives are kept separately from the legacy integer
+    # ``intent`` map.  The field is appended after ``meta`` so every existing
+    # positional constructor remains source-compatible.  Iteration state may later
+    # copy this tuple into RowMeta once a persistent row identity has been allocated.
+    obligation_keys: tuple[str, ...] = ()
 
 
 @dataclass
@@ -825,7 +833,6 @@ class Const:
     type_name: str = ""
 
 
-@dataclass(frozen=True)
 @dataclass(frozen=True)
 class Unary:
     """

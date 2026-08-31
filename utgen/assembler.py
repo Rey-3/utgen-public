@@ -64,13 +64,16 @@ class RowAssembler:
                     outcome = eval_expr(decision.expr, assignment)
                     intent = self._intent(function, decision, outcome)
                     existing = by_values.get(key)
+                    obligations = self._obligations(function, decision, outcome)
                     if existing is not None:
                         existing.description += f"; decision {decision.id} = {outcome}"
                         existing.intent.update(intent)
+                        existing.obligation_keys = self._merge_obligations(existing.obligation_keys, obligations)
                         break
 
                     kind = "Switch" if decision.kind == "case" else "MC/DC"
-                    row = TestRow(values, kind, f"decision {decision.id} = {outcome}", intent)
+                    row = TestRow(values, kind, f"decision {decision.id} = {outcome}", intent,
+                                  obligation_keys=obligations)
                     by_values[key] = row
                     rows.append(row)
                     break
@@ -83,6 +86,11 @@ class RowAssembler:
                 if key not in by_values:
                     by_values[key] = coverage
                     rows.append(coverage)
+                else:
+                    existing = by_values[key]
+                    existing.obligation_keys = self._merge_obligations(
+                        existing.obligation_keys, coverage.obligation_keys
+                    )
 
         if self.include_boundary:
             # Boundary rows exercise values immediately below, at and above relational
@@ -95,6 +103,9 @@ class RowAssembler:
                 if existing is not None:
                     existing.description += f"; {boundary.description}"
                     existing.intent.update(boundary.intent)
+                    existing.obligation_keys = self._merge_obligations(
+                        existing.obligation_keys, boundary.obligation_keys
+                    )
                     continue
                 by_values[key] = boundary
                 rows.append(boundary)
@@ -110,6 +121,9 @@ class RowAssembler:
                 existing = by_values.get(key)
                 if existing is not None:
                     existing.description += f"; {fault.description}"
+                    existing.obligation_keys = self._merge_obligations(
+                        existing.obligation_keys, fault.obligation_keys
+                    )
                     continue
                 by_values[key] = fault
                 rows.append(fault)
@@ -211,7 +225,46 @@ class RowAssembler:
         out = {decision.id: outcome}
         for guard in decision.guards:
             for candidate in function.decisions:
-                if candidate.expr == guard.expr:
+                if candidate.expr is guard.expr or candidate.expr == guard.expr:
                     out[candidate.id] = guard.outcome
                     break
         return out
+
+    @staticmethod
+    def _obligations(function: FunctionIR, decision, outcome: bool) -> tuple[str, ...]:
+        """Translate legacy integer intent into stable objective identities.
+
+        The legacy ``intent`` map remains untouched for compatibility with existing
+        emitters.  Structured provenance is an additive field and is merged as a set
+        whenever concrete inputs deduplicate across decision/boundary generators.
+        """
+
+        from utgen.iteration.fingerprint import decision_key_for, obligation_key
+
+        # A symbolic row is specifically generated for the selected decision outcome;
+        # do not attach the opposite branch merely because both are present in the
+        # decision's complete obligation catalogue.  Resolve through the containing
+        # function so repeated identical decisions receive distinct occurrence keys.
+        selected = {
+            obligation_key(
+                "branch",
+                decision_key_value=decision_key_for(function, decision),
+                outcome=outcome,
+            )
+        }
+        for guard in decision.guards:
+            for candidate in function.decisions:
+                if candidate.expr is guard.expr or candidate.expr == guard.expr:
+                    selected.add(obligation_key(
+                        "branch",
+                        decision_key_value=decision_key_for(function, candidate),
+                        outcome=guard.outcome,
+                    ))
+                    break
+        return tuple(sorted(selected))
+
+    @staticmethod
+    def _merge_obligations(*values) -> tuple[str, ...]:
+        from utgen.iteration.fingerprint import merge_obligation_keys
+
+        return merge_obligation_keys(*values)
