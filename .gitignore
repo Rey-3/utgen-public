@@ -18,6 +18,8 @@ dist/
 
 # Generated test outputs
 generated/
+/PDM_MOS/
+/input/
 AppM/
 CanApp/
 PDM_UT/

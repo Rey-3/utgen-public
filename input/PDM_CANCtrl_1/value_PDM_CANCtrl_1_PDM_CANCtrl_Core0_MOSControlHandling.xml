@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<function name="PDM_CANCtrl_Core0_MOSControlHandling" file="">
-    <argument name="PDM_CANCtrl_Core0_MosStat.CANMosCtrl[13]" len="9" format="PDM_CANCtrlStat_Type" direction="out" pointer="false" output="0|0|0|0|0|0|0|0|0|0|0|0|0" />
-    <argument name="PDM_Core0_MosCtrlReq[13]" len="8" format="unsigned" direction="in" pointer="false" range="0" testmethod="decision" />
-</function>
