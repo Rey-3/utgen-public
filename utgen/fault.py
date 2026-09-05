@@ -24,16 +24,10 @@ class FaultGenerator:
                 if key in seen:
                     continue
                 seen.add(key)
-                from utgen.iteration.fingerprint import logical_argument_key, obligation_key
                 rows.append(TestRow(
                     values,
                     "Fault Injection",
                     f"fault {variable.name}: {value}",
-                    obligation_keys=(obligation_key(
-                        "fault",
-                        logical_argument_key_value=logical_argument_key(variable.name),
-                        outcome=value,
-                    ),),
                 ))
         return rows
 

@@ -42,7 +42,6 @@ class BoundaryGenerator:
                             "Boundary",
                             self._description(atom, point),
                             self._guard_intent(function, decision),
-                            obligation_keys=self._obligation_keys(function, decision, atom, point),
                         )
                         self._append(rows, by_values, row)
                         break
@@ -79,46 +78,12 @@ class BoundaryGenerator:
         return out
 
     @staticmethod
-    def _obligation_keys(function: FunctionIR, decision, atom: Atom, point: int) -> tuple[str, ...]:
-        from utgen.iteration.fingerprint import atom_key, decision_key_for, obligation_key
-
-        d_key = decision_key_for(function, decision)
-        atoms = atoms_of(decision.expr)
-        index = next((index for index, candidate in enumerate(atoms) if candidate is atom), 0)
-        base = atom.rhs
-        if atom.rhs_var is not None:
-            base = (atom.rhs_var.ctype.lo + atom.rhs_var.ctype.hi) // 2
-        offset = point - base if isinstance(base, int) else 0
-        if offset not in {-1, 0, 1}:
-            offset = 0
-        result = {
-            obligation_key(
-                "boundary",
-                decision_key_value=d_key,
-                atom_key_value=atom_key(atom, occurrence=index),
-                outcome=f"{offset:+d}",
-            )
-        }
-        for guard in decision.guards:
-            for candidate in function.decisions:
-                if candidate.expr is guard.expr or candidate.expr == guard.expr:
-                    result.add(obligation_key(
-                        "branch",
-                        decision_key_value=decision_key_for(function, candidate),
-                        outcome=guard.outcome,
-                    ))
-                    break
-        return tuple(sorted(result))
-
-    @staticmethod
     def _append(rows: list, by_values: dict, row: TestRow) -> None:
         key = tuple(row.values.items())
         existing = by_values.get(key)
         if existing is not None:
             existing.description += f"; {row.description}"
             existing.intent.update(row.intent)
-            from utgen.iteration.fingerprint import merge_obligation_keys
-            existing.obligation_keys = merge_obligation_keys(existing.obligation_keys, row.obligation_keys)
             return
         by_values[key] = row
         rows.append(row)

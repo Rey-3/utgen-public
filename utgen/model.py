@@ -492,6 +492,36 @@ class TestRow:
     obligation_keys: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class RecipeProvenance:
+    """Read-only mapping from one logical recipe to its concrete row."""
+
+    decision_index: int
+    decision_id: int
+    atom_texts: tuple[str, ...]
+    atom_values: tuple[bool, ...]
+    result: bool
+    concrete_row_index: int
+
+
+@dataclass(frozen=True)
+class GeneratedRowProvenance:
+    """Read-only provenance for rows without a Decision recipe."""
+
+    kind: str
+    source_order: int
+    concrete_row_index: int
+
+
+@dataclass(frozen=True)
+class AssemblyResult:
+    """Rows plus logical recipe/generated-row provenance."""
+
+    rows: tuple[TestRow, ...]
+    recipes: tuple[RecipeProvenance, ...]
+    generated_rows: tuple[GeneratedRowProvenance, ...] = ()
+
+
 @dataclass
 class Constraint:
     """

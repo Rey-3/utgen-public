@@ -3,7 +3,17 @@ from __future__ import annotations
 from itertools import product
 
 from utgen.mcdc import McdcGenerator, MaskingRecipes, eval_expr
-from utgen.model import Atom, Direction, FunctionIR, Inventory, TestRow, atoms_of
+from utgen.model import (
+    AssemblyResult,
+    Atom,
+    Direction,
+    FunctionIR,
+    GeneratedRowProvenance,
+    Inventory,
+    RecipeProvenance,
+    TestRow,
+    atoms_of,
+)
 from utgen.solver import AtomConstraints, Solver
 
 
@@ -21,22 +31,38 @@ class RowAssembler:
     def assemble(self, function: FunctionIR) -> list[TestRow]:
         """Convert MC/DC, coverage, boundary and fault requirements into concrete input rows."""
 
+        return self._assemble(function)[0]
+
+    def assemble_with_provenance(self, function: FunctionIR) -> AssemblyResult:
+        """Return generated rows together with their read-only recipe mapping."""
+
+        rows, recipes, generated_rows = self._assemble(function, collect_provenance=True)
+        return AssemblyResult(tuple(rows), tuple(recipes), tuple(generated_rows))
+
+    def _assemble(self, function: FunctionIR, *, collect_provenance=False):
+        """Build rows once, optionally collecting logical-to-concrete mappings."""
+
         inputs = self._inputs(function)
         # Every generated row starts from a complete, valid input set. The solver only
         # replaces variables that are needed to satisfy the current decision constraints.
         defaults = self._defaults(inputs)
         if not function.decisions:
-            return [TestRow(defaults, "Nominal", "nominal path")]
+            row = TestRow(defaults, "Nominal", "nominal path")
+            return ([row], [], [GeneratedRowProvenance("Nominal", 0, 0)]) if collect_provenance else ([row], [], [])
 
         rows = []
+        recipes = []
+        generated_rows = []
         # Different coverage goals can resolve to exactly the same concrete inputs.
         # Keep one row per input set and merge the coverage intent into that row.
         by_values = {}
+        row_indices = {}
+        seen_recipes = set()
 
         from utgen.coverage import CoverageGenerator
 
         concrete = CoverageGenerator()
-        for decision in function.decisions:
+        for decision_index, decision in enumerate(function.decisions):
             # A nested decision is only reachable when all of its enclosing guards have
             # the required outcomes. _guards() expands those guards into compatible atom recipes.
             guard_assignments = self._guards(decision)
@@ -64,18 +90,27 @@ class RowAssembler:
                     outcome = eval_expr(decision.expr, assignment)
                     intent = self._intent(function, decision, outcome)
                     existing = by_values.get(key)
-                    obligations = self._obligations(function, decision, outcome)
                     if existing is not None:
                         existing.description += f"; decision {decision.id} = {outcome}"
                         existing.intent.update(intent)
-                        existing.obligation_keys = self._merge_obligations(existing.obligation_keys, obligations)
+                        concrete_row_index = row_indices[key] if collect_provenance else None
+                        if collect_provenance:
+                            self._append_recipe(
+                                recipes, seen_recipes, decision_index, decision,
+                                assignment, outcome, concrete_row_index,
+                            )
                         break
 
                     kind = "Switch" if decision.kind == "case" else "MC/DC"
-                    row = TestRow(values, kind, f"decision {decision.id} = {outcome}", intent,
-                                  obligation_keys=obligations)
+                    row = TestRow(values, kind, f"decision {decision.id} = {outcome}", intent)
                     by_values[key] = row
+                    row_indices[key] = len(rows)
                     rows.append(row)
+                    if collect_provenance:
+                        self._append_recipe(
+                            recipes, seen_recipes, decision_index, decision,
+                            assignment, outcome, row_indices[key],
+                        )
                     break
 
             # Symbolic MC/DC recipes do not always guarantee that the concrete execution
@@ -85,11 +120,12 @@ class RowAssembler:
                 key = tuple(coverage.values.items())
                 if key not in by_values:
                     by_values[key] = coverage
+                    row_indices[key] = len(rows)
                     rows.append(coverage)
-                else:
-                    existing = by_values[key]
-                    existing.obligation_keys = self._merge_obligations(
-                        existing.obligation_keys, coverage.obligation_keys
+                if collect_provenance:
+                    self._append_coverage_recipes(
+                        recipes, seen_recipes, function, coverage,
+                        decision_index, decision, row_indices[key],
                     )
 
         if self.include_boundary:
@@ -103,11 +139,9 @@ class RowAssembler:
                 if existing is not None:
                     existing.description += f"; {boundary.description}"
                     existing.intent.update(boundary.intent)
-                    existing.obligation_keys = self._merge_obligations(
-                        existing.obligation_keys, boundary.obligation_keys
-                    )
                     continue
                 by_values[key] = boundary
+                row_indices[key] = len(rows)
                 rows.append(boundary)
 
         if self.include_fault:
@@ -121,13 +155,11 @@ class RowAssembler:
                 existing = by_values.get(key)
                 if existing is not None:
                     existing.description += f"; {fault.description}"
-                    existing.obligation_keys = self._merge_obligations(
-                        existing.obligation_keys, fault.obligation_keys
-                    )
                     continue
                 by_values[key] = fault
+                row_indices[key] = len(rows)
                 rows.append(fault)
-        return rows
+        return (rows, recipes, generated_rows)
 
     @staticmethod
     def _inputs(function: FunctionIR) -> list:
@@ -231,40 +263,48 @@ class RowAssembler:
         return out
 
     @staticmethod
-    def _obligations(function: FunctionIR, decision, outcome: bool) -> tuple[str, ...]:
-        """Translate legacy integer intent into stable objective identities.
-
-        The legacy ``intent`` map remains untouched for compatibility with existing
-        emitters.  Structured provenance is an additive field and is merged as a set
-        whenever concrete inputs deduplicate across decision/boundary generators.
-        """
-
-        from utgen.iteration.fingerprint import decision_key_for, obligation_key
-
-        # A symbolic row is specifically generated for the selected decision outcome;
-        # do not attach the opposite branch merely because both are present in the
-        # decision's complete obligation catalogue.  Resolve through the containing
-        # function so repeated identical decisions receive distinct occurrence keys.
-        selected = {
-            obligation_key(
-                "branch",
-                decision_key_value=decision_key_for(function, decision),
-                outcome=outcome,
+    def _append_recipe(
+        recipes: list[RecipeProvenance], seen: set, decision_index: int,
+        decision, assignment: dict, outcome: bool, concrete_row_index: int,
+    ) -> None:
+        atoms = tuple(atoms_of(decision.expr))
+        if outcome is None or any(atom not in assignment for atom in atoms):
+            return
+        atom_values = tuple(bool(assignment[atom]) for atom in atoms)
+        key = decision_index, atom_values, bool(outcome), concrete_row_index
+        if key in seen:
+            return
+        seen.add(key)
+        recipes.append(
+            RecipeProvenance(
+                decision_index,
+                decision.id,
+                tuple(atom.text for atom in atoms),
+                atom_values,
+                bool(outcome),
+                concrete_row_index,
             )
-        }
-        for guard in decision.guards:
-            for candidate in function.decisions:
-                if candidate.expr is guard.expr or candidate.expr == guard.expr:
-                    selected.add(obligation_key(
-                        "branch",
-                        decision_key_value=decision_key_for(function, candidate),
-                        outcome=guard.outcome,
-                    ))
-                    break
-        return tuple(sorted(selected))
+        )
 
     @staticmethod
-    def _merge_obligations(*values) -> tuple[str, ...]:
-        from utgen.iteration.fingerprint import merge_obligation_keys
+    def _append_coverage_recipes(
+        recipes: list[RecipeProvenance], seen: set, function: FunctionIR,
+        row: TestRow, decision_index: int, decision, concrete_row_index: int,
+    ) -> None:
+        """Attach complete interpreter patterns for concrete repair rows."""
 
-        return merge_obligation_keys(*values)
+        from utgen.interp import Interpreter
+
+        result = Interpreter(Inventory(function.leaves, function.stubs)).run(function, row.values)
+        atoms = tuple(atoms_of(decision.expr))
+        for pattern in result.conditions.get(decision.id, ()):
+            if len(pattern) != len(atoms) or any(value is None for value in pattern):
+                continue
+            assignment = dict(zip(atoms, pattern))
+            outcome = eval_expr(decision.expr, assignment)
+            if outcome is None:
+                continue
+            RowAssembler._append_recipe(
+                recipes, seen, decision_index, decision, assignment,
+                outcome, concrete_row_index,
+            )

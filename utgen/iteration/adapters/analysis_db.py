@@ -9,19 +9,20 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime
 import hashlib
 from pathlib import Path, PurePath
 import re
 import xml.etree.ElementTree as ET
 
-from ..model import AnalysisRef
-from ..versioning import VersioningError, canonicalize_timestamp
-
-
 DB_SCHEMA_VERSION = 1
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _ANALYSIS_ID = re.compile(r"analysis_v1_[0-9a-f]{64}\Z")
 _SAFE_STEM = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
+_CANONICAL_TIMESTAMP = re.compile(
+    r"^(?P<local>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})"
+    r"(?P<zone>Z|[+-]\d{2}:\d{2})\Z"
+)
 _METADATA_ATTRIBUTES = frozenset({"db_schema_version", "analysis_id", "generated_at"})
 _REQUIRED_ROOT_ATTRIBUTES = frozenset({"file", "sha256", "tool"})
 # These names are normalized before comparison so state cannot be smuggled in
@@ -47,6 +48,30 @@ _FORBIDDEN_STATE_ATTRIBUTES = frozenset({
     "bodyraw", "description", "tombstone", "orphan", "conflict", "displayversion",
     "versionmirror", "versionmetadata", "utgenversion", "utgenupdatedat",
 })
+
+
+def _canonicalize_timestamp(value: object) -> str:
+    """Validate and normalize the second-precision timestamp used by the DB."""
+
+    if type(value) is not str:
+        raise ValueError("timestamp must be a string")
+    match = _CANONICAL_TIMESTAMP.fullmatch(value)
+    if match is None:
+        raise ValueError(
+            "timestamp must use YYYY-MM-DDTHH:MM:SS±HH:MM or UTC Z form "
+            "without fractional seconds"
+        )
+    local, zone = match.group("local"), match.group("zone")
+    try:
+        datetime.strptime(local, "%Y-%m-%dT%H:%M:%S")
+    except ValueError as exc:
+        raise ValueError(f"timestamp is not valid: {value!r}") from exc
+    if zone == "Z":
+        return f"{local}Z"
+    hours, minutes = int(zone[1:3]), int(zone[4:6])
+    if hours > 23 or minutes > 59:
+        raise ValueError(f"timestamp has an invalid timezone offset: {value!r}")
+    return f"{local}{'Z' if hours == 0 and minutes == 0 else zone}"
 
 
 class AnalysisDbError(ValueError):
@@ -182,8 +207,8 @@ def _metadata(root: ET.Element, *, require_metadata: bool) -> AnalysisDbMetadata
             "analysis_id must match analysis_v1_ followed by 64 lowercase hexadecimal digits"
         )
     try:
-        generated_at = canonicalize_timestamp(root.get("generated_at", ""))
-    except VersioningError as exc:
+        generated_at = _canonicalize_timestamp(root.get("generated_at", ""))
+    except ValueError as exc:
         raise AnalysisDbValidationError("generated_at is not a canonical timestamp") from exc
     metadata = AnalysisDbMetadata(
         root.get("file", ""), source_sha256, root.get("tool", ""),
@@ -244,8 +269,8 @@ def enrich_with_metadata(
             "analysis_id must be derived from the metadata-free source-analysis payload"
         )
     try:
-        generated_at = canonicalize_timestamp(generated_at)
-    except VersioningError as exc:
+        generated_at = _canonicalize_timestamp(generated_at)
+    except ValueError as exc:
         raise AnalysisDbValidationError("generated_at is not a canonical timestamp") from exc
     root = deepcopy(root)
     root.set("db_schema_version", str(DB_SCHEMA_VERSION))
@@ -312,38 +337,6 @@ class AnalysisDbAdapter:
             raise AnalysisDbValidationError(f"cannot parse stored Analysis DB: {path}") from exc
         return metadata, analysis
 
-    def normalized_module(self, value):
-        """Return the metadata-free semantic SourceAnalysis view used by PR11.
-
-        The import is lazy to keep the PR04 adapter independent of the fingerprint
-        implementation at module-import time and, importantly, still returns only
-        source-analysis data (never iteration rows or mutable Stub Bodies).
-        """
-
-        from ..fingerprint import normalize_analysis
-
-        return normalize_analysis(value)
-
-    def normalized_functions(self, value):
-        """Expose normalized function views keyed by stable source function name."""
-
-        from ..fingerprint import _function_name, _module_functions, _normalize_value
-
-        unsupported: list[str] = []
-        result = {}
-        for function in _module_functions(value):
-            result[_function_name(function)] = _normalize_value(function, unsupported=unsupported)
-        return {name: result[name] for name in sorted(result)}
-
-    def normalized_function(self, value, function_name: str):
-        """Return one normalized function view without copying module state."""
-
-        from ..fingerprint import function_fingerprint_details
-
-        details = function_fingerprint_details(value, function_name)
-        return details.components
-
-
 class AnalysisDbWriter:
     """Render or publish a metadata-enriched DB without changing legacy writers."""
 
@@ -359,8 +352,8 @@ class AnalysisDbWriter:
         content_hash = analysis_content_hash(raw)
         analysis_id = f"analysis_v1_{content_hash}"
         try:
-            timestamp = canonicalize_timestamp(generated_at)
-        except VersioningError as exc:
+            timestamp = _canonicalize_timestamp(generated_at)
+        except ValueError as exc:
             raise AnalysisDbValidationError("generated_at is not a canonical timestamp") from exc
         return enrich_with_metadata(raw, analysis_id, timestamp)
 
@@ -370,8 +363,8 @@ class AnalysisDbWriter:
         path: Path,
         *,
         generated_at: str,
-    ) -> AnalysisRef:
-        """Write a new immutable DB file and return its complete reference.
+    ) -> AnalysisDbMetadata:
+        """Write a validated DB file and return its normalized metadata.
 
         Publication uses exclusive creation so a writer cannot overwrite an
         existing fixture or accepted DB.  The input path is checked explicitly
@@ -403,13 +396,7 @@ class AnalysisDbWriter:
             raise AnalysisDbValidationError(f"refusing to overwrite existing Analysis DB: {path}") from exc
         except OSError as exc:
             raise AnalysisDbValidationError(f"cannot publish Analysis DB: {path}") from exc
-        return AnalysisRef(
-            metadata.analysis_id,
-            DB_SCHEMA_VERSION,
-            analysis_content_hash(rendered),
-            hashlib.sha256(rendered).hexdigest(),
-            metadata.source_sha256,
-        )
+        return metadata
 
 
 __all__ = [

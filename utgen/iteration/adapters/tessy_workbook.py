@@ -13,7 +13,7 @@ following relevant sheets:
 * ``Stubs``       - headers on row 4 and records beginning at row 5.
 
 ``openpyxl`` is used only after the ZIP container has been checked.  Values
-are represented with :class:`~utgen.iteration.model.CellValue` so a missing
+are represented with :class:`CellValue` so a missing
 cell, a physically present empty cell, and a value such as ``0x00`` cannot be
 silently conflated.
 """
@@ -35,9 +35,6 @@ import xml.etree.ElementTree as ET
 
 from openpyxl import load_workbook
 
-from ..model import CellValue, ExcelColumnKey
-
-
 # The limits are intentionally conservative for a TESSY workbook while still
 # leaving ample room for a future export containing more test rows.  They also
 # prevent a ZIP bomb or a workbook dimension from turning a linear import into
@@ -52,6 +49,43 @@ _CASE_LABEL_RE = re.compile(r"^tc([1-9][0-9]*)\.([0-9]+)$")
 _ARRAY_INDEX_RE = re.compile(r"\[([0-9]+)\]")
 _DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 _TESSY_51_RE = re.compile(r"^5\.1(?:\.[0-9]+)?$")
+
+
+@dataclass(frozen=True)
+class CellValue:
+    """A workbook cell retaining both its lexical and semantic value."""
+
+    kind: str
+    raw_text: str | None
+    semantic_value: object | None
+
+    def __post_init__(self) -> None:
+        if self.kind not in {"value", "explicit_empty", "missing"}:
+            raise ValueError(f"unsupported cell kind: {self.kind!r}")
+        if self.raw_text is not None and not isinstance(self.raw_text, str):
+            raise TypeError("raw_text must be a string or None")
+
+
+@dataclass(frozen=True)
+class ExcelColumnKey:
+    """Immutable identity for one Values column and array element."""
+
+    canonical_name: str
+    channel: str
+    element_path: tuple[int, ...]
+    occurrence: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.canonical_name, str) or not self.canonical_name:
+            raise ValueError("canonical_name must be a non-empty string")
+        if self.channel not in {"input", "output"}:
+            raise ValueError(f"unsupported column channel: {self.channel!r}")
+        if type(self.element_path) is not tuple or any(
+            type(index) is not int or index < 0 for index in self.element_path
+        ):
+            raise TypeError("element_path must be a tuple of non-negative integers")
+        if type(self.occurrence) is not int or self.occurrence < 0:
+            raise TypeError("occurrence must be a non-negative integer")
 
 
 class WorkbookAdapterError(ValueError):
@@ -1311,7 +1345,9 @@ parse_workbook = read_complete_export
 
 
 __all__ = [
+    "CellValue",
     "DirectionToken",
+    "ExcelColumnKey",
     "ExportCase",
     "ExportColumn",
     "ExportStub",
