@@ -12,6 +12,7 @@ import math
 import os
 from pathlib import Path, PurePosixPath
 import re
+import threading
 from typing import Any, Mapping
 
 
@@ -80,6 +81,7 @@ _STUB_KEYS = frozenset({"owner", "status", "body"})
 _DIRECTIONS = frozenset({"input", "output", "inout"})
 _CHANNELS = frozenset({"input", "output"})
 _GENERATED_KINDS = frozenset({"Nominal", "Timeout"})
+_ROW_ALLOCATOR_LOCK = threading.Lock()
 
 
 def module_paths(state_root: str | os.PathLike[str], project: str, module: str) -> ModulePaths:
@@ -137,7 +139,7 @@ def validate_module(state: dict) -> None:
     for function_name, function in functions.items():
         if not _string(function_name):
             _fail("function names must be non-empty strings")
-        function = _validate_function(function, function_name, catalog, prefix)
+        function = _validate_function(function, function_name, catalog)
         for row_id, row in function["rows"].items():
             number = _validate_row_id(row_id, prefix)
             if row_id in rows:
@@ -162,6 +164,7 @@ def write_module(path: str | os.PathLike[str], state: dict) -> None:
     validate_module(state)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    previous = path.read_bytes() if path.exists() else None
     temporary = path.with_name(f".{path.name}.tmp")
     try:
         payload = json.dumps(state, ensure_ascii=False, indent=2, allow_nan=False)
@@ -172,7 +175,21 @@ def write_module(path: str | os.PathLike[str], state: dict) -> None:
             os.fsync(stream.fileno())
         load_module(temporary)
         os.replace(temporary, path)
-        load_module(path)
+        try:
+            load_module(path)
+        except Exception:
+            if previous is None:
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    pass
+            else:
+                with temporary.open("wb") as stream:
+                    stream.write(previous)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, path)
+            raise
     finally:
         try:
             temporary.unlink()
@@ -183,34 +200,35 @@ def write_module(path: str | os.PathLike[str], state: dict) -> None:
 def allocate_row_id(state: dict) -> str:
     """Allocate the next never-reused row ID for the whole module."""
 
-    if not isinstance(state, dict):
-        _fail("state must be a mapping")
-    prefix = _row_prefix(state)
-    max_row_number = state.get("max_row_number")
-    if type(max_row_number) is not int or max_row_number < 0:
-        _fail("state.max_row_number must be a non-negative integer")
-    highest = 0
-    seen: set[str] = set()
-    functions = state.get("functions", {})
-    if not isinstance(functions, dict):
-        _fail("state.functions must be a mapping")
-    for function in functions.values():
-        if not isinstance(function, dict):
-            _fail("function state must be a mapping")
-        rows = function.get("rows", {})
-        if not isinstance(rows, dict):
-            _fail("function.rows must be a mapping")
-        for row_id in rows:
-            number = _validate_row_id(row_id, prefix)
-            if row_id in seen:
-                _fail(f"duplicate row ID: {row_id}")
-            seen.add(row_id)
-            highest = max(highest, number)
-    if max_row_number < highest:
-        _fail("state.max_row_number is below an existing row ID")
-    next_number = max_row_number + 1
-    state["max_row_number"] = next_number
-    return f"{prefix}_{next_number:03d}"
+    with _ROW_ALLOCATOR_LOCK:
+        if not isinstance(state, dict):
+            _fail("state must be a mapping")
+        prefix = _row_prefix(state)
+        max_row_number = state.get("max_row_number")
+        if type(max_row_number) is not int or max_row_number < 0:
+            _fail("state.max_row_number must be a non-negative integer")
+        highest = 0
+        seen: set[str] = set()
+        functions = state.get("functions", {})
+        if not isinstance(functions, dict):
+            _fail("state.functions must be a mapping")
+        for function in functions.values():
+            if not isinstance(function, dict):
+                _fail("function state must be a mapping")
+            rows = function.get("rows", {})
+            if not isinstance(rows, dict):
+                _fail("function.rows must be a mapping")
+            for row_id in rows:
+                number = _validate_row_id(row_id, prefix)
+                if row_id in seen:
+                    _fail(f"duplicate row ID: {row_id}")
+                seen.add(row_id)
+                highest = max(highest, number)
+        if max_row_number < highest:
+            _fail("state.max_row_number is below an existing row ID")
+        next_number = max_row_number + 1
+        state["max_row_number"] = next_number
+        return f"{prefix}_{next_number:03d}"
 
 
 def allocate_decision_key(function_state: dict) -> str:
@@ -275,7 +293,6 @@ def _validate_function(
     function: object,
     function_name: str,
     catalog: Mapping[str, Any],
-    prefix: str,
 ) -> dict:
     function = _mapping(function, f"functions.{function_name}")
     _keys(function, _FUNCTION_KEYS, f"functions.{function_name}")
@@ -301,7 +318,6 @@ def _validate_function(
 
     rows = _mapping(function["rows"], f"functions.{function_name}.rows")
     for row_id, row in rows.items():
-        _validate_row_id(row_id, prefix)
         _validate_row(row, variables, f"functions.{function_name}.rows.{row_id}")
 
     generated_rows = function["generated_rows"]
@@ -310,8 +326,10 @@ def _validate_function(
     for item in generated_rows:
         item = _mapping(item, f"functions.{function_name}.generated_rows")
         _keys(item, _GENERATED_ROW_KEYS, "generated row")
-        if not _string(item["row_id"]) or item["row_id"] not in rows:
-            _fail(f"generated row refers to an unknown row: {item.get('row_id')!r}")
+        if not _string(item["row_id"]):
+            _fail(f"generated row ID must be a non-empty string: {item.get('row_id')!r}")
+        if item["row_id"] not in rows:
+            _fail(f"generated row refers to an unknown row: {item['row_id']!r}")
         if not isinstance(item["kind"], str) or item["kind"] not in _GENERATED_KINDS:
             _fail(f"invalid generated row kind: {item['kind']!r}")
 
@@ -321,6 +339,8 @@ def _validate_function(
     for key in used_stub_keys:
         if not _string(key) or key not in catalog:
             _fail(f"unknown stub reference: {key!r}")
+        if catalog[key]["status"] == "orphaned":
+            _fail(f"orphaned stub catalog key is still used: {key!r}")
     if len(set(used_stub_keys)) != len(used_stub_keys):
         _fail(f"functions.{function_name}.used_stub_keys contains duplicates")
 
@@ -329,6 +349,8 @@ def _validate_function(
         if not _string(key) or key not in catalog:
             _fail(f"unknown function stub reference: {key!r}")
         _validate_stub(stub, f"functions.{function_name}.stubs.{key}")
+        if catalog[key]["status"] == "orphaned" and stub["status"] != "orphaned":
+            _fail(f"orphaned stub catalog key has an active function record: {key!r}")
     missing_records = set(used_stub_keys) - set(stubs)
     if missing_records:
         _fail(f"function stubs are missing used keys: {sorted(missing_records)!r}")
@@ -359,8 +381,6 @@ def _validate_function_links(
 
     for generated_index, item in enumerate(function["generated_rows"]):
         row_id = item["row_id"]
-        if row_id not in local_rows:
-            _fail(f"generated row refers to unknown row: {row_id!r}")
         if row_id in links:
             _fail(f"row has multiple logical links: {row_id}")
         links[row_id] = f"{function_name}.generated_rows[{generated_index}]"
@@ -470,7 +490,7 @@ def _validate_row(row: object, variables: Mapping[str, Any], path: str) -> None:
     _keys(row, _ROW_KEYS, path)
     if not isinstance(row["owner"], str) or row["owner"] not in {"tool", "user"}:
         _fail(f"{path}.owner is invalid")
-    if row["status"] not in {"active", "orphaned"}:
+    if not isinstance(row["status"], str) or row["status"] not in {"active", "orphaned"}:
         _fail(f"{path}.status is invalid")
     if not isinstance(row["description"], str):
         _fail(f"{path}.description must be a string")
@@ -633,7 +653,10 @@ def _validate_row_id(value: object, prefix: str) -> int:
     match = _ROW_NUMBER.fullmatch(value)
     if match is None or match.group("prefix") != prefix or int(match.group("number")) == 0:
         _fail(f"row ID has an invalid module prefix/sequence: {value!r}")
-    return int(match.group("number"))
+    number = int(match.group("number"))
+    if value != f"{prefix}_{number:03d}":
+        _fail(f"row ID is not canonical: {value!r}")
+    return number
 
 
 def _safe_component(value: object, path: str) -> str:
