@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 .venv/
+.worktrees/
 
 # Test and analysis caches
 .pytest_cache/
