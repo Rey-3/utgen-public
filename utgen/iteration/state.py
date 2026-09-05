@@ -660,21 +660,16 @@ def _nest_node(flat: Mapping[str, Any], spec: Mapping[str, Any], path: str, cons
 
 def _metadata_variables(metadata: Mapping[str, Any]) -> Mapping[str, Any]:
     if hasattr(metadata, "leaves"):
-        return _variables_from_leaves(getattr(metadata, "leaves"))
+        return _variables_from_leaves(
+            getattr(metadata, "leaves"), getattr(metadata, "stubs", ())
+        )
     if not isinstance(metadata, Mapping) and hasattr(metadata, "variables"):
-        metadata = getattr(metadata, "variables")
+        return _variables_from_leaves(
+            getattr(metadata, "variables"), getattr(metadata, "stubs", ())
+        )
     if isinstance(metadata, (list, tuple)):
         return _variables_from_leaves(metadata)
     metadata = _mapping(metadata, "metadata")
-    if "variables" in metadata and "type" not in metadata:
-        return _metadata_variables(metadata["variables"])
-    if "type" in metadata and not any(key in metadata for key in ("direction", "fields", "dimensions")):
-        name = metadata.get("name")
-        if not _string(name):
-            _fail("single variable metadata needs a name")
-        return {name: metadata}
-    if "type" in metadata and "name" in metadata:
-        return {metadata["name"]: metadata}
     if metadata and all(_is_variable(value) for value in metadata.values()):
         return _variables_from_leaves(metadata.values())
     return metadata
@@ -771,10 +766,15 @@ def _nest_leaves(flat_values: Mapping[str, str], variables: Mapping[str, Any]) -
 
 def _node_signature(spec: Mapping[str, Any]) -> tuple:
     return (
-        spec.get("type"),
+        None if spec.get("_inferred_type") else spec.get("type"),
+        _direction(spec.get("direction")),
         bool(spec.get("pointer", spec.get("is_pointer", False))),
-        spec.get("format", spec.get("fmt")),
+        _base_format(spec.get("format", spec.get("fmt"))),
         spec.get("bit_length", spec.get("bits", spec.get("xml_len"))),
+        spec.get("bits"),
+        spec.get("xml_len"),
+        spec.get("signed"),
+        _json_native(spec.get("enum_values", ())),
         bool(spec.get("stub_return", False)),
     )
 
@@ -817,16 +817,22 @@ def _metadata_path_tokens(path: str) -> tuple[str | int, ...]:
         return (root, *tokens[1:])
 
 
-def _variables_from_leaves(leaves: object) -> dict[str, dict[str, Any]]:
+def _variables_from_leaves(leaves: object, stubs: object = ()) -> dict[str, dict[str, Any]]:
     if not isinstance(leaves, (list, tuple)):
         _fail("metadata leaves must be a sequence")
-    result: dict[str, dict[str, Any]] = {}
+    stub_roots = _stub_return_roots(stubs)
+    parsed: list[tuple[object, str, tuple[str | int, ...], str]] = []
+    names: set[str] = set()
+    paths: set[tuple[str | int, ...]] = set()
     for leaf in leaves:
         if not _is_variable(leaf):
             _fail("metadata leaves must contain Variable metadata")
         name = getattr(leaf, "name")
         if not isinstance(name, str) or not name:
             _fail("metadata leaf names must be non-empty strings")
+        if name in names:
+            _fail(f"metadata contains a duplicate leaf path: {name!r}")
+        names.add(name)
         direction = _direction(getattr(leaf, "direction"))
         if direction is None:
             _fail(f"metadata leaf has invalid direction: {name!r}")
@@ -834,29 +840,85 @@ def _variables_from_leaves(leaves: object) -> dict[str, dict[str, Any]]:
             tokens = _metadata_path_tokens(name)
         except StateValidationError:
             _fail(f"metadata leaf has an invalid path: {name!r}")
+        if tokens in paths:
+            _fail(f"metadata contains a duplicate leaf path: {name!r}")
+        paths.add(tokens)
+        parsed.append((leaf, name, tokens, direction))
+    for index, (_, left_name, left, _) in enumerate(parsed):
+        for _, right_name, right, _ in parsed[index + 1:]:
+            _validate_leaf_path_pair(left_name, left, right_name, right)
+
+    result: dict[str, dict[str, Any]] = {}
+    for leaf, name, tokens, direction in parsed:
         root = tokens[0]
         spec = result.setdefault(root, {"type": "", "direction": direction})
         if spec.get("direction") != direction:
             _fail(f"metadata leaf has conflicting directions: {name!r}")
-        _merge_leaf_metadata(spec, tokens[1:], leaf)
+        _merge_leaf_metadata(spec, tokens[1:], leaf, root in stub_roots)
     return result
 
 
-def _merge_leaf_metadata(spec: dict[str, Any], suffix: tuple[str | int, ...], leaf: object) -> None:
+def _stub_return_roots(stubs: object) -> set[str]:
+    if stubs is None:
+        return set()
+    if not isinstance(stubs, (list, tuple)):
+        _fail("metadata stubs must be a sequence")
+    roots = set()
+    for stub in stubs:
+        name = getattr(stub, "name", None)
+        if not isinstance(name, str) or not name:
+            _fail("metadata stubs must contain named stub metadata")
+        roots.add(f"tessy_{name}")
+    return roots
+
+
+def _validate_leaf_path_pair(
+    left_name: str,
+    left: tuple[str | int, ...],
+    right_name: str,
+    right: tuple[str | int, ...],
+) -> None:
+    common = min(len(left), len(right))
+    for index in range(common):
+        left_token, right_token = left[index], right[index]
+        if left_token == right_token:
+            continue
+        if isinstance(left_token, int) and isinstance(right_token, int):
+            _fail(f"metadata contains conflicting array extents: {left_name!r}, {right_name!r}")
+        if isinstance(left_token, int) != isinstance(right_token, int):
+            _fail(f"metadata contains conflicting leaf paths: {left_name!r}, {right_name!r}")
+        return
+    if len(left) == len(right):
+        _fail(f"metadata contains duplicate leaf paths: {left_name!r}, {right_name!r}")
+    _fail(f"metadata contains conflicting leaf paths: {left_name!r}, {right_name!r}")
+
+
+def _merge_leaf_metadata(
+    spec: dict[str, Any],
+    suffix: tuple[str | int, ...],
+    leaf: object,
+    stub_return: bool,
+) -> None:
     ctype = getattr(leaf, "ctype")
-    leaf_format = _base_format(getattr(leaf, "fmt", ""))
+    leaf_format = getattr(leaf, "fmt", "")
+    ctype_bits = getattr(ctype, "bits", None)
     leaf_spec = {
         "type": getattr(ctype, "name", "") or "unknown",
         "format": leaf_format,
-        "bit_length": getattr(ctype, "bits", getattr(leaf, "xml_len", "")),
+        "xml_len": getattr(leaf, "xml_len", ""),
+        "bits": ctype_bits,
+        "bit_length": ctype_bits if ctype_bits is not None else getattr(leaf, "xml_len", ""),
+        "signed": getattr(ctype, "signed", None),
+        "enum_values": _json_native(getattr(ctype, "enum_values", ())),
         "pointer": bool(getattr(leaf, "is_pointer", False)),
-        "stub_return": getattr(leaf, "name", "").startswith("tessy_"),
+        "stub_return": stub_return,
     }
     if not spec.get("type"):
+        base_format = _base_format(leaf_format)
         spec.update({
-            "type": leaf_format if any(isinstance(token, str) for token in suffix)
-            else leaf_spec["type"],
-            "stub_return": leaf_spec["stub_return"],
+            "type": base_format if any(isinstance(token, str) for token in suffix)
+            and base_format else leaf_spec["type"],
+            "stub_return": stub_return,
         })
     if not suffix:
         if spec.get("fields") or spec.get("dimensions"):
@@ -883,8 +945,10 @@ def _merge_leaf_metadata(spec: dict[str, Any], suffix: tuple[str | int, ...], le
             array_depth += 1
             position += 1
             continue
+        if "format" in node:
+            _fail(f"metadata contains conflicting leaf shape: {getattr(leaf, 'name', '')!r}")
         fields = node.setdefault("fields", {})
-        child = fields.setdefault(token, {"type": leaf_spec["type"]})
+        child = fields.setdefault(token, {"type": leaf_spec["type"], "_inferred_type": True})
         node = child
         array_depth = 0
         position += 1
@@ -896,6 +960,7 @@ def _merge_leaf_metadata(spec: dict[str, Any], suffix: tuple[str | int, ...], le
         if key != "type"
     ):
         _fail(f"metadata contains conflicting leaf type: {getattr(leaf, 'name', '')!r}")
+    node.pop("_inferred_type", None)
     node.update(leaf_spec)
 
 
@@ -903,6 +968,14 @@ def _base_format(value: object) -> object:
     if not isinstance(value, str):
         return value
     return re.sub(r"(?:\[[0-9]+\])+\Z", "", value)
+
+
+def _json_native(value: object) -> object:
+    if isinstance(value, (list, tuple)):
+        return [_json_native(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _json_native(item) for key, item in value.items()}
+    return value
 
 
 def _row_prefix(state: Mapping[str, Any]) -> str:
