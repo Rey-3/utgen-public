@@ -30,6 +30,7 @@ _SAFE_COMPONENT = re.compile(r"[^/\\:\x00]+\Z")
 _ROW_NUMBER = re.compile(r"(?P<prefix>.+)_(?P<number>[0-9]{3,})\Z")
 _DECISION_KEY = re.compile(r"D(?P<number>[1-9][0-9]*)\Z")
 _ATOM_KEY = re.compile(r"A(?P<number>[1-9][0-9]*)\Z")
+_PATH_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _FORBIDDEN_KEYS = frozenset({
     "decision_hash",
     "recipe_hash",
@@ -255,11 +256,48 @@ def allocate_decision_key(function_state: dict) -> str:
     return f"D{next_number}"
 
 
+def parse_leaf_path(path: str) -> tuple[str | int, ...]:
+    """Parse one TESSY leaf path into identifier and array-index tokens."""
+
+    if not isinstance(path, str) or not path:
+        _fail("leaf path must be a non-empty string")
+    tokens: list[str | int] = []
+    position = 0
+    match = _PATH_IDENTIFIER.match(path, position)
+    if match is None:
+        _fail(f"invalid leaf path: {path!r}")
+    tokens.append(match.group())
+    position = match.end()
+    while position < len(path):
+        marker = path[position]
+        if marker == ".":
+            position += 1
+            match = _PATH_IDENTIFIER.match(path, position)
+            if match is None:
+                _fail(f"invalid leaf path: {path!r}")
+            tokens.append(match.group())
+            position = match.end()
+            continue
+        if marker == "[":
+            end = path.find("]", position + 1)
+            if end < 0 or end == position + 1:
+                _fail(f"invalid leaf path: {path!r}")
+            index = path[position + 1:end]
+            if re.fullmatch(r"[0-9]+", index) is None:
+                _fail(f"invalid leaf path: {path!r}")
+            tokens.append(int(index))
+            position = end + 1
+            continue
+        _fail(f"invalid leaf path: {path!r}")
+    return tuple(tokens)
+
+
 def flatten_values(value: dict, metadata: Mapping[str, Any], channel: str | None = None) -> dict[str, str]:
     """Flatten nested JSON values to TESSY-style leaf paths."""
 
     variables = _metadata_variables(metadata)
     selected = _selected_variables(variables, channel)
+    _schema_leaves(selected)
     value = _mapping(value, "value")
     result: dict[str, str] = {}
     for name, spec in selected.items():
@@ -279,6 +317,7 @@ def nest_values(flat_values: Mapping[str, str], metadata: Mapping[str, Any], cha
         _fail("flat value paths must be strings")
     variables = _metadata_variables(metadata)
     selected = _selected_variables(variables, channel)
+    _schema_leaves(selected)
     result: dict[str, Any] = {}
     consumed: set[str] = set()
     for name, spec in selected.items():
@@ -287,6 +326,29 @@ def nest_values(flat_values: Mapping[str, str], metadata: Mapping[str, Any], cha
     if extras:
         _fail(f"flat values contain unknown paths: {sorted(extras)!r}")
     return result
+
+
+def sync_row_schema(row: dict, old_variables: Mapping[str, Any], new_variables: Mapping[str, Any]) -> None:
+    """Project one row onto a changed variable schema without changing old lexemes."""
+
+    row = _mapping(row, "row")
+    old = _metadata_variables(old_variables)
+    new = _metadata_variables(new_variables)
+    for channel in _CHANNELS:
+        old_selected = _selected_variables(old, channel)
+        new_selected = _selected_variables(new, channel)
+        old_leaves = _schema_leaves(old_selected)
+        new_leaves = _schema_leaves(new_selected)
+        old_values = _read_schema_values(row.get(channel, {}), old_leaves)
+        projected = {
+            path: old_values[path]
+            for path, spec in new_leaves.items()
+            if path in old_leaves
+            and old_leaves[path][1] == spec[1]
+            and path in old_values
+        }
+        projected.update({path: "0" for path in new_leaves if path not in projected})
+        row[channel] = _nest_leaves(projected, new_selected)
 
 
 def _validate_function(
@@ -597,7 +659,15 @@ def _nest_node(flat: Mapping[str, Any], spec: Mapping[str, Any], path: str, cons
 
 
 def _metadata_variables(metadata: Mapping[str, Any]) -> Mapping[str, Any]:
+    if hasattr(metadata, "leaves"):
+        return _variables_from_leaves(getattr(metadata, "leaves"))
+    if not isinstance(metadata, Mapping) and hasattr(metadata, "variables"):
+        metadata = getattr(metadata, "variables")
+    if isinstance(metadata, (list, tuple)):
+        return _variables_from_leaves(metadata)
     metadata = _mapping(metadata, "metadata")
+    if "variables" in metadata and "type" not in metadata:
+        return _metadata_variables(metadata["variables"])
     if "type" in metadata and not any(key in metadata for key in ("direction", "fields", "dimensions")):
         name = metadata.get("name")
         if not _string(name):
@@ -605,6 +675,8 @@ def _metadata_variables(metadata: Mapping[str, Any]) -> Mapping[str, Any]:
         return {name: metadata}
     if "type" in metadata and "name" in metadata:
         return {metadata["name"]: metadata}
+    if metadata and all(_is_variable(value) for value in metadata.values()):
+        return _variables_from_leaves(metadata.values())
     return metadata
 
 
@@ -614,10 +686,223 @@ def _selected_variables(variables: Mapping[str, Any], channel: str | None) -> di
     result = {}
     for name, spec in variables.items():
         spec = _mapping(spec, f"metadata.{name}")
-        direction = spec.get("direction")
+        direction = _direction(spec.get("direction"))
         if channel is None or direction == "inout" or direction == channel:
             result[name] = spec
     return result
+
+
+def _schema_leaves(variables: Mapping[str, Any]) -> dict[str, tuple[Mapping[str, Any], tuple]]:
+    leaves: dict[str, tuple[Mapping[str, Any], tuple]] = {}
+    for name, spec in variables.items():
+        if not isinstance(name, str) or not name:
+            _fail("variable names must be non-empty strings")
+        _validate_variable(spec, f"metadata.{name}", root=True)
+        _metadata_path_tokens(name)
+        _collect_schema_leaves(spec, name, leaves, context=())
+    return leaves
+
+
+def _collect_schema_leaves(
+    spec: Mapping[str, Any],
+    path: str,
+    leaves: dict[str, tuple[Mapping[str, Any], tuple]],
+    index: int = 0,
+    context: tuple = (),
+) -> None:
+    dimensions = spec.get("dimensions", [])
+    if index < len(dimensions):
+        for item_index in range(dimensions[index]):
+            _collect_schema_leaves(
+                spec, f"{path}[{item_index}]", leaves, index + 1, context
+            )
+        return
+    fields = spec.get("fields")
+    if fields is not None:
+        context = context + (_node_signature(spec),)
+        for name, child in fields.items():
+            _collect_schema_leaves(child, f"{path}.{name}", leaves, context=context)
+        return
+    if path in leaves:
+        _fail(f"metadata contains a conflicting leaf path: {path!r}")
+    _metadata_path_tokens(path)
+    leaves[path] = (spec, context + (_node_signature(spec),))
+
+
+def _read_schema_values(
+    value: object,
+    leaves: Mapping[str, tuple[Mapping[str, Any], tuple]],
+) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, str] = {}
+    for path in leaves:
+        try:
+            tokens = _metadata_path_tokens(path)
+        except StateValidationError:
+            continue
+        current: object = value
+        for token in tokens:
+            if isinstance(token, int):
+                if not isinstance(current, list) or token >= len(current):
+                    current = None
+                    break
+                current = current[token]
+            else:
+                if not isinstance(current, dict) or token not in current:
+                    current = None
+                    break
+                current = current[token]
+        if isinstance(current, str):
+            result[path] = current
+    return result
+
+
+def _nest_leaves(flat_values: Mapping[str, str], variables: Mapping[str, Any]) -> dict:
+    result: dict[str, Any] = {}
+    consumed: set[str] = set()
+    for name, spec in variables.items():
+        result[name] = _nest_node(flat_values, spec, name, consumed)
+    extras = set(flat_values) - consumed
+    if extras:
+        _fail(f"flat values contain unknown paths: {sorted(extras)!r}")
+    return result
+
+
+def _node_signature(spec: Mapping[str, Any]) -> tuple:
+    return (
+        spec.get("type"),
+        bool(spec.get("pointer", spec.get("is_pointer", False))),
+        spec.get("format", spec.get("fmt")),
+        spec.get("bit_length", spec.get("bits", spec.get("xml_len"))),
+        bool(spec.get("stub_return", False)),
+    )
+
+
+def _direction(value: object) -> str | None:
+    text = getattr(value, "value", value)
+    if text == "in":
+        return "input"
+    if text == "out":
+        return "output"
+    if text in _DIRECTIONS:
+        return text
+    return None
+
+
+def _is_variable(value: object) -> bool:
+    return all(hasattr(value, name) for name in ("name", "ctype", "direction"))
+
+
+def _metadata_path_tokens(path: str) -> tuple[str | int, ...]:
+    """Parse normal paths and opaque roots used by existing IR leaf names."""
+
+    try:
+        return parse_leaf_path(path)
+    except StateValidationError:
+        root_end = len(path)
+        for marker in ".[":
+            index = path.find(marker)
+            if index >= 0:
+                root_end = min(root_end, index)
+        root = path[:root_end]
+        if not root or not (
+            root.startswith("@") or any(mark in root for mark in ("()", "::", "#"))
+        ):
+            raise
+        suffix = path[root_end:]
+        if not suffix:
+            return (root,)
+        tokens = parse_leaf_path(f"_root{suffix}")
+        return (root, *tokens[1:])
+
+
+def _variables_from_leaves(leaves: object) -> dict[str, dict[str, Any]]:
+    if not isinstance(leaves, (list, tuple)):
+        _fail("metadata leaves must be a sequence")
+    result: dict[str, dict[str, Any]] = {}
+    for leaf in leaves:
+        if not _is_variable(leaf):
+            _fail("metadata leaves must contain Variable metadata")
+        name = getattr(leaf, "name")
+        if not isinstance(name, str) or not name:
+            _fail("metadata leaf names must be non-empty strings")
+        direction = _direction(getattr(leaf, "direction"))
+        if direction is None:
+            _fail(f"metadata leaf has invalid direction: {name!r}")
+        try:
+            tokens = _metadata_path_tokens(name)
+        except StateValidationError:
+            _fail(f"metadata leaf has an invalid path: {name!r}")
+        root = tokens[0]
+        spec = result.setdefault(root, {"type": "", "direction": direction})
+        if spec.get("direction") != direction:
+            _fail(f"metadata leaf has conflicting directions: {name!r}")
+        _merge_leaf_metadata(spec, tokens[1:], leaf)
+    return result
+
+
+def _merge_leaf_metadata(spec: dict[str, Any], suffix: tuple[str | int, ...], leaf: object) -> None:
+    ctype = getattr(leaf, "ctype")
+    leaf_format = _base_format(getattr(leaf, "fmt", ""))
+    leaf_spec = {
+        "type": getattr(ctype, "name", "") or "unknown",
+        "format": leaf_format,
+        "bit_length": getattr(ctype, "bits", getattr(leaf, "xml_len", "")),
+        "pointer": bool(getattr(leaf, "is_pointer", False)),
+        "stub_return": getattr(leaf, "name", "").startswith("tessy_"),
+    }
+    if not spec.get("type"):
+        spec.update({
+            "type": leaf_format if any(isinstance(token, str) for token in suffix)
+            else leaf_spec["type"],
+            "stub_return": leaf_spec["stub_return"],
+        })
+    if not suffix:
+        if spec.get("fields") or spec.get("dimensions"):
+            _fail(f"metadata contains conflicting leaf shape: {getattr(leaf, 'name', '')!r}")
+        if any(
+            key in spec and spec[key] != value
+            for key, value in leaf_spec.items()
+            if key != "type"
+        ):
+            _fail(f"metadata contains conflicting leaf type: {getattr(leaf, 'name', '')!r}")
+        spec.update(leaf_spec)
+        return
+    node = spec
+    position = 0
+    array_depth = 0
+    while position < len(suffix):
+        token = suffix[position]
+        if isinstance(token, int):
+            dimensions = node.setdefault("dimensions", [])
+            if len(dimensions) <= array_depth:
+                dimensions.append(token)
+            elif dimensions[array_depth] != token:
+                _fail(f"metadata contains conflicting array shape: {getattr(leaf, 'name', '')!r}")
+            array_depth += 1
+            position += 1
+            continue
+        fields = node.setdefault("fields", {})
+        child = fields.setdefault(token, {"type": leaf_spec["type"]})
+        node = child
+        array_depth = 0
+        position += 1
+    if node.get("fields"):
+        _fail(f"metadata contains conflicting leaf shape: {getattr(leaf, 'name', '')!r}")
+    if any(
+        key in node and node[key] != value
+        for key, value in leaf_spec.items()
+        if key != "type"
+    ):
+        _fail(f"metadata contains conflicting leaf type: {getattr(leaf, 'name', '')!r}")
+    node.update(leaf_spec)
+
+
+def _base_format(value: object) -> object:
+    if not isinstance(value, str):
+        return value
+    return re.sub(r"(?:\[[0-9]+\])+\Z", "", value)
 
 
 def _row_prefix(state: Mapping[str, Any]) -> str:
@@ -732,6 +1017,8 @@ __all__ = [
     "load_module",
     "module_paths",
     "nest_values",
+    "parse_leaf_path",
+    "sync_row_schema",
     "validate_module",
     "write_module",
 ]
