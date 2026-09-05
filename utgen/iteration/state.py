@@ -670,8 +670,6 @@ def _metadata_variables(metadata: Mapping[str, Any]) -> Mapping[str, Any]:
     if isinstance(metadata, (list, tuple)):
         return _variables_from_leaves(metadata)
     metadata = _mapping(metadata, "metadata")
-    if metadata and all(_is_variable(value) for value in metadata.values()):
-        return _variables_from_leaves(metadata.values())
     return metadata
 
 
@@ -765,8 +763,9 @@ def _nest_leaves(flat_values: Mapping[str, str], variables: Mapping[str, Any]) -
 
 
 def _node_signature(spec: Mapping[str, Any]) -> tuple:
+    type_name = spec.get("type")
     return (
-        None if spec.get("_inferred_type") else spec.get("type"),
+        None if type_name in {None, "", "unknown"} else type_name,
         _direction(spec.get("direction")),
         bool(spec.get("pointer", spec.get("is_pointer", False))),
         _base_format(spec.get("format", spec.get("fmt"))),
@@ -948,7 +947,7 @@ def _merge_leaf_metadata(
         if "format" in node:
             _fail(f"metadata contains conflicting leaf shape: {getattr(leaf, 'name', '')!r}")
         fields = node.setdefault("fields", {})
-        child = fields.setdefault(token, {"type": leaf_spec["type"], "_inferred_type": True})
+        child = fields.setdefault(token, {"type": "unknown"})
         node = child
         array_depth = 0
         position += 1
@@ -960,7 +959,6 @@ def _merge_leaf_metadata(
         if key != "type"
     ):
         _fail(f"metadata contains conflicting leaf type: {getattr(leaf, 'name', '')!r}")
-    node.pop("_inferred_type", None)
     node.update(leaf_spec)
 
 
