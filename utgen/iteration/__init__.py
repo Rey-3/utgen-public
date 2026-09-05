@@ -1,8 +1,8 @@
-"""Current iteration adapters.
-
-The iteration package intentionally exposes only the retained external-format
-adapters. JSON state and merge APIs are added by the later iteration tasks.
-"""
+"""Current JSON iteration state and retained external-format adapters."""
 
 from .adapters import *
-from .adapters import __all__
+from .adapters import __all__ as _adapter_all
+from .state import *
+from .state import __all__ as _state_all
+
+__all__ = [*_adapter_all, *_state_all]
