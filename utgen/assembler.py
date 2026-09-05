@@ -271,7 +271,7 @@ class RowAssembler:
         if outcome is None or any(atom not in assignment for atom in atoms):
             return
         atom_values = tuple(bool(assignment[atom]) for atom in atoms)
-        key = decision_index, atom_values, bool(outcome), concrete_row_index
+        key = decision_index, atom_values, bool(outcome)
         if key in seen:
             return
         seen.add(key)
