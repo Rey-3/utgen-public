@@ -448,7 +448,8 @@ def _merge_leaf_metadata(
 
 
 def _generated_flat_values(values, metadata, selected, channel):
-    values = values if isinstance(values, Mapping) else {}
+    if not isinstance(values, Mapping):
+        _fail("generated values must be a mapping")
     leaves = {
         leaf.name: leaf
         for leaf in _metadata_leaves(metadata)

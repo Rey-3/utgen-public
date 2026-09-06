@@ -156,11 +156,9 @@ def allocate_decision_key(function_state: dict) -> str:
 
 __all__ = [
     "ModulePaths",
-    "StateValidationError",
     "allocate_decision_key",
     "allocate_row_id",
     "load_module",
     "module_paths",
-    "validate_module",
     "write_module",
 ]
