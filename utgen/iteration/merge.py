@@ -237,6 +237,12 @@ def _validated_provenance(function, result):
             )
         expected_orders[generated_row.kind] = expected_order + 1
         _validate_concrete_index(generated_row.concrete_row_index, rows, "generated row")
+        concrete_row = rows[generated_row.concrete_row_index]
+        if concrete_row.kind != generated_row.kind:
+            raise ValueError(
+                f"generated row kind {generated_row.kind!r} does not match "
+                f"concrete row kind {concrete_row.kind!r}"
+            )
     return recipes_by_decision, tuple(generated_rows)
 
 
