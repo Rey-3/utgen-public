@@ -13,6 +13,7 @@ from utgen.iteration.state import (
     nest_values,
     validate_module,
 )
+from utgen.mcdc import eval_expr
 from utgen.model import (
     And,
     AssemblyResult,
@@ -209,10 +210,16 @@ def _validated_provenance(function, result):
             raise ValueError(f"recipe atom_values are invalid for decision {decision_index}")
         if type(recipe.result) is not bool:
             raise ValueError(f"recipe result is not boolean for decision {decision_index}")
+        outcome = eval_expr(decision.expr, dict(zip(atoms, recipe.atom_values)))
+        if outcome is None or outcome != recipe.result:
+            raise ValueError(
+                f"recipe result does not match decision {decision_index}"
+            )
         _validate_concrete_index(recipe.concrete_row_index, rows, "recipe")
         recipes_by_decision[decision_index].append(recipe)
 
     generated_keys = set()
+    expected_orders = {}
     for generated_index, generated_row in enumerate(generated_rows):
         if not isinstance(generated_row, GeneratedRowProvenance):
             raise ValueError(f"generated row {generated_index} is not GeneratedRowProvenance")
@@ -226,6 +233,14 @@ def _validated_provenance(function, result):
         if key in generated_keys:
             raise ValueError(f"duplicate generated row reference: {key!r}")
         generated_keys.add(key)
+        expected_order = expected_orders.get(generated_row.kind, 0)
+        if generated_row.source_order != expected_order:
+            raise ValueError(
+                "generated row source_order is not canonical for "
+                f"{generated_row.kind!r}: expected {expected_order}, "
+                f"got {generated_row.source_order!r}"
+            )
+        expected_orders[generated_row.kind] = expected_order + 1
         _validate_concrete_index(generated_row.concrete_row_index, rows, "generated row")
     return recipes_by_decision, tuple(generated_rows)
 
