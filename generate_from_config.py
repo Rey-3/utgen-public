@@ -95,10 +95,9 @@ def _verified_result(function, rows, recipes=(), generated_rows=()):
     return AssemblyResult(tuple(rows), tuple(recipes), tuple(generated_rows))
 
 
-def write_timeout_outputs(function, name=None, output=None, *, include_rows=False):
+def write_timeout_outputs(function):
     """Return verified timeout rows without emitting legacy XML files."""
 
-    del name, output, include_rows
     rows = fallback_rows(function)
     return _verified_result(
         function,
@@ -125,10 +124,9 @@ def worker_ready():
     return _WORKER_DATABASE is not None
 
 
-def generate_function(function_name, name=None, output=None, include_rows=False):
+def generate_function(function_name):
     """Generate and verify one function from the worker's Analysis DB."""
 
-    del name, output, include_rows
     try:
         if _WORKER_DATABASE is None:
             raise RuntimeError("worker database is not initialized")
@@ -174,17 +172,16 @@ def stop_worker(pool, terminate=False):
     pool.join()
 
 
-def run_function(function, name, output, pool, *, include_rows=False):
-    del include_rows
+def run_function(function, pool):
     result = pool.apply_async(
         generate_function,
-        (function.name, name, str(output)),
+        (function.name,),
     )
     try:
         payload = result.get(timeout=FUNCTION_TIMEOUT_SECONDS)
     except mp.TimeoutError:
         stop_worker(pool, terminate=True)
-        return write_timeout_outputs(function, name, output), True
+        return write_timeout_outputs(function), True
 
     if isinstance(payload, tuple) and payload and payload[0] == "error":
         raise RuntimeError(payload[1])
@@ -198,7 +195,7 @@ def _module_database(analysis, module):
     output.mkdir(parents=True, exist_ok=True)
     database = output / f"db_{module}.xml"
     XmlDbWriter().write(analysis, database)
-    return database, output
+    return database
 
 
 def run():
@@ -211,6 +208,7 @@ def run():
     global _LAST_CONFIG
     _LAST_CONFIG = None
     projects, include_dirs = projects_from_config()
+    TIME_LOG_PATH.write_text("", encoding="utf-8")
     indexer = ModuleIndexer(
         {
             "defines": (
@@ -238,7 +236,7 @@ def run():
                     root = Path(project["root_path"])
                     print(f"{name}: indexing {source}", flush=True)
                     analysis = indexer.index(source, root)
-                    database, output = _module_database(analysis, name)
+                    database = _module_database(analysis, name)
                     print(
                         f"{name}: generating {len(analysis.functions)} functions",
                         flush=True,
@@ -257,10 +255,7 @@ def run():
                             try:
                                 print(f"{name}: generating {function.name}", flush=True)
                                 result, timed_out = run_function(
-                                    function,
-                                    name,
-                                    output,
-                                    worker_pool,
+                                    function, worker_pool
                                 )
                                 generated[function.name] = _GeneratedFunction(result)
                                 if timed_out:
