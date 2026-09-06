@@ -4,15 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-import re
 
-from utgen.iteration.state import (
-    _metadata_variables,
-    allocate_decision_key,
-    allocate_row_id,
-    nest_values,
-    validate_module,
-)
+from utgen.iteration.state import allocate_decision_key, allocate_row_id
+from utgen.iteration.validation import validate_module
+from utgen.iteration.values import metadata_variables, project_generated_values
 from utgen.mcdc import eval_expr
 from utgen.model import (
     And,
@@ -50,7 +45,7 @@ def build_candidate(analysis, generated_functions, project, module, input_hash) 
         recipes_by_decision, generated_rows = _validated_provenance(function, generated)
         function_state = {
             "max_decision_number": 0,
-            "variables": _metadata_variables(function),
+            "variables": metadata_variables(function),
             "decisions": {},
             "generated_rows": [],
             "rows": {},
@@ -171,8 +166,8 @@ def _assembly_row(result: AssemblyResult, index: int, function) -> dict:
         "status": "active",
         "description": str(row.description),
         "test_method": "",
-        "input": _nested_channel(row.values, function, "input"),
-        "output": _nested_channel(row.expected, function, "output"),
+        "input": project_generated_values(row.values, function, "input"),
+        "output": project_generated_values(row.expected, function, "output"),
     }
 
 
@@ -258,116 +253,6 @@ def _recipe_key(recipe):
         recipe.atom_values,
         recipe.result,
     )
-
-
-def _nested_channel(values, function, channel):
-    variables = _metadata_variables(function)
-    selected = {
-        name: spec
-        for name, spec in variables.items()
-        if _direction(spec.get("direction")) == channel
-        or _direction(spec.get("direction")) == "inout"
-    }
-    if not selected:
-        return {}
-    flat = _generated_flat_values(values, function, selected, channel)
-    return nest_values(flat, variables, channel)
-
-
-def _generated_flat_values(values, function, selected, channel):
-    values = values if isinstance(values, Mapping) else {}
-    leaves = {
-        leaf.name: leaf
-        for leaf in getattr(function, "leaves", ())
-        if _direction(getattr(leaf, "direction", None)) == channel
-        or _direction(getattr(leaf, "direction", None)) == "inout"
-    }
-    schema_paths = _schema_leaf_paths(selected)
-    leaf_patterns = {
-        _array_pattern(name): leaf for name, leaf in leaves.items()
-    }
-    flat = {}
-    for name, spec in selected.items():
-        if name in values and name not in leaves:
-            _flatten_nested(values[name], spec, name, flat, leaf_patterns)
-    for name, value in values.items():
-        if name in schema_paths:
-            flat[name] = _lexeme(value, leaf_patterns.get(_array_pattern(name)))
-    for name, leaf in leaves.items():
-        if name in values:
-            lexeme = _lexeme(values[name], leaf)
-            pattern = _array_pattern(name)
-            for path in schema_paths:
-                if _array_pattern(path) == pattern:
-                    flat[path] = lexeme
-    for name in schema_paths:
-        flat.setdefault(name, "0")
-    return flat
-
-
-def _flatten_nested(value, spec, path, result, leaf_patterns):
-    dimensions = spec.get("dimensions", [])
-    if dimensions:
-        for index in range(dimensions[0]):
-            child = value[index] if isinstance(value, list) and index < len(value) else 0
-            _flatten_nested(
-                child,
-                {**spec, "dimensions": dimensions[1:]},
-                f"{path}[{index}]",
-                result,
-                leaf_patterns,
-            )
-        return
-    fields = spec.get("fields")
-    if fields is not None:
-        for name, child_spec in fields.items():
-            child = value.get(name, 0) if isinstance(value, Mapping) else 0
-            _flatten_nested(child, child_spec, f"{path}.{name}", result, leaf_patterns)
-        return
-    result[path] = _lexeme(value, leaf_patterns.get(_array_pattern(path)))
-
-
-def _array_pattern(path):
-    return re.sub(r"\[[0-9]+\]", "[]", path)
-
-
-def _schema_leaf_paths(variables):
-    paths = []
-    for name, spec in variables.items():
-        _collect_leaf_paths(spec, name, paths)
-    return paths
-
-
-def _collect_leaf_paths(spec, path, result):
-    dimensions = spec.get("dimensions", [])
-    if dimensions:
-        for index in range(dimensions[0]):
-            _collect_leaf_paths(
-                {**spec, "dimensions": dimensions[1:]},
-                f"{path}[{index}]",
-                result,
-            )
-        return
-    fields = spec.get("fields")
-    if fields is not None:
-        for name, child in fields.items():
-            _collect_leaf_paths(child, f"{path}.{name}", result)
-        return
-    result.append(path)
-
-
-def _lexeme(value, leaf=None):
-    if isinstance(value, str):
-        return value
-    if value is None:
-        return "0"
-    if isinstance(value, bool):
-        return "1" if value else "0"
-    if leaf is not None:
-        for name, number in getattr(leaf.ctype, "enum_values", ()):
-            if number == value:
-                return name
-    return str(value)
 
 
 def _generated_result(generated_functions, name):
@@ -464,11 +349,6 @@ def _expression_text(expression):
     if isinstance(expression, Or):
         return "(" + " || ".join(_expression_text(child) for child in expression.children) + ")"
     return str(expression)
-
-
-def _direction(value):
-    value = getattr(value, "value", value)
-    return {"in": "input", "out": "output"}.get(value, value)
 
 
 def _relative_source(value):
