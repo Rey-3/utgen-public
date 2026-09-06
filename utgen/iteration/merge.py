@@ -1,13 +1,13 @@
 """Build the plain-dict candidate state produced by one tool generation."""
 
 from __future__ import annotations
-
 from collections.abc import Mapping
+from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
-
 from utgen.iteration.state import allocate_decision_key, allocate_row_id
 from utgen.iteration.validation import validate_module
-from utgen.iteration.values import metadata_variables, project_generated_values
+from utgen.iteration.values import metadata_variables, project_generated_values, sync_row_schema
 from utgen.mcdc import eval_expr
 from utgen.model import (
     And,
@@ -20,8 +20,394 @@ from utgen.model import (
     atoms_of,
 )
 
-
 _GENERATED_KINDS = frozenset({"Nominal", "Timeout"})
+
+@dataclass(frozen=True)
+class DecisionMatch:
+    """A candidate Decision and its first unused exact current match."""
+
+    candidate_key: str
+    current_key: str | None
+
+@dataclass(frozen=True)
+class MergeResult:
+    state: dict
+    summary: dict
+
+def match_decisions(current_function: dict, candidate_function: dict) -> list[DecisionMatch]:
+    """Match candidate Decisions by readable structure in candidate source order."""
+    current = current_function.get("decisions", {})
+    candidate = candidate_function.get("decisions", {})
+    current_items = tuple(current.items())
+    candidate_items = tuple(candidate.items())
+    used: set[str] = set()
+    matches: list[str | None] = [None] * len(candidate_items)
+    for exact in (True, False):
+        structure = _decision_structure if exact else _decision_core
+        for index, (_, item) in enumerate(candidate_items):
+            if matches[index] is not None:
+                continue
+            key = next(
+                (
+                    key
+                    for key, old in current_items
+                    if key not in used and structure(old) == structure(item)
+                ),
+                None,
+            )
+            if key is not None:
+                matches[index] = key
+                used.add(key)
+    return [DecisionMatch(item[0], matches[index]) for index, item in enumerate(candidate_items)]
+
+def merge_tool(current: dict, candidate: dict) -> MergeResult:
+    """Merge one regenerated candidate into the current module state."""
+    validate_module(current)
+    validate_module(candidate)
+    if (
+        current["project"],
+        current["module"],
+        current["source_file"],
+    ) != (
+        candidate["project"],
+        candidate["module"],
+        candidate["source_file"],
+    ):
+        raise ValueError("current and candidate module identities do not match")
+    state = deepcopy(current)
+    state.update(
+        {
+            "project": candidate["project"],
+            "module": candidate["module"],
+            "source_file": candidate["source_file"],
+            "module_input_hash": candidate["module_input_hash"],
+        }
+    )
+    state["stub_catalog"] = _merge_stub_catalog(
+        current["stub_catalog"], candidate["stub_catalog"]
+    )
+    counters = {
+        "decisions_matched": 0,
+        "decisions_added": 0,
+        "decisions_orphaned": 0,
+        "rows_kept": 0,
+        "rows_allocated": 0,
+        "rows_orphaned": 0,
+    }
+
+    current_functions = current["functions"]
+    candidate_functions = candidate["functions"]
+    for name in set(current_functions) - set(candidate_functions):
+        _orphan_function(state["functions"][name], counters)
+
+    for name, candidate_function in candidate_functions.items():
+        if name not in current_functions:
+            function = _new_function(state, candidate_function, counters)
+        else:
+            function = _merge_function(
+                state,
+                current_functions[name],
+                candidate_function,
+                counters,
+            )
+        state["functions"][name] = function
+
+    validate_module(state)
+    summary = {
+        "decisions": {
+            "matched": counters["decisions_matched"],
+            "added": counters["decisions_added"],
+            "orphaned": counters["decisions_orphaned"],
+        },
+        "rows": {
+            "kept": counters["rows_kept"],
+            "allocated": counters["rows_allocated"],
+            "orphaned": counters["rows_orphaned"],
+        },
+        "stubs": {
+            "active": sum(
+                entry["status"] == "active" for entry in state["stub_catalog"].values()
+            ),
+            "orphaned": sum(
+                entry["status"] == "orphaned" for entry in state["stub_catalog"].values()
+            ),
+        },
+    }
+    return MergeResult(state, summary)
+
+def _decision_core(decision: dict) -> tuple:
+    atoms = decision.get("atoms", {})
+    return decision.get("kind", "decision"), decision["expression"], tuple(atoms.values())
+
+def _decision_structure(decision: dict) -> tuple:
+    atoms = decision.get("atoms", {})
+    return (
+        _decision_core(decision),
+        tuple((recipe["result"], tuple(recipe["values"][key] for key in atoms))
+              for recipe in decision["recipes"]),
+    )
+
+def _recipe_structure(decision: dict, recipe: dict) -> tuple:
+    return recipe["result"], tuple(recipe["values"][key] for key in decision["atoms"])
+
+def _merge_stub_catalog(current: dict, candidate: dict) -> dict:
+    merged = {}
+    for key, entry in candidate.items():
+        item = deepcopy(entry)
+        item["status"] = "active"
+        merged[key] = item
+    for key, entry in current.items():
+        if key not in candidate:
+            item = deepcopy(entry)
+            item["status"] = "orphaned"
+            merged[key] = item
+    return merged
+
+
+def _new_function(state: dict, candidate: dict, counters: dict) -> dict:
+    function = deepcopy(candidate)
+    function["max_decision_number"] = 0
+    function["decisions"] = {}
+    function["generated_rows"] = []
+    function["rows"] = {}
+    candidate_rows = candidate["rows"]
+
+    for candidate_key, decision in candidate["decisions"].items():
+        key = allocate_decision_key(function)
+        merged_decision = deepcopy(decision)
+        merged_decision["recipes"] = []
+        for recipe in decision["recipes"]:
+            row_id = allocate_row_id(state)
+            function["rows"][row_id] = _tool_row(candidate_rows[recipe["row_id"]])
+            merged_recipe = deepcopy(recipe)
+            merged_recipe["row_id"] = row_id
+            merged_decision["recipes"].append(merged_recipe)
+            counters["rows_allocated"] += 1
+        function["decisions"][key] = merged_decision
+        counters["decisions_added"] += 1
+
+    for item in candidate["generated_rows"]:
+        row_id = allocate_row_id(state)
+        function["rows"][row_id] = _tool_row(candidate_rows[item["row_id"]])
+        function["generated_rows"].append({"row_id": row_id, "kind": item["kind"]})
+        counters["rows_allocated"] += 1
+
+    linked = {
+        recipe["row_id"]
+        for decision in candidate["decisions"].values()
+        for recipe in decision["recipes"]
+    }
+    linked.update(item["row_id"] for item in candidate["generated_rows"])
+    for old_row_id, row in candidate_rows.items():
+        if old_row_id in linked:
+            continue
+        row_id = allocate_row_id(state)
+        function["rows"][row_id] = deepcopy(row)
+        counters["rows_allocated"] += 1
+    function["stubs"] = _merge_stubs({}, candidate, state["stub_catalog"])
+    return function
+
+
+def _merge_function(state: dict, current: dict, candidate: dict, counters: dict) -> dict:
+    function = deepcopy(current)
+    function["variables"] = deepcopy(candidate["variables"])
+    for row in function["rows"].values():
+        sync_row_schema(row, current["variables"], candidate["variables"])
+
+    matches = match_decisions(current, candidate)
+    matched_current = {item.current_key for item in matches if item.current_key is not None}
+    decisions = {}
+    for item in matches:
+        candidate_decision = candidate["decisions"][item.candidate_key]
+        if item.current_key is None:
+            key = allocate_decision_key(function)
+            counters["decisions_added"] += 1
+            decisions[key] = _new_decision_rows(
+                state, function, candidate, candidate_decision, counters
+            )
+            continue
+
+        key = item.current_key
+        counters["decisions_matched"] += 1
+        decisions[key] = _matched_decision_rows(
+            state,
+            function,
+            current["decisions"][key],
+            candidate,
+            candidate_decision,
+            counters,
+        )
+
+    for key, old_decision in current["decisions"].items():
+        if key in matched_current:
+            continue
+        orphaned = deepcopy(function["decisions"][key])
+        orphaned["status"] = "orphaned"
+        for recipe in orphaned["recipes"]:
+            _mark_orphan(function["rows"].get(recipe["row_id"]), counters)
+        decisions[key] = orphaned
+        if old_decision["status"] != "orphaned":
+            counters["decisions_orphaned"] += 1
+    function["decisions"] = decisions
+
+    generated = []
+    used_current: set[int] = set()
+    old_generated = current["generated_rows"]
+    for item in candidate["generated_rows"]:
+        index = next(
+            (
+                index
+                for index, old in enumerate(old_generated)
+                if index not in used_current and old["kind"] == item["kind"]
+            ),
+            None,
+        )
+        if index is None:
+            row_id = allocate_row_id(state)
+            function["rows"][row_id] = _tool_row(candidate["rows"][item["row_id"]])
+            counters["rows_allocated"] += 1
+        else:
+            used_current.add(index)
+            row_id = old_generated[index]["row_id"]
+            _merge_row(function["rows"][row_id], candidate["rows"][item["row_id"]], counters)
+        generated.append({"row_id": row_id, "kind": item["kind"]})
+    for index, item in enumerate(old_generated):
+        if index not in used_current:
+            _mark_orphan(function["rows"].get(item["row_id"]), counters)
+            generated.append(deepcopy(item))
+    function["generated_rows"] = generated
+    function["used_stub_keys"] = deepcopy(candidate["used_stub_keys"])
+    function["stubs"] = _merge_stubs(current, candidate, state["stub_catalog"])
+    return function
+
+
+def _new_decision_rows(state, function, candidate, decision, counters):
+    result = deepcopy(decision)
+    result["status"] = "active"
+    result["recipes"] = []
+    for recipe in decision["recipes"]:
+        row_id = allocate_row_id(state)
+        function["rows"][row_id] = _tool_row(candidate["rows"][recipe["row_id"]])
+        item = deepcopy(recipe)
+        item["row_id"] = row_id
+        result["recipes"].append(item)
+        counters["rows_allocated"] += 1
+    return result
+
+
+def _matched_decision_rows(
+    state, function, old_decision, candidate, decision, counters
+):
+    result = deepcopy(decision)
+    result["status"] = "active"
+    result["recipes"] = []
+    used: set[int] = set()
+    for recipe in decision["recipes"]:
+        index = next(
+            (
+                index
+                for index, old in enumerate(old_decision["recipes"])
+                if index not in used
+                and _recipe_structure(old_decision, old) == _recipe_structure(decision, recipe)
+            ),
+            None,
+        )
+        if index is None:
+            row_id = allocate_row_id(state)
+            function["rows"][row_id] = _tool_row(candidate["rows"][recipe["row_id"]])
+            counters["rows_allocated"] += 1
+        else:
+            used.add(index)
+            row_id = old_decision["recipes"][index]["row_id"]
+            _merge_row(function["rows"][row_id], candidate["rows"][recipe["row_id"]], counters)
+        item = deepcopy(recipe)
+        item["row_id"] = row_id
+        result["recipes"].append(item)
+    for index, old in enumerate(old_decision["recipes"]):
+        if index not in used:
+            _mark_orphan(function["rows"].get(old["row_id"]), counters)
+            result["recipes"].append(deepcopy(old))
+    return result
+
+
+def _merge_row(current: dict, candidate: dict, counters: dict) -> None:
+    if current["owner"] == "user":
+        counters["rows_kept"] += 1
+        return
+    current.clear()
+    current.update(_tool_row(candidate))
+    counters["rows_kept"] += 1
+
+
+def _tool_row(row: dict) -> dict:
+    result = deepcopy(row)
+    result["owner"] = "tool"
+    result["status"] = "active"
+    return result
+
+
+def _mark_orphan(row: dict | None, counters: dict) -> None:
+    if row is None:
+        return
+    if row["status"] != "orphaned":
+        counters["rows_orphaned"] += 1
+    row["status"] = "orphaned"
+
+
+def _merge_stubs(current: dict, candidate: dict, catalog: dict) -> dict:
+    current_stubs = current.get("stubs", {})
+    candidate_stubs = candidate.get("stubs", {})
+    used = set(candidate.get("used_stub_keys", ()))
+    merged = {}
+    for key, entry in catalog.items():
+        old = current_stubs.get(key)
+        if entry["status"] == "orphaned":
+            if old is not None:
+                item = deepcopy(old)
+                item["status"] = "orphaned"
+                merged[key] = item
+            continue
+        incoming = candidate_stubs.get(key)
+        if incoming is None:
+            incoming = {
+                "owner": "tool",
+                "status": "active",
+                "body": default_stub_body(entry, key in used),
+            }
+        if old is not None and old["owner"] == "user":
+            merged[key] = deepcopy(old)
+        else:
+            merged[key] = _tool_stub(incoming)
+    for key, old in current_stubs.items():
+        if key in merged:
+            continue
+        item = deepcopy(old)
+        item["status"] = "orphaned"
+        merged[key] = item
+    return merged
+
+
+def _tool_stub(stub: dict) -> dict:
+    result = deepcopy(stub)
+    result["owner"] = "tool"
+    result["status"] = "active"
+    return result
+
+
+def _orphan_function(function: dict, counters: dict) -> None:
+    for decision in function["decisions"].values():
+        if decision["status"] != "orphaned":
+            counters["decisions_orphaned"] += 1
+        decision["status"] = "orphaned"
+        for recipe in decision["recipes"]:
+            _mark_orphan(function["rows"].get(recipe["row_id"]), counters)
+    for item in function["generated_rows"]:
+        _mark_orphan(function["rows"].get(item["row_id"]), counters)
+    for row in function["rows"].values():
+        _mark_orphan(row, counters)
+    for stub in function["stubs"].values():
+        stub["status"] = "orphaned"
+    function["used_stub_keys"] = []
 
 
 def build_candidate(analysis, generated_functions, project, module, input_hash) -> dict:
@@ -365,4 +751,12 @@ def _relative_source(value):
     return text.lstrip("/") or "module.c"
 
 
-__all__ = ["build_candidate", "build_stub_catalog", "default_stub_body"]
+__all__ = [
+    "DecisionMatch",
+    "MergeResult",
+    "build_candidate",
+    "build_stub_catalog",
+    "default_stub_body",
+    "match_decisions",
+    "merge_tool",
+]

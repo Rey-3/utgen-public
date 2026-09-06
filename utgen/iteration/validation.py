@@ -202,8 +202,8 @@ def _validate_function_links(
             if decision["status"] == "orphaned":
                 if row["status"] != "orphaned":
                     _fail("orphaned Decision recipes must reference orphaned rows")
-            elif row["status"] != "active" and not (row["owner"] == "user" and row["status"] == "orphaned"):
-                _fail("active Decision recipes must reference active or user-orphaned rows")
+            elif row["status"] not in {"active", "orphaned"}:
+                _fail("active Decision recipes must reference active or orphaned rows")
 
     for generated_index, item in enumerate(function["generated_rows"]):
         row_id = item["row_id"]
