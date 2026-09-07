@@ -277,6 +277,21 @@ def _load_cli_config(path: Path):
     return value
 
 
+def _print_summaries(summaries):
+    for item in summaries:
+        if item.status == "error":
+            print(f"{item.project}/{item.module}: error: {item.error}")
+            continue
+        details = item.summary
+        print(
+            f"{item.project}/{item.module}: {item.status}; "
+            f"rows {details.get('rows', {})}; "
+            f"stubs {details.get('stubs', {})}; "
+            f"JSON {details.get('json', 'skipped')}; "
+            f"{details.get('excel_written', 0)} Excel files written"
+        )
+
+
 def main(argv=None):
     """Dispatch the three supported CLI modes.
 
@@ -299,10 +314,13 @@ def main(argv=None):
             parser.error("mode must be 1, 2, or 3")
     _load_cli_config(config_path)
     if mode == "1":
-        return run_generation(config_path)
-    if mode == "2":
-        return run_excel_export(config_path)
-    return run_user_merge(config_path)
+        result = run_generation(config_path)
+    elif mode == "2":
+        result = run_excel_export(config_path)
+    else:
+        result = run_user_merge(config_path)
+    _print_summaries(result)
+    return result
 
 
 if __name__ == "__main__":
