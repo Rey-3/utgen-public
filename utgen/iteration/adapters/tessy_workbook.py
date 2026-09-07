@@ -13,8 +13,9 @@ from typing import Any, Iterable, Mapping
 
 from openpyxl import Workbook
 
-from tessy_excel import writeGeneralSheet, write_testlist_cells
-from ..values import flatten_values
+from tessy_excel import convertDirectionToTessyFormat, writeGeneralSheet, write_testlist_cells
+from ..merge import default_stub_body
+from ..values import flatten_values, project_generated_values
 from ._tessy_workbook_io import (
     CellValue,
     ExcelColumnKey,
@@ -241,17 +242,57 @@ def _module_basename(value: str) -> str:
 
 
 def _is_formal_description(description: str) -> bool:
-    return any(_normalize_label(line.split(":", 1)[0]).startswith("description") for line in description.splitlines())
+    return any(
+        ":" in line and _normalize_label(line.split(":", 1)[0]) == "description"
+        for line in description.splitlines()
+    )
 
 
 def _description_parts(description: str) -> tuple[str | None, str | None, str | None, str | None]:
+    lines = description.splitlines()
+    if _is_formal_description(description):
+        if len(lines) < 2:
+            _error(
+                "MALFORMED_PROPERTIES_DESCRIPTION",
+                "formal Description must contain Test Case ID then Description lines",
+                sheet="Properties",
+            )
+        first = lines[0].split(":", 1) if ":" in lines[0] else ()
+        second = lines[1].split(":", 1) if ":" in lines[1] else ()
+        if (
+            len(first) != 2
+            or _normalize_label(first[0]) != "test case id"
+            or len(second) != 2
+            or _normalize_label(second[0]) != "description"
+        ):
+            _error(
+                "MALFORMED_PROPERTIES_DESCRIPTION",
+                "formal Description must start with Test Case ID then Description",
+                sheet="Properties",
+            )
+        external_id = first[1].strip()
+        if not external_id or not _FORMAL_ID_RE.fullmatch(external_id):
+            _error(
+                "MALFORMED_ROW_ID",
+                f"invalid Properties Test Case ID {external_id!r}",
+                sheet="Properties",
+            )
+        managed = {"test case id", "description", "test case type", "overview"}
+        for line in lines[2:]:
+            if ":" in line and _normalize_label(line.split(":", 1)[0]) in managed:
+                _error(
+                    "MALFORMED_PROPERTIES_DESCRIPTION",
+                    "formal Description contains an extra managed header",
+                    sheet="Properties",
+                )
+        description_text = "\n".join([second[1].strip(), *lines[2:]])
+        return external_id, None, None, description_text
+
     external_id = None
     description_type = None
     overview = None
     description_text = None
     id_lines = []
-    formal = _is_formal_description(description)
-    lines = description.splitlines()
     for index, line in enumerate(lines):
         if _normalize_label(line).startswith("test case id") and ":" not in line:
             _error("MALFORMED_ROW_ID", "Properties Test Case ID line must use 'Test Case ID: <id>'", sheet="Properties")
@@ -585,19 +626,9 @@ def _product_ranges(ranges: list[set[int]]) -> Iterable[tuple[int, ...]]:
                 yield (value, *suffix)
 
 
-def _zero_value(spec: Mapping[str, Any]) -> Any:
-    dimensions = spec.get("dimensions", [])
-    if dimensions:
-        return [_zero_value({**spec, "dimensions": dimensions[1:]}) for _ in range(dimensions[0])]
-    fields = spec.get("fields")
-    if fields is not None:
-        return {name: _zero_value(child) for name, child in fields.items()}
-    return "0"
-
-
 def _flatten_channel(function: Mapping[str, Any], row: Mapping[str, Any] | None, channel: str) -> dict[str, str]:
     variables = function["variables"]
-    values = row[channel] if row is not None else {name: _zero_value(spec) for name, spec in variables.items() if spec.get("direction") in {channel, "inout"}}
+    values = row[channel] if row is not None else project_generated_values({}, variables, channel)
     return flatten_values(values, variables, channel=channel)
 
 
@@ -628,21 +659,32 @@ def _project_rows(function: Mapping[str, Any], rows: list[tuple[str, dict]]):
     else:
         input_flat = _flatten_channel(function, None, "input")
         output_flat = _flatten_channel(function, None, "output")
-    columns = [(name, "input") for name in input_flat] + [(name, "output") for name in output_flat]
+    columns = []
+    typed_roots: set[str] = set()
+    for name in input_flat:
+        columns.append((name, "input", _column_direction_token(function, name, "input", typed_roots)))
+    for name in output_flat:
+        columns.append((name, "output", _column_direction_token(function, name, "output", typed_roots)))
     projected = []
     for row_id, row in rows:
         projected.append({"id": row_id, "description": row["description"], "input": _flatten_channel(function, row, "input"), "output": _flatten_channel(function, row, "output")})
     return columns, projected
 
 
-def _default_stub(entry: Mapping[str, Any], used: bool) -> str:
-    return_type = entry["return_type"]
-    if return_type in {"void", "static void"}:
-        return ""
-    storage = entry.get("return_storage")
-    if used and storage:
-        return f"extern {return_type} {storage};\nreturn {storage};"
-    return f"{return_type} temp = {{0}};\nreturn temp;"
+def _column_direction_token(
+    function: Mapping[str, Any],
+    name: str,
+    channel: str,
+    typed_roots: set[str],
+) -> str:
+    direction = "in" if channel == "input" else "out"
+    root = re.split(r"[.\[]", name, maxsplit=1)[0]
+    if not root.startswith("tessy_") or root in typed_roots:
+        return convertDirectionToTessyFormat(direction, name, show_type=False)
+    typed_roots.add(root)
+    spec = function.get("variables", {}).get(root, {})
+    type_hint = spec.get("format") or spec.get("fmt") or spec.get("type") or ""
+    return convertDirectionToTessyFormat(direction, root, str(type_hint), bool(type_hint))
 
 
 def _project_stubs(state: Mapping[str, Any], function: Mapping[str, Any]) -> list[dict[str, str]]:
@@ -653,7 +695,7 @@ def _project_stubs(state: Mapping[str, Any], function: Mapping[str, Any]) -> lis
         local = function.get("stubs", {}).get(key)
         if local is not None and local["status"] == "orphaned":
             continue
-        body = local["body"] if local is not None and local["status"] == "active" else _default_stub(entry, key in function.get("used_stub_keys", []))
+        body = local["body"] if local is not None and local["status"] == "active" else default_stub_body(entry, key in function.get("used_stub_keys", []))
         result.append({"name": key, "body": body})
     return result
 
@@ -663,12 +705,26 @@ def _load_template(template_path):
         candidate = Path(__file__).resolve().parents[3] / "template.xlsx"
         if candidate.exists():
             template_path = candidate
-    if template_path is not None and Path(template_path).exists():
+    elif not Path(template_path).exists():
+        raise WorkbookValidationError(
+            "MISSING_TEMPLATE",
+            f"explicit TESSY template does not exist: {template_path}",
+        )
+    if template_path is not None:
         return load_workbook(template_path)
     workbook = Workbook()
     workbook.active.title = "General"
     for name in ("Properties", "User Code", "Stubs", "Call Trace", "Values", "Fault Injections"):
         workbook.create_sheet(name)
+    for row, label, value in (
+        (9, "Project", ""),
+        (10, "Module", ""),
+        (11, "Testobject", ""),
+        (13, "Export Date", ""),
+        (15, "Tessy Version", "5.1.0"),
+    ):
+        workbook["General"].cell(row, 1).value = label
+        workbook["General"].cell(row, 2).value = value
     for sheet, headers, row in (("Properties", ("Test Case", "Test Step", "Repeat Count", "Name", "Description"), 4), ("Stubs", ("Test Case", "Test Step", "Stub", "Stub Body"), 4)):
         for index, value in enumerate(headers, 1):
             workbook[sheet].cell(row, index).value = value
@@ -691,7 +747,7 @@ def _validate_projection(snapshot: WorkbookSnapshot, rows, stubs, columns) -> No
     actual_ids = [case.external_test_case_id for case in snapshot.cases]
     if actual_ids != expected_ids:
         raise WorkbookValidationError("PROJECTION_MISMATCH", f"Properties/Values row IDs differ: expected {expected_ids!r}, got {actual_ids!r}")
-    expected_columns = [(name, channel) for name, channel in columns]
+    expected_columns = [(column[0], column[1]) for column in columns]
     actual_columns = [(column.name, column.channel) for column in snapshot.columns]
     if actual_columns != expected_columns:
         raise WorkbookValidationError("PROJECTION_MISMATCH", "Values columns differ from JSON state")
