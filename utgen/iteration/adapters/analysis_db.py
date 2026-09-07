@@ -445,14 +445,63 @@ class AnalysisDbWriter:
         except OSError as exc:
             raise AnalysisDbValidationError(f"cannot read existing Analysis DB: {path}") from exc
 
-        def restore_previous() -> None:
+        def restore_previous(cause: Exception) -> None:
             if previous is None:
                 try:
                     path.unlink()
                 except FileNotFoundError:
-                    pass
-            else:
-                path.write_bytes(previous)
+                    return
+                except OSError as exc:
+                    raise AnalysisDbValidationError(
+                        f"cannot remove failed Analysis DB publication: {path}: {exc}"
+                    ) from cause
+                return
+
+            restore_temp = None
+            try:
+                fd, restore_name = tempfile.mkstemp(
+                    prefix=f".{path.name}.", suffix=".restore", dir=path.parent
+                )
+                restore_temp = Path(restore_name)
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(previous)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                AnalysisDbAdapter().read_module(restore_temp, require_metadata=True)
+                try:
+                    os.replace(restore_temp, path)
+                except OSError as exc:
+                    try:
+                        restored = path.read_bytes() == previous
+                    except OSError as read_error:
+                        raise AnalysisDbValidationError(
+                            f"cannot verify restored Analysis DB: {path}: {read_error}"
+                        ) from cause
+                    if restored:
+                        return
+                    raise AnalysisDbValidationError(
+                        f"cannot restore previous Analysis DB after replace failure: {path}: {exc}"
+                    ) from cause
+                try:
+                    restored = path.read_bytes() == previous
+                except OSError as exc:
+                    raise AnalysisDbValidationError(
+                        f"cannot verify restored Analysis DB: {path}: {exc}"
+                    ) from cause
+                if not restored:
+                    raise AnalysisDbValidationError(
+                        f"restored Analysis DB does not match previous bytes: {path}"
+                    ) from cause
+            except Exception as exc:
+                raise AnalysisDbValidationError(
+                    f"cannot restore previous Analysis DB: {path}: {exc}"
+                ) from cause
+            finally:
+                if restore_temp is not None:
+                    try:
+                        restore_temp.unlink()
+                    except FileNotFoundError:
+                        pass
 
         temporary = None
         try:
@@ -468,18 +517,13 @@ class AnalysisDbWriter:
             try:
                 os.replace(temporary, path)
             except OSError as exc:
-                try:
-                    replaced = path.read_bytes() == rendered
-                except OSError:
-                    replaced = False
-                if replaced:
-                    restore_previous()
+                restore_previous(exc)
                 raise AnalysisDbValidationError(f"cannot publish Analysis DB: {path}") from exc
             temporary = None
             try:
                 AnalysisDbAdapter().read_module(path, require_metadata=True)
-            except Exception:
-                restore_previous()
+            except Exception as exc:
+                restore_previous(exc)
                 raise
         except AnalysisDbValidationError:
             raise
