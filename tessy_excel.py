@@ -83,17 +83,7 @@ def updateTestlistToExcel(func , templateFile , saveFileName , testList , testMe
         typed_vars.add(base)
     rows = []
     for index, values in enumerate(testList, 1):
-        final_method = "Ignore"
-        for method in testMethodlist[index - 1]:
-            if method in {"Invalid Test Case", "Error Injection Test"}:
-                final_method = method
-                break
-            if method == "Boundary Test" and final_method != "Error Injection Test":
-                final_method = method
-            elif method == "Functional Test" and final_method not in {"Boundary Test", "Error Injection Test"}:
-                final_method = method
-        description = constructTestDescription(index, final_method, func)
-        description = "\n".join(line for line in description.splitlines() if not line.startswith("Test Case ID:"))
+        description = f"测试{func}() 的正向测试"
         rows.append({
             "id": f"UT_TBD_{index:03d}",
             "description": description,
@@ -114,14 +104,6 @@ def updateTestlistToExcel(func , templateFile , saveFileName , testList , testMe
     write_testlist_cells(wb, rows, stubs, columns)
     wb.save( saveFileName ) ##newFileName )
 
-    
-def constructTestDescription(tcNum , tcMtd , funcName):
-    SourceName = '<TBD>'
-    result = "Test Case ID: UT_" + SourceName + "_" + str(tcNum) + "\n"
-    result += "Test Case Type: " + tcMtd + "\n"
-    result += "Overview: 测试" + funcName  + "() 的正向测试"
-    return result
-   
 def convertDirectionToTessyFormat(direction , name='' , fmt='', show_type=True):
     newDir = 'i' if direction == "in" else 'o'
     if name.startswith('tessy_') and show_type:   ### tessy_<name> variable shows its type once: i(SomeType); other members just i/o
