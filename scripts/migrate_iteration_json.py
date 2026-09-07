@@ -7,6 +7,7 @@ workflows do not import this boundary script or fall back to XML.
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 from dataclasses import dataclass, field
 import json
 import os
@@ -27,13 +28,27 @@ except ImportError:  # JSON remains a supported CLI format without PyYAML.
     yaml = None
 
 from tessy_parse import expandArrayName, expandArrayRanges
+from utgen.assembler import RowAssembler
+from utgen.mcdc import McdcGenerator
+from utgen.solver import Solver
 from utgen.iteration.adapters.analysis_db import AnalysisDbAdapter, AnalysisDbWriter
 from utgen.iteration.adapters.tessy_workbook import TessyWorkbookAdapter
+from utgen.iteration.merge import (
+    _ordered_active_rows,
+    build_candidate,
+    build_stub_catalog,
+    default_stub_body,
+)
 from utgen.iteration.state import load_module, module_paths, write_module
 from utgen.iteration.validation import validate_module
-from utgen.iteration.values import flatten_values, nest_values, parse_leaf_path
+from utgen.iteration.values import (
+    _schema_leaves as _value_schema_leaves,
+    _metadata_path_tokens,
+    flatten_values,
+    metadata_variables,
+    nest_values,
+)
 _FORMAL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*_[0-9]{3,}$")
-
 
 @dataclass
 class MigrationReport:
@@ -43,6 +58,7 @@ class MigrationReport:
     ambiguities: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     writes: list[str] = field(default_factory=list)
+
     def as_dict(self) -> dict[str, Any]:
         return {"functions": self.functions, "rows": self.rows,
                 "stubs": self.stubs, "ambiguities": self.ambiguities,
@@ -55,7 +71,6 @@ class MigrationReport:
         self.ambiguities.extend(other.ambiguities)
         self.errors.extend(other.errors)
         self.writes.extend(other.writes)
-
 
 @dataclass(frozen=True)
 class _Arg:
@@ -82,19 +97,15 @@ class _Stub:
     parameters: tuple[dict[str, str], ...] = ()
     storage: str | None = None
 
-
 def _tag(node: ET.Element) -> str:
     return node.tag.rsplit("}", 1)[-1].lower()
-
 
 def _child(node: ET.Element, name: str) -> ET.Element | None:
     name = name.lower()
     return next((item for item in list(node) if _tag(item) == name), None)
 
-
 def _text(value: Any, default: str = "") -> str:
     return default if value is None else str(value)
-
 
 def _resolve(value: Any, base: Path) -> Path:
     path = Path(os.fspath(value))
@@ -118,7 +129,7 @@ def _direct_config(value: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("configuration does not identify a module")
     if "project" not in item and "project_name" not in item and value.get("name"):
         item["project"] = value["name"]
-    for key in ("project", "project_name", "source_file", "state_root", "config_dir"):
+    for key in ("project", "project_name", "source_file", "state_root", "config_dir", "excel_output_dir"):
         if key in value and key not in item:
             item[key] = value[key]
     return item
@@ -135,7 +146,6 @@ def _identity(config: Mapping[str, Any], module_hint: str | None = None) -> tupl
         raise ValueError("project/module must be a safe path component")
     return project, module
 
-
 def _source_file(config: Mapping[str, Any], module: str, metadata: Any) -> str:
     value = config.get("relative_path") or config.get("source_file") or config.get("source")
     value = _text(value or getattr(metadata, "source_file", "") or module)
@@ -143,7 +153,6 @@ def _source_file(config: Mapping[str, Any], module: str, metadata: Any) -> str:
     if not normalized or normalized.startswith("/") or ":" in normalized or ".." in normalized.split("/"):
         raise ValueError("source_file must be a non-empty relative path")
     return value
-
 
 def _paths(config: Mapping[str, Any], root: Path, module: str) -> tuple[Path, Path, Path, Path]:
     base = Path(config.get("config_dir") or config.get("base_dir") or Path.cwd())
@@ -162,23 +171,19 @@ def _paths(config: Mapping[str, Any], root: Path, module: str) -> tuple[Path, Pa
     excel_out = _resolve(out_value, base) if out_value else (excel_in or root / "iteration" / "current_excel" / Path(module).stem)
     return working, database, excel_in, excel_out
 
-
 def _read_root(path: Path) -> ET.Element:
     try:
         return ET.parse(path).getroot()
     except (OSError, ET.ParseError) as exc:
         raise ValueError(f"cannot parse legacy XML: {path}") from exc
 
-
 def _direction(value: Any) -> str:
     value = _text(value, "in").strip().lower()
     return {"in": "input", "i": "input", "input": "input",
             "out": "output", "o": "output", "output": "output"}.get(value, "inout" if value in {"io", "inout", "in/out"} else "input")
 
-
 def _ids(value: str | None) -> tuple[str, ...]:
     return tuple(part.strip() for part in re.split(r"[,|]", value or "") if part.strip())
-
 
 def _read_values(paths: list[Path], report: MigrationReport) -> dict[str, _LegacyFunction]:
     result: dict[str, _LegacyFunction] = {}
@@ -221,21 +226,14 @@ def _read_values(paths: list[Path], report: MigrationReport) -> dict[str, _Legac
             report.errors.append(str(exc))
     return result
 
-
 def _split(value: str) -> list[str]:
     return [] if value == "" else [item.strip() for item in value.split(",")]
 
-
-def _array_paths(name: str) -> list[str]:
-    try:
-        expanded = list(expandArrayName(name))
-        return expanded or [name]
-    except Exception:
-        return [name]
-
-
 def _arg_values(arg: _Arg, output: bool) -> dict[str, list[str]]:
-    paths = _array_paths(arg.name)
+    try:
+        paths = list(expandArrayName(arg.name)) or [arg.name]
+    except Exception:
+        paths = [arg.name]
     raw = arg.output if output else arg.ranges
     try:
         groups = expandArrayRanges(raw, len(paths))
@@ -243,7 +241,6 @@ def _arg_values(arg: _Arg, output: bool) -> dict[str, list[str]]:
         groups = [raw] * len(paths)
     return {re.sub(r"\(\)$", "", path): _split(groups[i] if i < len(groups) else raw)
             for i, path in enumerate(paths)}
-
 
 def _stub_xml(path: Path, function: str) -> tuple[dict[str, str], dict[str, _Stub]]:
     root = _read_root(path)
@@ -284,61 +281,21 @@ def _stub_xml(path: Path, function: str) -> tuple[dict[str, str], dict[str, _Stu
             bodies[next(iter(signatures))] = body.text
     return bodies, signatures
 
-
-def _db(path: Path, report: MigrationReport) -> tuple[Any, dict[str, ET.Element]]:
+def _db(path: Path, report: MigrationReport) -> tuple[Any, Any]:
     try:
-        metadata, _analysis = AnalysisDbAdapter().read_module(path, require_metadata=False)
-        root = _read_root(path)
+        metadata, analysis = AnalysisDbAdapter().read_module(path, require_metadata=False)
     except Exception as exc:
         report.errors.append(f"Analysis DB {path}: {exc}")
-        return None, {}
-    functions = {node.get("name"): node for node in list(root)
-                 if _tag(node) == "function" and node.get("name")}
-    return metadata, functions
+        return None, None
+    return metadata, analysis
 
-
-def _db_stubs(node: ET.Element | None) -> dict[str, _Stub]:
-    result: dict[str, _Stub] = {}
-    if node is None:
-        return result
-    for child in list(node):
-        if _tag(child) != "stub":
-            continue
-        key = child.get("name") or child.get("function_name")
-        if not key:
-            continue
-        ret = child.get("return") or child.get("type") or "void"
-        ret_node = _child(child, "return")
-        if ret_node is not None:
-            type_node = _child(ret_node, "type")
-            ret = _text(type_node.text if type_node is not None else None, ret)
-        params = []
-        for item in list(child):
-            if _tag(item) not in {"param", "parameter", "argument"}:
-                continue
-            name, ptype = item.get("name") or "", item.get("type") or ""
-            type_node = _child(item, "type")
-            ptype = _text(type_node.text if type_node is not None else None, ptype)
-            if name and ptype:
-                params.append({"name": name, "type": ptype})
-        result[key] = _Stub(key, ret, tuple(params))
-    return result
-
-
-def _db_leaves(node: ET.Element | None) -> list[_Arg]:
-    children = list(node) if node is not None else []
-    return [_Arg(child.get("name", ""), _direction(child.get("direction")),
-                 child.get("format") or child.get("type") or "unsigned", pointer=child.get("pointer", "false").lower() == "true",
-                 address_of=child.get("address_of", ""))
-            for child in children if _tag(child) == "leaf" and child.get("name")]
-
-
-def _tokens(path: str) -> tuple[str | int, ...]:
-    return parse_leaf_path(re.sub(r"\(\)$", "", path))
-
+def _analysis_signatures(function: Any | None, catalog: Mapping[str, Any]) -> dict[str, _Stub]:
+    names = {stub.name for stub in getattr(function, "stubs", ())}
+    return {key: _Stub(key, entry["return_type"], tuple(entry["parameters"]), entry["return_storage"] or None)
+            for key, entry in catalog.items() if key in names}
 
 def _add_variable(variables: dict[str, dict[str, Any]], arg: _Arg, logical: bool) -> None:
-    tokens = _tokens(arg.name)
+    tokens = _metadata_path_tokens(re.sub(r"\(\)$", "", arg.name))
     if not tokens or not isinstance(tokens[0], str):
         raise ValueError(f"unsupported legacy variable path: {arg.name!r}")
     root = variables.setdefault(tokens[0], {"type": arg.fmt or "unsigned", "direction": arg.direction, "dimensions": []})
@@ -365,63 +322,33 @@ def _add_variable(variables: dict[str, dict[str, Any]], arg: _Arg, logical: bool
     current.setdefault("type", arg.fmt or "unsigned")
     current.setdefault("dimensions", [])
 
-
-def _leaves(spec: Mapping[str, Any], path: str, result: list[str], index: int = 0) -> None:
-    dims = spec.get("dimensions", [])
-    if index < len(dims):
-        for item in range(dims[index]):
-            _leaves(spec, f"{path}[{item}]", result, index + 1)
-        return
-    fields = spec.get("fields")
-    if fields:
-        for name, child in fields.items():
-            _leaves(child, f"{path}.{name}", result)
-    else:
-        result.append(path)
-
-
 def _schema_leaves(variables: Mapping[str, Any], channel: str) -> list[str]:
-    result = []
-    for name, spec in variables.items():
-        if channel == "input" and spec.get("direction") not in {"input", "inout"}:
-            continue
-        if channel == "output" and spec.get("direction") not in {"output", "inout"}:
-            continue
-        _leaves(spec, name, result)
-    return result
+    selected = {name: spec for name, spec in variables.items()
+                if spec.get("direction") in ({"input", "inout"} if channel == "input" else {"output", "inout"})}
+    return list(_value_schema_leaves(selected))
 
-
-def _variables(legacy: _LegacyFunction, db_node: ET.Element | None, columns: list[Any], report: MigrationReport) -> dict[str, dict[str, Any]]:
-    result: dict[str, dict[str, Any]] = {}
-    roots: set[str] = set()
+def _variables(legacy: _LegacyFunction, analysis_function: Any | None, columns: list[Any], report: MigrationReport):
+    try:
+        result = deepcopy(metadata_variables(analysis_function)) if analysis_function is not None else {}
+    except Exception as exc:
+        report.errors.append(f"{legacy.name}: Analysis DB metadata is invalid: {exc}")
+        result = {}
     for arg in legacy.args:
         try:
             logical = any(int(value) > 0 for value in re.findall(r"\[([0-9]+)\]", arg.name))
             _add_variable(result, arg, logical)
-            roots.add(re.split(r"[\[.]", arg.name, maxsplit=1)[0])
-        except ValueError as exc:
-            report.errors.append(f"{legacy.name}: {exc}")
-    for arg in _db_leaves(db_node):
-        root = re.split(r"[\[.]", arg.name, maxsplit=1)[0]
-        if root in roots:
-            continue
-        try:
-            _add_variable(result, arg, False)
-            roots.add(root)
         except ValueError as exc:
             report.errors.append(f"{legacy.name}: {exc}")
     for column in columns:
         name = getattr(column, "name", "")
-        root = re.split(r"[\[.]", name, maxsplit=1)[0]
-        if not name or root in roots:
+        if not name:
             continue
         try:
-            _add_variable(result, _Arg(name, "inout", getattr(column, "raw_type_hint", None) or "unsigned"), False)
-            roots.add(root)
+            _add_variable(result, _Arg(name, _direction(getattr(column, "direction", "inout")),
+                                       getattr(column, "raw_type_hint", None) or "unsigned"), False)
         except ValueError as exc:
             report.errors.append(f"{legacy.name}: {exc}")
     return result
-
 
 def _baseline(legacy: _LegacyFunction, variables: Mapping[str, Any]) -> list[dict[str, Any]]:
     inputs: dict[str, list[str]] = {}
@@ -464,12 +391,9 @@ def _workbook(directory: Path | None, project: str, module: str, function: str, 
         report.errors.append(f"Excel {path}: {exc}")
         return None
 
-
-def _combine(rows: list[dict[str, Any]], snapshot: Any | None, variables: Mapping[str, Any], report: MigrationReport) -> tuple[list[dict[str, Any]], list[str | None], dict[str, str]]:
+def _combine(rows, snapshot, variables, report):
     if snapshot is None:
         return rows, [None] * len(rows), {}
-    if len(snapshot.cases) != len(rows):
-        report.ambiguities.append(f"{snapshot.meta.testobject}: Excel and Value XML row counts differ")
     result, ids = [], []
     for index, case in enumerate(snapshot.cases):
         base = rows[index] if index < len(rows) else {
@@ -495,12 +419,11 @@ def _combine(rows: list[dict[str, Any]], snapshot: Any | None, variables: Mappin
     bodies = {stub.name: stub.body_raw for stub in snapshot.stubs}
     return result, ids, bodies
 
+def _valid_id(value, prefix):
+    match = _FORMAL_ID.fullmatch(value) if isinstance(value, str) else None
+    return bool(match and value.rsplit("_", 1)[0] == prefix and int(value.rsplit("_", 1)[1]))
 
-def _valid_id(value: Any, prefix: str) -> bool:
-    return isinstance(value, str) and bool(_FORMAL_ID.fullmatch(value)) and value.rsplit("_", 1)[0] == prefix and int(value.rsplit("_", 1)[1]) > 0
-
-
-def _allocate(prefix: str, records: list[tuple[str, list[dict[str, Any]], list[str | None]]], existing: Mapping[str, Any] | None, report: MigrationReport) -> tuple[dict[str, list[tuple[str, dict[str, Any]]]], int]:
+def _allocate(prefix, records, existing, report):
     highest = int(existing.get("max_row_number", 0)) if existing else 0
     if existing:
         for function in existing.get("functions", {}).values():
@@ -531,23 +454,55 @@ def _allocate(prefix: str, records: list[tuple[str, list[dict[str, Any]], list[s
         allocated[name] = ordered
     return allocated, highest
 
+def _same_stub_signature(left: _Stub, right: _Stub) -> bool:
+    return (left.return_type, left.parameters) == (right.return_type, right.parameters)
 
-def _default_body(stub: _Stub, storage: str | None) -> str:
-    if stub.return_type == "void":
-        return ""
-    if storage:
-        return f"extern {stub.return_type} {storage};\nreturn {storage};"
-    return f"{stub.return_type} temp = {{0}};\nreturn temp;"
+def _provenance(analysis: Any, project: str, module: str, input_hash: str, report: MigrationReport) -> dict | None:
+    generated = {}
+    assembler = RowAssembler(Solver(), McdcGenerator(), include_boundary=False, include_fault=False)
+    for function in getattr(analysis, "functions", ()):
+        try:
+            generated[function.name] = assembler.assemble_with_provenance(function)
+        except Exception as exc:
+            report.errors.append(f"{function.name}: cannot assemble provenance: {exc}")
+    if report.errors:
+        return None
+    try:
+        return build_candidate(analysis, generated, project, module, input_hash)
+    except Exception as exc:
+        report.errors.append(f"cannot build Analysis DB candidate: {exc}")
+        return None
 
+def _attach_provenance(state: dict, candidate: dict | None, report: MigrationReport) -> None:
+    if candidate is None:
+        return
+    for name, function in state["functions"].items():
+        source = candidate["functions"].get(name)
+        if source is None:
+            continue
+        refs = [recipe["row_id"] for decision in source["decisions"].values() for recipe in decision["recipes"]]
+        refs += [item["row_id"] for item in source["generated_rows"]]
+        targets = list(function["rows"])
+        if len(refs) > len(targets):
+            report.errors.append(f"{name}: Analysis provenance has more logical rows than legacy rows")
+            continue
+        mapping = dict(zip(refs, targets))
+        function["max_decision_number"] = source["max_decision_number"]
+        function["decisions"] = deepcopy(source["decisions"])
+        function["generated_rows"] = deepcopy(source["generated_rows"])
+        for decision in function["decisions"].values():
+            for recipe in decision["recipes"]:
+                recipe["row_id"] = mapping[recipe["row_id"]]
+        for generated in function["generated_rows"]:
+            generated["row_id"] = mapping[generated["row_id"]]
 
-def _state(config: Mapping[str, Any], project: str, module: str, source: str, metadata: Any, rows_by_function: list[tuple[_LegacyFunction, list[dict[str, Any]], list[str | None], dict[str, _Stub], dict[str, str], dict[str, dict[str, Any]]]], existing: Mapping[str, Any] | None, report: MigrationReport) -> dict[str, Any]:
+def _state(project, module, source, metadata, rows_by_function, existing, report):
     prefix = Path(source).stem
     records = [(item[0].name, item[1], item[2]) for item in rows_by_function]
     allocated, maximum = _allocate(prefix, records, existing, report)
     catalog: dict[str, dict[str, Any]] = {}
     functions: dict[str, dict[str, Any]] = {}
     for legacy, _rows, _ids, signatures, bodies, variables in rows_by_function:
-        used = list(signatures)
         local = {}
         for key, signature in signatures.items():
             storage = None if signature.return_type == "void" else (signature.storage or f"tessy_{key}")
@@ -562,7 +517,8 @@ def _state(config: Mapping[str, Any], project: str, module: str, source: str, me
                 report.ambiguities.append(f"stub signature differs for {key!r}")
             catalog.setdefault(key, entry)
             local[key] = {"owner": "user" if key in bodies else "tool", "status": "active",
-                          "body": bodies.get(key, _default_body(signature, storage))}
+                          "body": bodies.get(key, default_stub_body(
+                              {"return_type": signature.return_type, "return_storage": storage}, key in signatures))}
         state_rows = {}
         generated = []
         for row_id, row in allocated.get(legacy.name, []):
@@ -576,7 +532,7 @@ def _state(config: Mapping[str, Any], project: str, module: str, source: str, me
                                   "description": row["description"], "test_method": "", "input": inputs, "output": outputs}
             generated.append({"row_id": row_id, "kind": "Nominal"})
         functions[legacy.name] = {"max_decision_number": 0, "variables": variables, "decisions": {},
-                                  "generated_rows": generated, "rows": state_rows, "used_stub_keys": used, "stubs": local}
+                                  "generated_rows": generated, "rows": state_rows, "used_stub_keys": list(signatures), "stubs": local}
     result = {"schema_version": 1, "project": project, "module": module, "source_file": source,
               "module_input_hash": f"sha256:{getattr(metadata, 'source_sha256', 'unknown')}",
               "max_row_number": maximum, "stub_catalog": catalog, "functions": functions}
@@ -586,11 +542,9 @@ def _state(config: Mapping[str, Any], project: str, module: str, source: str, me
         report.errors.append(f"candidate state validation failed: {exc}")
     return result
 
-
 def _semantic(state: Mapping[str, Any], function: str) -> list[tuple[str, str, dict, dict]]:
     return [(key, row["description"], row["input"], row["output"])
-            for key, row in state["functions"][function]["rows"].items() if row["status"] == "active"]
-
+            for key, row in _ordered_active_rows(state["functions"][function])]
 
 def _project_and_verify(state: dict[str, Any], output_dir: Path, template: Any, report: MigrationReport) -> tuple[dict[str, Path], Path]:
     output_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -622,30 +576,55 @@ def _project_and_verify(state: dict[str, Any], output_dir: Path, template: Any, 
         report.errors.append(str(exc))
     return paths, staging
 
-
-def _publish_workbooks(staged: Mapping[str, Path], output_dir: Path, report: MigrationReport) -> None:
+def _publish_workbooks(staged: Mapping[str, Path], output_dir: Path, report: MigrationReport) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    for source in staged.values():
-        target = output_dir / source.name
-        try:
+    backups = [(output_dir / source.name,
+                (output_dir / source.name).read_bytes() if (output_dir / source.name).exists() else None)
+               for source in staged.values()]
+    published: list[tuple[Path, bytes | None]] = []
+    try:
+        for source, (target, previous) in zip(staged.values(), backups):
             os.replace(source, target)
-            report.writes.append(str(target))
-        except OSError as exc:
-            report.errors.append(f"cannot publish workbook {target}: {exc}")
-            raise
+            published.append((target, previous))
+    except OSError as exc:
+        target = backups[len(published)][0]
+        report.errors.append(f"cannot publish workbook {target}: {exc}")
+        try:
+            for target, previous in reversed(published):
+                _rollback(target, previous)
+        except Exception as rollback_exc:
+            report.errors.append(f"workbook rollback failed: {rollback_exc}")
+        raise
+    return [target for target, _previous in backups]
 
+def _verify_stub_signatures(state: Mapping[str, Any], analysis: Any) -> None:
+    expected = build_stub_catalog(analysis)
+    actual = state["stub_catalog"]
+    if set(actual) != set(expected):
+        raise ValueError("re-read Analysis DB stub catalog differs from migrated JSON")
+    for key, entry in expected.items():
+        current = actual[key]
+        if (current["return_type"], current["return_storage"], current["parameters"]) != (
+            entry["return_type"], entry["return_storage"], entry["parameters"]
+        ):
+            raise ValueError(f"re-read Analysis DB stub signature differs for {key!r}")
 
 def _rollback(path: Path, previous: bytes | None) -> None:
     if previous is None:
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
-    else:
-        temporary = path.with_name(f".{path.name}.restore")
-        temporary.write_bytes(previous)
+        path.unlink(missing_ok=True)
+        return
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".restore", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(previous)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if temporary.read_bytes() != previous:
+            raise OSError("restore bytes do not match backup")
         os.replace(temporary, path)
-
+    except Exception as exc:
+        raise OSError(f"cannot restore {path}; recovery sibling: {temporary}") from exc
 
 def migrate_module(project_config: Mapping[str, Any], state_root: str | os.PathLike[str], dry_run: bool = True) -> MigrationReport:
     """Migrate one module; dry-run performs no writes."""
@@ -655,7 +634,7 @@ def migrate_module(project_config: Mapping[str, Any], state_root: str | os.PathL
         project, module = _identity(config)
         root = Path(state_root).resolve()
         working, database, excel_in, excel_out = _paths(config, root, module)
-        metadata, db_functions = _db(database, report)
+        metadata, analysis = _db(database, report)
         if metadata is None:
             return report
         source = _source_file(config, module, metadata)
@@ -667,7 +646,9 @@ def migrate_module(project_config: Mapping[str, Any], state_root: str | os.PathL
             except Exception as exc:
                 report.errors.append(f"existing current JSON is invalid: {paths.state}: {exc}")
         legacy = _read_values(list(working.glob("value_*.xml")), report)
-        for name in db_functions:
+        analysis_functions = {item.name: item for item in getattr(analysis, "functions", ())}
+        analysis_catalog = build_stub_catalog(analysis)
+        for name in analysis_functions:
             legacy.setdefault(name, _LegacyFunction(name))
         if not legacy:
             report.errors.append(f"no legacy Value XML functions found under {working}")
@@ -675,8 +656,8 @@ def migrate_module(project_config: Mapping[str, Any], state_root: str | os.PathL
         rows_by_function = []
         for name, function in legacy.items():
             snapshot = _workbook(excel_in, project, Path(source).name, name, report)
-            vars = _variables(function, db_functions.get(name), snapshot.columns if snapshot else [], report)
-            signatures = _db_stubs(db_functions.get(name))
+            vars = _variables(function, analysis_functions.get(name), snapshot.columns if snapshot else [], report)
+            signatures = _analysis_signatures(analysis_functions.get(name), analysis_catalog)
             bodies, xml_signatures = {}, {}
             for stub_path in sorted(working.glob("stub_*.xml"), key=lambda item: item.name.lower()):
                 if name.lower() not in stub_path.stem.lower():
@@ -686,8 +667,18 @@ def migrate_module(project_config: Mapping[str, Any], state_root: str | os.PathL
                 except Exception as exc:
                     report.errors.append(f"{stub_path}: {exc}")
                     continue
-                bodies.update(parsed_bodies)
-                xml_signatures.update(parsed_signatures)
+                for key, body in parsed_bodies.items():
+                    if key in bodies and bodies[key] != body:
+                        report.ambiguities.append(f"{name}: stub body differs for {key!r}")
+                    bodies[key] = body
+                for key, signature in parsed_signatures.items():
+                    if key in signatures and not _same_stub_signature(signatures[key], signature):
+                        report.ambiguities.append(f"{name}: stub signature differs for {key!r}")
+                    if key in xml_signatures and not _same_stub_signature(xml_signatures[key], signature):
+                        report.ambiguities.append(f"{name}: stub XML signatures disagree for {key!r}")
+                    if key in signatures and not signatures[key].storage and signature.storage:
+                        signatures[key] = signature
+                    xml_signatures[key] = signature
             signatures.update(xml_signatures)
             for signature in signatures.values():
                 storage = signature.storage or f"tessy_{signature.key}"
@@ -695,13 +686,22 @@ def migrate_module(project_config: Mapping[str, Any], state_root: str | os.PathL
                     vars[storage] = {"type": signature.return_type, "direction": "input", "dimensions": []}
             rows = _baseline(function, vars)
             rows, ids, workbook_bodies = _combine(rows, snapshot, vars, report)
+            for key in workbook_bodies:
+                if key not in signatures:
+                    report.ambiguities.append(f"{name}: Excel stub {key!r} is not in Analysis DB/XML")
             bodies.update(workbook_bodies)
             legacy_ids = function.row_ids[:len(rows)] + [None] * max(0, len(rows) - len(function.row_ids))
             ids = [value or legacy_ids[index] for index, value in enumerate(ids)] if snapshot is not None else legacy_ids
             rows_by_function.append((function, rows, ids, signatures, bodies, vars))
         report.functions, report.rows = len(rows_by_function), sum(len(item[1]) for item in rows_by_function)
         report.stubs = sum(len(item[3]) for item in rows_by_function)
-        state = _state(config, project, module, source, metadata, rows_by_function, existing, report)
+        candidate = _provenance(analysis, project, module, f"sha256:{metadata.source_sha256}", report)
+        state = _state(project, module, source, metadata, rows_by_function, existing, report)
+        _attach_provenance(state, candidate, report)
+        try:
+            validate_module(state)
+        except Exception as exc:
+            report.errors.append(f"provenance state validation failed: {exc}")
         if report.errors or report.ambiguities or dry_run:
             return report
         if database.resolve() == paths.database.resolve():
@@ -718,10 +718,10 @@ def migrate_module(project_config: Mapping[str, Any], state_root: str | os.PathL
             write_module(paths.state, state)
             if load_module(paths.state) != state:
                 raise ValueError("re-read current JSON differs from migrated candidate")
-            AnalysisDbAdapter().read_module(paths.database, require_metadata=True)
-            _publish_workbooks(staged, excel_out, report)
-            if len([item for item in staged.values() if (excel_out / item.name).exists()]) != len(staged):
-                raise ValueError("one or more workbook publications failed")
+            _metadata_after_write, written_analysis = AnalysisDbAdapter().read_module(paths.database, require_metadata=True)
+            _verify_stub_signatures(state, written_analysis)
+            published_workbooks = _publish_workbooks(staged, excel_out, report)
+            report.writes.extend([str(item) for item in published_workbooks])
             report.writes.extend([str(paths.database), str(paths.state)])
         except Exception as exc:
             report.errors.append(f"migration publication failed: {exc}")
@@ -763,8 +763,11 @@ def _configs(value: Any) -> list[dict[str, Any]]:
                         item[key] = project[key]
                 result.append(item)
         return result
-    if isinstance(value.get("modules"), (list, Mapping)):
-        return [_direct_config(value)]
+    modules = value.get("modules")
+    if isinstance(modules, Mapping):
+        return [_direct_config({**value, "modules": {name: item}}) for name, item in modules.items()]
+    if isinstance(modules, (list, tuple)):
+        return [_direct_config({**value, "modules": [item]}) for item in modules]
     return [_direct_config(value)]
 
 
