@@ -71,6 +71,7 @@ def run_user_merge(config) -> list[ModuleSummary]:
             current = load_module(paths.state)
             candidate = current
             changed_paths = {}
+            rewrite_paths = {}
             function_summaries = {}
             allocated = []
             for function_name, items in grouped.items():
@@ -87,7 +88,9 @@ def run_user_merge(config) -> list[ModuleSummary]:
                 allocated.extend(merged.allocated_ids)
                 if merged.changed:
                     changed_paths[function_name] = tuple(item[0] for item in items)
-            if not changed_paths:
+                if merged.rewrite_required:
+                    rewrite_paths[function_name] = tuple(item[0] for item in items)
+            if not changed_paths and not rewrite_paths:
                 summaries.append(
                     _summary(
                         project,
@@ -98,16 +101,21 @@ def run_user_merge(config) -> list[ModuleSummary]:
                 )
                 continue
 
-            write_module(paths.state, candidate)
+            if changed_paths:
+                write_module(paths.state, candidate)
             adapter = TessyWorkbookAdapter()
-            for function_name, paths in changed_paths.items():
-                for path in paths:
+            for function_name in grouped:
+                paths_to_write = rewrite_paths.get(function_name) or changed_paths.get(function_name)
+                if paths_to_write is None:
+                    continue
+                for path in paths_to_write:
                     adapter.write_function(path, candidate, function_name, template)
+            status = "updated" if changed_paths else "skipped"
             summaries.append(
                 _summary(
                     project,
                     _module_name(module),
-                    "updated",
+                    status,
                     {"functions": function_summaries, "allocated_ids": tuple(allocated)},
                 )
             )
@@ -226,7 +234,8 @@ def snapshot_semantics(snapshot) -> tuple:
         ),
         key=repr,
     ))
-    return tuple(sorted(cases, key=repr)), stubs
+    ordered_cases = tuple(cases) if any(item[0] is None for item in cases) else tuple(sorted(cases, key=repr))
+    return ordered_cases, stubs
 
 
 def _value(item, name, default=None):

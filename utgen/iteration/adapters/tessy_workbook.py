@@ -240,7 +240,8 @@ def _module_basename(value: str) -> str:
 
 def _is_formal_description(description: str) -> bool:
     return any(
-        ":" in line and _normalize_label(line.split(":", 1)[0]) == "description"
+        ":" in line
+        and _normalize_label(line.split(":", 1)[0]) in {"test case id", "description"}
         for line in description.splitlines()
     )
 
@@ -282,7 +283,8 @@ def _description_parts(description: str) -> tuple[str | None, str | None, str | 
                     "formal Description contains an extra managed header",
                     sheet="Properties",
                 )
-        description_text = "\n".join([second[1].strip(), *lines[2:]])
+        first_description = second[1][1:] if second[1].startswith(" ") else second[1]
+        description_text = "\n".join([first_description, *lines[2:]])
         return external_id, None, None, description_text
 
     external_id = None

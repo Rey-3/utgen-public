@@ -34,6 +34,7 @@ class UserMergeResult:
     state: dict
     summary: dict
     allocated_ids: tuple[str, ...] = ()
+    rewrite_required: bool = False
 
     @property
     def changed(self) -> bool:
@@ -59,6 +60,7 @@ def merge_user(state: dict, function_name: str, workbook_snapshot) -> UserMergeR
     rows = function["rows"]
     active_ids = [row_id for row_id, _ in _ordered_active_rows(current)]
     legacy = all(_case_row_id(case) is None for case in cases)
+    rewrite_required = bool(cases) and any(_case_row_id(case) is None for case in cases)
     seen: set[str] = set()
     allocated: list[str] = []
     row_changed = added = orphaned = 0
@@ -102,7 +104,7 @@ def merge_user(state: dict, function_name: str, workbook_snapshot) -> UserMergeR
         "rows": {"changed": row_changed, "added": added, "orphaned": orphaned},
         "stubs": {"changed": stub_changed, "orphaned": stub_orphaned},
     }
-    return UserMergeResult(result, summary, tuple(allocated))
+    return UserMergeResult(result, summary, tuple(allocated), rewrite_required)
 
 def _validate_workbook_identity(state, function_name: str, snapshot) -> None:
     meta = _get(snapshot, "meta")
@@ -353,13 +355,11 @@ def _new_function(state: dict, candidate: dict, counters: dict) -> dict:
     function["stubs"] = _merge_stubs({}, candidate, state["stub_catalog"])
     return function
 
-
 def _allocate_candidate_row(state, function, candidate_rows, candidate_id, counters):
     row_id = allocate_row_id(state)
     function["rows"][row_id] = _tool(candidate_rows[candidate_id])
     counters["rows_allocated"] += 1
     return row_id
-
 
 def _merge_function(state: dict, current: dict, candidate: dict, counters: dict) -> dict:
     function = deepcopy(current)
