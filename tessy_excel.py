@@ -95,7 +95,7 @@ def updateTestlistToExcel(func , templateFile , saveFileName , testList , testMe
         description = constructTestDescription(index, final_method, func)
         description = "\n".join(line for line in description.splitlines() if not line.startswith("Test Case ID:"))
         rows.append({
-            "id": f"UT_<TBD>_{index}",
+            "id": f"UT_TBD_{index:03d}",
             "description": description,
             "input": {name: str(value) for name, value, direction in zip(arg_name, values, arg_direction) if direction in {"in", "inout"}},
             "output": {name: str(value) for name, value, direction in zip(arg_name, values, arg_direction) if direction in {"out", "inout"}},
