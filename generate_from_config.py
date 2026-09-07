@@ -1,9 +1,11 @@
-"""Generate verified rows and candidate JSON data for configured modules."""
+"""Config, CLI, and worker orchestration for the iteration workflow."""
 
+import argparse
 from dataclasses import dataclass
 import multiprocessing as mp
 from pathlib import Path
 import sys
+import tempfile
 from time import perf_counter
 from typing import Mapping
 
@@ -15,7 +17,6 @@ from utgen.interp import Interpreter, Verifier
 from utgen.mcdc import McdcGenerator
 from utgen.model import AssemblyResult, Direction, GeneratedRowProvenance, Inventory, TestRow
 from utgen.solver import Solver
-from utgen.iteration.merge import build_candidate
 
 
 CONFIG_PATH = (
@@ -25,7 +26,6 @@ CONFIG_PATH = (
 )
 TIME_LOG_PATH = CONFIG_PATH.with_name("generation_times.txt")
 FUNCTION_TIMEOUT_SECONDS = 180
-XML_INPUT_PATH = CONFIG_PATH.with_name("input")
 _LAST_CONFIG = None
 
 
@@ -190,25 +190,18 @@ def run_function(function, pool):
     return payload, False
 
 
-def _module_database(analysis, module):
-    output = XML_INPUT_PATH / module
-    output.mkdir(parents=True, exist_ok=True)
-    database = output / f"db_{module}.xml"
-    XmlDbWriter().write(analysis, database)
-    return database
+def generate_module(project, module, include_dirs=()):
+    """Index and generate one module using a temporary worker DB.
 
-
-def run():
-    """Generate candidates for all configured modules.
-
-    Persistence and workbook projection belong to the later workflow layer; this
-    boundary only indexes, generates, verifies, and returns ordinary dictionaries.
+    The iteration workflow owns the accepted project-scoped DB.  Workers still
+    consume the existing XML representation, but it is kept in a temporary
+    directory and never becomes a second source of truth.
     """
 
-    global _LAST_CONFIG
-    _LAST_CONFIG = None
-    projects, include_dirs = projects_from_config()
-    TIME_LOG_PATH.write_text("", encoding="utf-8")
+    root = Path(project.get("root_path", "."))
+    source = Path(module["source_file"])
+    if not source.is_absolute():
+        source = root / source
     indexer = ModuleIndexer(
         {
             "defines": (
@@ -218,85 +211,100 @@ def run():
                 "USE_IOC",
                 "USE_PMIC_FS26",
             ),
-            "includes": include_dirs,
+            "includes": tuple(include_dirs or ()),
         }
     )
+    analysis = indexer.index(source, root)
     context = mp.get_context("spawn")
-    candidates = []
-    total_start = perf_counter()
-
-    try:
-        for project in projects:
-            project_start = perf_counter()
-            try:
-                for module in project["modules"]:
-                    module_start = perf_counter()
-                    name = module["module_name"]
-                    source = Path(module["source_file"])
-                    root = Path(project["root_path"])
-                    print(f"{name}: indexing {source}", flush=True)
-                    analysis = indexer.index(source, root)
-                    database = _module_database(analysis, name)
-                    print(
-                        f"{name}: generating {len(analysis.functions)} functions",
-                        flush=True,
-                    )
-
-                    generated = {}
+    with tempfile.TemporaryDirectory(prefix="utgen-analysis-") as temporary_dir:
+        database = Path(temporary_dir) / f"db_{module['module_name']}.xml"
+        XmlDbWriter().write(analysis, database)
+        generated = {}
+        worker_pool = None
+        try:
+            worker_pool = start_worker(context, database)
+            functions = tuple(analysis.functions)
+            for index, function in enumerate(functions):
+                result, timed_out = run_function(function, worker_pool)
+                generated[function.name] = _GeneratedFunction(result)
+                if timed_out:
                     worker_pool = None
-                    try:
-                        worker_start = perf_counter()
+                    if index + 1 < len(functions):
                         worker_pool = start_worker(context, database)
-                        report_time(f"{name}: worker init time {elapsed(worker_start)}")
-                        function_count = len(analysis.functions)
-                        for function_index, function in enumerate(analysis.functions):
-                            function_start = perf_counter()
-                            result = None
-                            try:
-                                print(f"{name}: generating {function.name}", flush=True)
-                                result, timed_out = run_function(
-                                    function, worker_pool
-                                )
-                                generated[function.name] = _GeneratedFunction(result)
-                                if timed_out:
-                                    print(
-                                        f"{name}: {function.name}: timeout; fallback rows used",
-                                        flush=True,
-                                    )
-                                    worker_pool = None
-                                    if function_index + 1 < function_count:
-                                        worker_start = perf_counter()
-                                        worker_pool = start_worker(context, database)
-                                        report_time(
-                                            f"{name}: worker restart time {elapsed(worker_start)}"
-                                        )
-                            finally:
-                                report_time(
-                                    f"{name}: {function.name}: "
-                                    f"{len(result.rows) if result is not None else 0} rows; "
-                                    f"time {elapsed(function_start)}"
-                                )
-                    finally:
-                        if worker_pool is not None:
-                            stop_worker(worker_pool)
-                    candidates.append(
-                        build_candidate(
-                            analysis,
-                            generated,
-                            project["name"],
-                            name,
-                            getattr(analysis, "sha256", ""),
-                        )
-                    )
-                    print(f"{name}: candidate built", flush=True)
-                    report_time(f"{name}: total time {elapsed(module_start)}")
-            finally:
-                report_time(f"{project['name']}: total time {elapsed(project_start)}")
-    finally:
-        report_time(f"ALL PROJECTS: total time {elapsed(total_start)}")
-    return candidates
+        finally:
+            if worker_pool is not None:
+                stop_worker(worker_pool)
+    return analysis, generated
+
+
+def run_generation(config=None):
+    """Run normal generation/next-tool iteration for configured modules."""
+
+    from utgen.iteration.workflow import run_generation as workflow_run_generation
+
+    return workflow_run_generation(
+        CONFIG_PATH if config is None else config,
+        generator=generate_module,
+    )
+
+
+def run_excel_export(config=None):
+    """Project current JSON state to Excel without indexing or generation."""
+
+    from utgen.iteration.workflow import run_excel_export as workflow_run_excel_export
+
+    return workflow_run_excel_export(CONFIG_PATH if config is None else config)
+
+
+def run_user_merge(config=None):
+    """Merge user-edited Excel workbooks into current JSON state."""
+
+    from utgen.iteration.workflow import run_user_merge as workflow_run_user_merge
+
+    return workflow_run_user_merge(CONFIG_PATH if config is None else config)
+
+
+def run():
+    """Backward-compatible entry point for the normal iteration workflow."""
+
+    return run_generation()
+
+
+def _load_cli_config(path: Path):
+    value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(value, Mapping):
+        raise ValueError("config.yaml must contain a mapping")
+    return value
+
+
+def main(argv=None):
+    """Dispatch the three supported CLI modes.
+
+    Mode 1 performs normal/next-tool generation, mode 2 rebuilds Excel from
+    current JSON, and mode 3 merges user-edited Excel into current JSON.
+    """
+
+    parser = argparse.ArgumentParser(description="UTGen iteration workflow")
+    parser.add_argument("mode", nargs="?", choices=("1", "2", "3"))
+    parser.add_argument("--config", type=Path, default=None)
+    args = parser.parse_args(argv)
+    config_path = args.config or CONFIG_PATH
+    mode = args.mode
+    if mode is None:
+        print("1. Normal generation / next tool iteration")
+        print("2. Rebuild Excel from current JSON")
+        print("3. Merge user Excel into current JSON")
+        mode = input("Select option: ").strip()
+        if mode not in {"1", "2", "3"}:
+            parser.error("mode must be 1, 2, or 3")
+    _load_cli_config(config_path)
+    if mode == "1":
+        return run_generation(config_path)
+    if mode == "2":
+        return run_excel_export(config_path)
+    return run_user_merge(config_path)
 
 
 if __name__ == "__main__":
     mp.freeze_support()
-    run()
+    main()

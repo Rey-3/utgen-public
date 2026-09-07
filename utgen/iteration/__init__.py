@@ -19,10 +19,12 @@ from .values import (
     project_generated_values,
     sync_row_schema,
 )
+from .workflow import ModuleSummary, run_excel_export, run_generation, run_user_merge
 
 __all__ = [
     *_adapter_all,
     "ModulePaths",
+    "ModuleSummary",
     "StateValidationError",
     "allocate_decision_key",
     "allocate_row_id",
@@ -33,6 +35,9 @@ __all__ = [
     "nest_values",
     "parse_leaf_path",
     "project_generated_values",
+    "run_excel_export",
+    "run_generation",
+    "run_user_merge",
     "sync_row_schema",
     "validate_module",
     "write_module",

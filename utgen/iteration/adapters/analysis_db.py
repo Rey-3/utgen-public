@@ -9,10 +9,12 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 import hashlib
+import os
 from pathlib import Path, PurePath
 import re
+import tempfile
 import xml.etree.ElementTree as ET
 
 DB_SCHEMA_VERSION = 1
@@ -396,6 +398,72 @@ class AnalysisDbWriter:
             raise AnalysisDbValidationError(f"refusing to overwrite existing Analysis DB: {path}") from exc
         except OSError as exc:
             raise AnalysisDbValidationError(f"cannot publish Analysis DB: {path}") from exc
+        return metadata
+
+    def write_atomic(
+        self,
+        value: Path | bytes | bytearray,
+        path: Path,
+        *,
+        generated_at: str | None = None,
+    ) -> AnalysisDbMetadata:
+        """Validate and atomically replace the current DB publication.
+
+        ``write`` intentionally retains its exclusive-create behaviour for
+        fixtures and callers that accept a once-only publication.  Iteration
+        needs a different primitive: the current project DB is replaced only
+        after the complete metadata-enriched document has been rendered and
+        validated in a sibling temporary file.
+        """
+
+        path = Path(path)
+        if isinstance(value, Path):
+            try:
+                if path.resolve() == value.resolve():
+                    raise AnalysisDbValidationError(
+                        "refusing to overwrite the Analysis DB input"
+                    )
+            except OSError as exc:
+                raise AnalysisDbValidationError(
+                    "cannot resolve Analysis DB paths"
+                ) from exc
+        if generated_at is None:
+            generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+            if generated_at.endswith("+00:00"):
+                generated_at = generated_at[:-6] + "Z"
+        rendered = self.render(value, generated_at=generated_at)
+        metadata = _metadata(_parse_root(rendered), require_metadata=True)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise AnalysisDbValidationError(
+                f"cannot create Analysis DB output directory: {path.parent}"
+            ) from exc
+
+        temporary = None
+        try:
+            fd, temporary_name = tempfile.mkstemp(
+                prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+            )
+            temporary = Path(temporary_name)
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(rendered)
+                stream.flush()
+                os.fsync(stream.fileno())
+            AnalysisDbAdapter().validate(temporary, require_metadata=True)
+            os.replace(temporary, path)
+            temporary = None
+            AnalysisDbAdapter().read_module(path, require_metadata=True)
+        except AnalysisDbValidationError:
+            raise
+        except OSError as exc:
+            raise AnalysisDbValidationError(f"cannot publish Analysis DB: {path}") from exc
+        finally:
+            if temporary is not None:
+                try:
+                    temporary.unlink()
+                except FileNotFoundError:
+                    pass
         return metadata
 
 

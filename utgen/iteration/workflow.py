@@ -4,13 +4,17 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+import hashlib
+import json
 import os
 from pathlib import Path
+import tempfile
 
 import yaml
 
+from .adapters.analysis_db import AnalysisDbAdapter, AnalysisDbWriter
 from .adapters.tessy_workbook import TessyWorkbookAdapter
-from .merge import merge_user
+from .merge import build_candidate, merge_tool, merge_user
 from .state import load_module, module_paths, write_module
 
 
@@ -29,6 +33,343 @@ class ModuleSummary:
     @property
     def updated(self) -> bool:
         return self.status == "updated"
+
+
+def run_generation(config, generator=None) -> list[ModuleSummary]:
+    """Run first generation or a complete next-tool merge per module."""
+
+    generator = _generate_module if generator is None else generator
+    config, base = _config_and_base(config)
+    state_root = _state_root(config, base)
+    template = _template_path(config, base)
+    include_dirs = _include_dirs(config, base)
+    summaries = []
+    for project, module in _configured_modules(config):
+        name = _module_name(module)
+        try:
+            summaries.append(
+                _run_generation_module(
+                    config,
+                    base,
+                    state_root,
+                    template,
+                    include_dirs,
+                    project,
+                    module,
+                    generator,
+                )
+            )
+        except Exception as exc:
+            summaries.append(_summary(project, name, "error", {"error": str(exc)}, str(exc)))
+    return summaries
+
+
+def run_excel_export(config) -> list[ModuleSummary]:
+    """Rebuild each configured function workbook from current JSON only."""
+
+    config, base = _config_and_base(config)
+    state_root = _state_root(config, base)
+    template = _template_path(config, base)
+    summaries = []
+    for project, module in _configured_modules(config):
+        name = _module_name(module)
+        try:
+            paths = module_paths(state_root, project, name)
+            state = load_module(paths.state)
+            written = _write_active_workbooks(state, module, base, template)
+            summaries.append(
+                _summary(
+                    project,
+                    name,
+                    "updated" if written else "skipped",
+                    {
+                        "json": "skipped",
+                        "excel_written": written,
+                        "rows": _state_row_summary(state),
+                        "stubs": _state_stub_summary(state),
+                    },
+                )
+            )
+        except Exception as exc:
+            summaries.append(_summary(project, name, "error", {"error": str(exc)}, str(exc)))
+    return summaries
+
+
+def _run_generation_module(
+    config,
+    base: Path,
+    state_root: Path,
+    template,
+    include_dirs,
+    project: str,
+    module: Mapping,
+    generator,
+) -> ModuleSummary:
+    name = _module_name(module)
+    paths = module_paths(state_root, project, name)
+    current = None
+    if paths.state.exists():
+        try:
+            current = load_module(paths.state)
+        except Exception:
+            # A corrupt or half-written current state is rebuilt from source.
+            current = None
+
+    database_analysis = None
+    if paths.database.exists():
+        try:
+            _metadata, database_analysis = AnalysisDbAdapter().read_module(
+                paths.database, require_metadata=True
+            )
+        except Exception:
+            database_analysis = None
+
+    if current is not None and database_analysis is not None and _database_matches(
+        database_analysis, module, base
+    ):
+        try:
+            input_hash = _module_input_hash(
+                config, project, module, base, database_analysis
+            )
+        except Exception:
+            input_hash = None
+        if input_hash == current.get("module_input_hash"):
+            if _workbooks_valid(current, module, base):
+                return _summary(
+                    project,
+                    name,
+                    "skipped",
+                    {
+                        "json": "skipped",
+                        "excel_written": 0,
+                        "rows": _state_row_summary(current),
+                        "stubs": _state_stub_summary(current),
+                    },
+                )
+            written = _write_active_workbooks(current, module, base, template)
+            return _summary(
+                project,
+                name,
+                "skipped",
+                {
+                    "json": "skipped",
+                    "excel_written": written,
+                    "rows": _state_row_summary(current),
+                    "stubs": _state_stub_summary(current),
+                },
+            )
+
+    generation_project, generation_module = _generation_config(
+        config, base, project, module
+    )
+    analysis, generated = generator(
+        generation_project, generation_module, include_dirs
+    )
+    input_hash = _module_input_hash(config, project, module, base, analysis)
+    candidate = build_candidate(analysis, generated, project, name, input_hash)
+    if current is None:
+        state = candidate
+        summary = {
+            "rows": _state_row_summary(state),
+            "stubs": _state_stub_summary(state),
+        }
+    else:
+        merged = merge_tool(current, candidate)
+        state = merged.state
+        summary = {
+            "rows": merged.summary["rows"],
+            "stubs": merged.summary["stubs"],
+            "decisions": merged.summary["decisions"],
+        }
+    _write_current_database(analysis, paths.database)
+    write_module(paths.state, state)
+    written = _write_active_workbooks(state, module, base, template)
+    summary.update(json="updated", excel_written=written)
+    return _summary(project, name, "updated", summary)
+
+
+def _generation_config(config, base: Path, project_name: str, module: Mapping):
+    """Resolve source/root paths once at the generator boundary."""
+
+    project = next(
+        item
+        for item in config.get("projects", ())
+        if isinstance(item, Mapping)
+        and item.get("name", item.get("project_name")) == project_name
+    )
+    result_project = dict(project)
+    root = Path(os.fspath(project.get("root_path", base)))
+    if not root.is_absolute():
+        root = base / root
+    result_project["root_path"] = str(root)
+    result_module = dict(module)
+    source = Path(os.fspath(module["source_file"]))
+    if not source.is_absolute():
+        source = base / source
+    result_module["source_file"] = str(source)
+    return result_project, result_module
+
+
+def _generate_module(project, module, include_dirs):
+    """Default hook for callers/tests that provide the generator boundary."""
+
+    raise RuntimeError("run_generation requires a generator callback")
+
+
+def _database_matches(analysis, module: Mapping, base: Path) -> bool:
+    expected = Path(os.fspath(module["source_file"]))
+    if not expected.is_absolute():
+        expected = base / expected
+    actual = Path(os.fspath(getattr(analysis, "file", "")))
+    try:
+        if actual.resolve() != expected.resolve():
+            return False
+        return hashlib.sha256(expected.read_bytes()).hexdigest() == getattr(
+            analysis, "sha256", None
+        )
+    except OSError:
+        return False
+
+
+def _module_input_hash(config, project, module, base: Path, analysis) -> str:
+    source = Path(os.fspath(module["source_file"]))
+    if not source.is_absolute():
+        source = base / source
+    analyzed_source = getattr(analysis, "file", None)
+    if analyzed_source:
+        candidate_source = Path(os.fspath(analyzed_source))
+        if not candidate_source.is_absolute():
+            candidate_source = base / candidate_source
+        if candidate_source.is_file():
+            source = candidate_source
+    files = [("source", source)]
+    for item in getattr(analysis, "headers", ()) or ():
+        try:
+            path = item[1]
+        except (IndexError, TypeError):
+            path = getattr(item, "path", None)
+        if path is None:
+            continue
+        header = Path(os.fspath(path))
+        if not header.is_absolute():
+            header = base / header
+        files.append(("header", header))
+    file_payload = []
+    for kind, path in files:
+        data = path.read_bytes()
+        file_payload.append(
+            {"kind": kind, "path": path.resolve().as_posix(), "sha256": hashlib.sha256(data).hexdigest()}
+        )
+    module_config = {
+        key: value
+        for key, value in module.items()
+        if key not in {"excel_input_dir", "excel_output_dir"}
+    }
+    payload = {
+        "schema_version": 1,
+        "project": project,
+        "module": module_config,
+        "generator_config": {
+            "include_dirs": list(_include_dirs(config, base)),
+        },
+        "files": file_payload,
+    }
+    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _write_current_database(analysis, path: Path) -> None:
+    from utgen.db import XmlDbWriter
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".raw.xml", dir=path.parent
+    )
+    os.close(fd)
+    temporary = Path(temporary_name)
+    try:
+        XmlDbWriter().write(analysis, temporary)
+        AnalysisDbWriter().write_atomic(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _excel_directory(module: Mapping, base: Path) -> Path:
+    value = module.get("excel_output_dir", module.get("excel_input_dir"))
+    directory = Path(os.fspath(value)) if value else base / "excel"
+    return directory if directory.is_absolute() else base / directory
+
+
+def _workbook_paths(state: Mapping, module: Mapping, base: Path) -> dict[str, Path]:
+    directory = _excel_directory(module, base)
+    return {name: directory / f"{name}.xlsx" for name in state["functions"]}
+
+
+def _workbooks_valid(state: Mapping, module: Mapping, base: Path) -> bool:
+    adapter = TessyWorkbookAdapter()
+    for function_name, path in _workbook_paths(state, module, base).items():
+        if not path.is_file():
+            return False
+        try:
+            adapter.read_complete_export(
+                path,
+                expected_module=Path(state["source_file"]).name,
+                expected_testobject=function_name,
+                expected_project=f"tessy_{state['project']}",
+            )
+        except Exception:
+            return False
+    return True
+
+
+def _write_active_workbooks(state: Mapping, module: Mapping, base: Path, template) -> int:
+    adapter = TessyWorkbookAdapter()
+    paths = _workbook_paths(state, module, base)
+    for function_name, path in paths.items():
+        adapter.write_function(path, state, function_name, template)
+    return len(paths)
+
+
+def _state_row_summary(state: Mapping) -> dict:
+    rows = [row for function in state["functions"].values() for row in function["rows"].values()]
+    return {
+        "generated": sum(row["owner"] == "tool" and row["status"] == "active" for row in rows),
+        "kept": sum(row["owner"] == "user" and row["status"] == "active" for row in rows),
+        "allocated": 0,
+        "orphaned": sum(row["status"] == "orphaned" for row in rows),
+    }
+
+
+def _state_stub_summary(state: Mapping) -> dict:
+    stubs = [stub for function in state["functions"].values() for stub in function["stubs"].values()]
+    return {
+        "active": sum(stub["status"] == "active" for stub in stubs),
+        "orphaned": sum(stub["status"] == "orphaned" for stub in stubs),
+    }
+
+
+def _merge_user_row_summary(function_summaries: Mapping) -> dict:
+    return {
+        key: sum(
+            summary.get("rows", {}).get(key, 0)
+            for summary in function_summaries.values()
+        )
+        for key in ("changed", "added", "orphaned")
+    }
+
+
+def _merge_user_stub_summary(function_summaries: Mapping) -> dict:
+    return {
+        key: sum(
+            summary.get("stubs", {}).get(key, 0)
+            for summary in function_summaries.values()
+        )
+        for key in ("changed", "orphaned")
+    }
 
 
 def scan_workbooks(project_config) -> dict[tuple[str, str, str], Path]:
@@ -64,7 +405,14 @@ def run_user_merge(config) -> list[ModuleSummary]:
                 if key[:2] == target:
                     grouped.setdefault(key[2], []).append((path, snapshot))
             if not grouped:
-                summaries.append(_summary(project, _module_name(module), "skipped", {}))
+                summaries.append(
+                    _summary(
+                        project,
+                        _module_name(module),
+                        "skipped",
+                        {"json": "skipped", "excel_written": 0},
+                    )
+                )
                 continue
 
             paths = module_paths(state_root, project, _module_name(module))
@@ -74,6 +422,7 @@ def run_user_merge(config) -> list[ModuleSummary]:
             rewrite_paths = {}
             function_summaries = {}
             allocated = []
+            written_count = 0
             for function_name, items in grouped.items():
                 if len(items) > 1:
                     first = snapshot_semantics(items[0][1])
@@ -96,7 +445,14 @@ def run_user_merge(config) -> list[ModuleSummary]:
                         project,
                         _module_name(module),
                         "skipped",
-                        {"functions": function_summaries, "allocated_ids": ()},
+                        {
+                            "functions": function_summaries,
+                            "allocated_ids": (),
+                            "rows": _merge_user_row_summary(function_summaries),
+                            "stubs": _merge_user_stub_summary(function_summaries),
+                            "json": "skipped",
+                            "excel_written": 0,
+                        },
                     )
                 )
                 continue
@@ -110,13 +466,21 @@ def run_user_merge(config) -> list[ModuleSummary]:
                     continue
                 for path in paths_to_write:
                     adapter.write_function(path, candidate, function_name, template)
+                    written_count += 1
             status = "updated" if changed_paths else "skipped"
             summaries.append(
                 _summary(
                     project,
                     _module_name(module),
                     status,
-                    {"functions": function_summaries, "allocated_ids": tuple(allocated)},
+                    {
+                        "functions": function_summaries,
+                        "allocated_ids": tuple(allocated),
+                        "rows": _merge_user_row_summary(function_summaries),
+                        "stubs": _merge_user_stub_summary(function_summaries),
+                        "json": "updated" if changed_paths else "skipped",
+                        "excel_written": written_count,
+                    },
                 )
             )
         except Exception as exc:
@@ -269,6 +633,17 @@ def _state_root(config, base):
     return path if path.is_absolute() else base / path
 
 
+def _include_dirs(config, base):
+    value = (config.get("Tessy") or {}).get("include", ())
+    if isinstance(value, str):
+        value = (value,)
+    result = []
+    for item in value or ():
+        path = Path(os.fspath(item))
+        result.append(str(path if path.is_absolute() else base / path))
+    return tuple(result)
+
+
 def _template_path(config, base):
     value = (config.get("Tessy") or {}).get("template_path")
     if not value:
@@ -277,4 +652,10 @@ def _template_path(config, base):
     return path if path.is_absolute() else base / path
 
 
-__all__ = ["ModuleSummary", "run_user_merge", "scan_workbooks"]
+__all__ = [
+    "ModuleSummary",
+    "run_excel_export",
+    "run_generation",
+    "run_user_merge",
+    "scan_workbooks",
+]
