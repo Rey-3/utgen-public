@@ -13,11 +13,16 @@ from typing import Any, Iterable, Mapping
 
 from openpyxl import Workbook
 
-from tessy_excel import convertDirectionToTessyFormat, writeGeneralSheet, write_testlist_cells
+from tessy_excel import (
+    convertDirectionToTessyFormat,
+    writeGeneralSheet,
+    write_testlist_cells,
+)
 from ..merge import default_stub_body
 from ..values import flatten_values, project_generated_values
 from ._tessy_workbook_io import (
     CellValue,
+    DirectionToken,
     ExcelColumnKey,
     GeneralIdentityError,
     MAX_ARCHIVE_ENTRIES,
@@ -34,9 +39,15 @@ from ._tessy_workbook_io import (
     _cell_at,
     _cell_map,
     _cell_value,
-    _is_formula,
+    _active_formula_check,
+    _header_map,
+    _normalize_label,
+    parse_direction,
+    parse_direction_token,
     _parse_integer,
     _require_text,
+    _row_has_payload,
+    split_array_column_name,
     _text_value,
     load_workbook,
     physicalize_workbook,
@@ -46,9 +57,7 @@ from ._tessy_workbook_io import (
 )
 
 
-_DIRECTION_RE = re.compile(r"^(i|o)(?:\((.+)\))?$")
 _CASE_LABEL_RE = re.compile(r"^tc([1-9][0-9]*)\.([0-9]+)$")
-_ARRAY_INDEX_RE = re.compile(r"\[([0-9]+)\]")
 _DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 _TESSY_51_RE = re.compile(r"^5\.1(?:\.[0-9]+)?$")
 _FORMAL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*_[0-9]{3,}$")
@@ -209,14 +218,6 @@ class WorkbookSnapshot:
 
 
 @dataclass(frozen=True)
-class DirectionToken:
-    direction: str
-    channel: str
-    raw: str
-    raw_type_hint: str | None
-
-
-@dataclass(frozen=True)
 class _PropertyRecord:
     case_number: int
     test_step: int
@@ -231,10 +232,6 @@ class _PropertyRecord:
 
 def _error(code: str, message: str, *, sheet: str | None = None, coordinate: str | None = None) -> None:
     raise WorkbookValidationError(code, message, sheet=sheet, coordinate=coordinate)
-
-
-def _normalize_label(value: str) -> str:
-    return " ".join(value.strip().split()).casefold()
 
 
 def _module_basename(value: str) -> str:
@@ -321,61 +318,6 @@ def _description_parts(description: str) -> tuple[str | None, str | None, str | 
     return external_id, description_type, overview, description_text
 
 
-def parse_direction_token(value: Any) -> DirectionToken:
-    if not isinstance(value, str):
-        raise WorkbookValidationError("INVALID_DIRECTION", f"direction token must be text, got {type(value).__name__}")
-    match = _DIRECTION_RE.fullmatch(value)
-    if match is None:
-        raise WorkbookValidationError("INVALID_DIRECTION", f"invalid Values direction/type token {value!r}; expected i, o, i(type), or o(type)")
-    channel = "input" if match.group(1) == "i" else "output"
-    return DirectionToken("in" if channel == "input" else "out", channel, value, match.group(2))
-
-
-parse_direction = parse_direction_token
-
-
-def split_array_column_name(name: str) -> tuple[str, tuple[int, ...]]:
-    if not isinstance(name, str) or not name.strip():
-        raise WorkbookValidationError("MISSING_COLUMN_NAME", "Values variable name must be non-empty text")
-    paths = tuple(int(item) for item in _ARRAY_INDEX_RE.findall(name))
-    base = _ARRAY_INDEX_RE.sub("", name)
-    if not base:
-        raise WorkbookValidationError("INVALID_COLUMN_NAME", f"Values variable name {name!r} has no base")
-    return base, paths
-
-
-def _active_formula_check(ws: Any, *, sheet: str, min_row: int) -> None:
-    for (row, _column), cell in _cell_map(ws).items():
-        if row >= min_row and _is_formula(cell):
-            raise UnsupportedFormulaError(sheet, cell.coordinate)
-
-
-def _header_map(ws: Any, *, sheet: str, row: int, required: Iterable[str]) -> dict[str, int]:
-    cells = _cell_map(ws)
-    seen: dict[str, int] = {}
-    for column in sorted({column for (cell_row, column) in cells if cell_row == row}):
-        cell = cells[(row, column)]
-        text = _text_value(cell)
-        if text is None or not text.strip():
-            continue
-        label = _normalize_label(text)
-        if label in seen:
-            _error("DUPLICATE_HEADER", f"duplicate header {text!r}", sheet=sheet, coordinate=cell.coordinate)
-        seen[label] = column
-    for name in required:
-        if _normalize_label(name) not in seen:
-            _error("MISSING_REQUIRED_HEADER", f"header {name!r} is missing", sheet=sheet)
-    return seen
-
-
-def _row_has_payload(cells: Mapping[tuple[int, int], Any], row: int, columns: Iterable[int]) -> bool:
-    for column in columns:
-        cell = cells.get((row, column))
-        if cell is not None and (getattr(cell, "value", None) is not None or getattr(cell, "data_type", None) == "f"):
-            return True
-    return False
-
-
 class TessyWorkbookAdapter:
     dialect = "tessy_5_1"
     mandatory_sheets = ("General", "Properties", "Values", "Stubs")
@@ -387,7 +329,15 @@ class TessyWorkbookAdapter:
         self.expected_testobject = expected_testobject if expected_testobject is not None else expected_test_object
         self.expected_project = expected_project
 
-    def read_complete_export(self, path, *, expected_module=None, expected_testobject=None, expected_test_object=None, expected_project=None) -> WorkbookSnapshot:
+    def read_complete_export(
+        self,
+        path,
+        *,
+        expected_module=None,
+        expected_testobject=None,
+        expected_test_object=None,
+        expected_project=None,
+    ) -> WorkbookSnapshot:
         if expected_testobject is not None and expected_test_object is not None and expected_testobject != expected_test_object:
             raise ValueError("expected_testobject and expected_test_object disagree")
         expected_testobject = expected_testobject if expected_testobject is not None else expected_test_object
@@ -470,8 +420,14 @@ class TessyWorkbookAdapter:
         for row in candidate_rows:
             if not _row_has_payload(cells, row, headers.values()):
                 continue
-            case_number = _parse_integer(cells.get((row, headers[_normalize_label("Test Case")])), sheet="Properties", field="Test Case", row=row, allow_zero=False)
-            test_step = _parse_integer(cells.get((row, headers[_normalize_label("Test Step")])), sheet="Properties", field="Test Step", row=row)
+            case_number = _parse_integer(
+                cells.get((row, headers[_normalize_label("Test Case")])),
+                sheet="Properties", field="Test Case", row=row, allow_zero=False,
+            )
+            test_step = _parse_integer(
+                cells.get((row, headers[_normalize_label("Test Step")])),
+                sheet="Properties", field="Test Step", row=row,
+            )
             if case_number in records:
                 _error("DUPLICATE_PROPERTY_CASE", f"duplicate Properties Test Case {case_number}", sheet="Properties")
             name = _text_value(cells.get((row, headers[_normalize_label("Name")])))
@@ -481,7 +437,11 @@ class TessyWorkbookAdapter:
                 _error("DUPLICATE_ROW_ID", f"duplicate Properties row ID {external_id!r}", sheet="Properties")
             if external_id is not None:
                 ids.add(external_id)
-            records[case_number] = _PropertyRecord(case_number, test_step, name if name and name.strip() else None, description, external_id, description_type, overview, description_text, row)
+            records[case_number] = _PropertyRecord(
+                case_number, test_step,
+                name if name and name.strip() else None, description,
+                external_id, description_type, overview, description_text, row,
+            )
         return records
 
     def _parse_values(self, ws):
@@ -518,7 +478,12 @@ class TessyWorkbookAdapter:
             if not (label is not None or _row_has_payload(cells, row, active_numbers)):
                 continue
             if label is None or not label.strip() or _CASE_LABEL_RE.fullmatch(label) is None:
-                _error("INVALID_VALUES_ROW_LABEL", f"invalid Values row label {label!r}", sheet="Values", coordinate=label_cell.coordinate if label_cell else None)
+                _error(
+                    "INVALID_VALUES_ROW_LABEL",
+                    f"invalid Values row label {label!r}",
+                    sheet="Values",
+                    coordinate=label_cell.coordinate if label_cell else None,
+                )
             if label in labels:
                 _error("DUPLICATE_VALUES_ROW", f"duplicate Values row label {label!r}", sheet="Values")
             labels.add(label)
@@ -540,7 +505,11 @@ class TessyWorkbookAdapter:
                 continue
             if any(not path for path in paths) or len({len(path) for path in paths}) != 1:
                 _error("INCOMPLETE_ARRAY", f"array column group {base!r}/{channel} is structurally incomplete", sheet="Values")
-            expected = {tuple(indexes) for indexes in _product_ranges([set(range(max(path[i] for path in paths) + 1)) for i in range(len(paths[0]))])}
+            ranges = [
+                set(range(max(path[i] for path in paths) + 1))
+                for i in range(len(paths[0]))
+            ]
+            expected = {tuple(indexes) for indexes in _product_ranges(ranges)}
             if set(paths) != expected:
                 _error("INCOMPLETE_ARRAY", f"array column group {base!r}/{channel} is structurally incomplete", sheet="Values")
 
@@ -575,10 +544,28 @@ class TessyWorkbookAdapter:
             _error("DUPLICATE_STUB_NAME", "Stub names must be unique within the module")
 
     def _join_cases(self, properties, value_rows) -> list[ExportCase]:
-        return [
-            ExportCase(case_number, step, label, properties[case_number].case_name, properties[case_number].external_test_case_id, properties[case_number].description_raw, inputs, outputs, properties[case_number].test_step, properties[case_number].source_row, values_row, properties[case_number].description_type, properties[case_number].overview, properties[case_number].description_text)
-            for case_number, step, label, inputs, outputs, values_row in value_rows
-        ]
+        cases = []
+        for case_number, step, label, inputs, outputs, values_row in value_rows:
+            property_record = properties[case_number]
+            cases.append(
+                ExportCase(
+                    case_number,
+                    step,
+                    label,
+                    property_record.case_name,
+                    property_record.external_test_case_id,
+                    property_record.description_raw,
+                    inputs,
+                    outputs,
+                    property_record.test_step,
+                    property_record.source_row,
+                    values_row,
+                    property_record.description_type,
+                    property_record.overview,
+                    property_record.description_text,
+                )
+            )
+        return cases
 
     def write_function(self, path, module_state: dict, function_name: str, template_path=None) -> None:
         """Atomically project one JSON function into a complete TESSY workbook."""
@@ -603,7 +590,12 @@ class TessyWorkbookAdapter:
         try:
             workbook.save(temporary)
             workbook.close()
-            snapshot = self.read_complete_export(temporary, expected_module=_module_basename(module_state["source_file"]), expected_testobject=function_name, expected_project=f"tessy_{module_state['project']}")
+            snapshot = self.read_complete_export(
+                temporary,
+                expected_module=_module_basename(module_state["source_file"]),
+                expected_testobject=function_name,
+                expected_project=f"tessy_{module_state['project']}",
+            )
             _validate_projection(snapshot, projected, stubs, columns)
             os.replace(temporary, path)
         finally:
@@ -667,7 +659,14 @@ def _project_rows(function: Mapping[str, Any], rows: list[tuple[str, dict]]):
         columns.append((name, "output", _column_direction_token(function, name, "output", typed_roots)))
     projected = []
     for row_id, row in rows:
-        projected.append({"id": row_id, "description": row["description"], "input": _flatten_channel(function, row, "input"), "output": _flatten_channel(function, row, "output")})
+        projected.append(
+            {
+                "id": row_id,
+                "description": row["description"],
+                "input": _flatten_channel(function, row, "input"),
+                "output": _flatten_channel(function, row, "output"),
+            }
+        )
     return columns, projected
 
 
@@ -695,7 +694,13 @@ def _project_stubs(state: Mapping[str, Any], function: Mapping[str, Any]) -> lis
         local = function.get("stubs", {}).get(key)
         if local is not None and local["status"] == "orphaned":
             continue
-        body = local["body"] if local is not None and local["status"] == "active" else default_stub_body(entry, key in function.get("used_stub_keys", []))
+        if local is not None and local["status"] == "active":
+            body = local["body"]
+        else:
+            body = default_stub_body(
+                entry,
+                key in function.get("used_stub_keys", []),
+            )
         result.append({"name": key, "body": body})
     return result
 
@@ -725,7 +730,10 @@ def _load_template(template_path):
     ):
         workbook["General"].cell(row, 1).value = label
         workbook["General"].cell(row, 2).value = value
-    for sheet, headers, row in (("Properties", ("Test Case", "Test Step", "Repeat Count", "Name", "Description"), 4), ("Stubs", ("Test Case", "Test Step", "Stub", "Stub Body"), 4)):
+    for sheet, headers, row in (
+        ("Properties", ("Test Case", "Test Step", "Repeat Count", "Name", "Description"), 4),
+        ("Stubs", ("Test Case", "Test Step", "Stub", "Stub Body"), 4),
+    ):
         for index, value in enumerate(headers, 1):
             workbook[sheet].cell(row, index).value = value
     return workbook
@@ -735,7 +743,10 @@ def _ensure_sheets(workbook) -> None:
     for name in TessyWorkbookAdapter.mandatory_sheets:
         if name not in workbook.sheetnames:
             workbook.create_sheet(name)
-    for sheet, headers, row in (("Properties", ("Test Case", "Test Step", "Repeat Count", "Name", "Description"), 4), ("Stubs", ("Test Case", "Test Step", "Stub", "Stub Body"), 4)):
+    for sheet, headers, row in (
+        ("Properties", ("Test Case", "Test Step", "Repeat Count", "Name", "Description"), 4),
+        ("Stubs", ("Test Case", "Test Step", "Stub", "Stub Body"), 4),
+    ):
         target = workbook[sheet]
         for index, value in enumerate(headers, 1):
             if target.cell(row, index).value is None:
@@ -776,5 +787,13 @@ parse_workbook = read_complete_export
 
 
 __all__ = [
-    "CellValue", "DirectionToken", "ExcelColumnKey", "ExportCase", "ExportColumn", "ExportStub", "GeneralIdentityError", "MissingSheetError", "PhysicalWorkbook", "PhysicalWorksheet", "TessyWorkbookAdapter", "UnsupportedFormulaError", "WorkbookAdapter", "WorkbookAdapterError", "WorkbookMeta", "WorkbookSecurityError", "WorkbookSnapshot", "WorkbookValidationError", "MAX_ARCHIVE_ENTRIES", "MAX_ARCHIVE_MEMBER_BYTES", "MAX_ARCHIVE_TOTAL_BYTES", "MAX_COMPRESSION_RATIO", "parse_direction", "parse_direction_token", "parse_workbook", "read", "read_complete_export", "read_workbook", "workbook_to_function_snapshot", "physicalize_workbook", "physicalize_worksheet", "split_array_column_name",
+    "CellValue", "DirectionToken", "ExcelColumnKey", "ExportCase", "ExportColumn",
+    "ExportStub", "GeneralIdentityError", "MissingSheetError", "PhysicalWorkbook",
+    "PhysicalWorksheet", "TessyWorkbookAdapter", "UnsupportedFormulaError",
+    "WorkbookAdapter", "WorkbookAdapterError", "WorkbookMeta", "WorkbookSecurityError",
+    "WorkbookSnapshot", "WorkbookValidationError", "MAX_ARCHIVE_ENTRIES",
+    "MAX_ARCHIVE_MEMBER_BYTES", "MAX_ARCHIVE_TOTAL_BYTES", "MAX_COMPRESSION_RATIO",
+    "parse_direction", "parse_direction_token", "parse_workbook", "read",
+    "read_complete_export", "read_workbook", "workbook_to_function_snapshot",
+    "physicalize_workbook", "physicalize_worksheet", "split_array_column_name",
 ]

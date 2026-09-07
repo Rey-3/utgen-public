@@ -10,7 +10,7 @@ from pathlib import Path, PurePosixPath
 import posixpath
 import re
 from types import MappingProxyType
-from typing import Any, Iterator, Mapping
+from typing import Any, Iterable, Iterator, Mapping
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -23,6 +23,8 @@ MAX_ARCHIVE_TOTAL_BYTES = 256 * 1024 * 1024
 MAX_COMPRESSION_RATIO = 1000
 
 _CELL_REFERENCE_RE = re.compile(r"^\$?([A-Z]+)\$?([1-9][0-9]*)$")
+_DIRECTION_RE = re.compile(r"^(i|o)(?:\((.+)\))?$")
+_ARRAY_INDEX_RE = re.compile(r"\[([0-9]+)\]")
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,14 @@ class ExcelColumnKey:
             raise TypeError("element_path must be a tuple of non-negative integers")
         if type(self.occurrence) is not int or self.occurrence < 0:
             raise TypeError("occurrence must be a non-negative integer")
+
+
+@dataclass(frozen=True)
+class DirectionToken:
+    direction: str
+    channel: str
+    raw: str
+    raw_type_hint: str | None
 
 
 class WorkbookAdapterError(ValueError):
@@ -256,11 +266,17 @@ def _physicalize_loaded_workbook(workbook: Any, raw: bytes) -> PhysicalWorkbook:
                             reference = element.attrib.get("r")
                             key = _cell_reference(reference)
                             if key in cells:
-                                raise WorkbookValidationError("DUPLICATE_PHYSICAL_CELL", f"worksheet {title!r} contains duplicate cell {reference!r}")
+                                raise WorkbookValidationError(
+                                    "DUPLICATE_PHYSICAL_CELL",
+                                    f"worksheet {title!r} contains duplicate cell {reference!r}",
+                                )
                             try:
                                 cells[key] = worksheet[reference]
                             except Exception as exc:
-                                raise WorkbookValidationError("INVALID_CELL_REFERENCE", f"worksheet {title!r} cell {reference!r} cannot be decoded") from exc
+                                raise WorkbookValidationError(
+                                    "INVALID_CELL_REFERENCE",
+                                    f"worksheet {title!r} cell {reference!r} cannot be decoded",
+                                ) from exc
                             element.clear()
                 except WorkbookValidationError:
                     raise
@@ -290,7 +306,11 @@ def physicalize_worksheet(worksheet: Any, *, index: int = 0) -> PhysicalWorkshee
         return worksheet
     cells = getattr(worksheet, "_cells", None)
     if not isinstance(cells, Mapping):
-        raise WorkbookValidationError("UNSUPPORTED_WORKBOOK_STORAGE", "direct worksheet is neither a PhysicalWorksheet nor an openpyxl worksheet with a physical map")
+        raise WorkbookValidationError(
+            "UNSUPPORTED_WORKBOOK_STORAGE",
+            "direct worksheet is neither a PhysicalWorksheet nor an openpyxl worksheet "
+            "with a physical map",
+        )
     return PhysicalWorksheet(str(getattr(worksheet, "title", index)), dict(cells))
 
 
@@ -347,6 +367,10 @@ def _cell_value(cell: Any | None) -> CellValue:
     return CellValue("value", raw, raw)
 
 
+def _normalize_label(value: str) -> str:
+    return " ".join(value.strip().split()).casefold()
+
+
 def _text_value(cell: Any | None, *, empty: str | None = None) -> str | None:
     decoded = _cell_value(cell)
     return empty if decoded.kind == "missing" else decoded.raw_text
@@ -367,6 +391,87 @@ def _parse_integer(cell: Any | None, *, sheet: str, field: str, row: int, allow_
     if not allow_zero and number == 0:
         raise WorkbookValidationError("INVALID_INTEGER_CELL", f"{field} must be greater than zero", sheet=sheet)
     return number
+
+
+def _active_formula_check(ws: Any, *, sheet: str, min_row: int) -> None:
+    for (row, _column), cell in _cell_map(ws).items():
+        if row >= min_row and _is_formula(cell):
+            raise UnsupportedFormulaError(sheet, cell.coordinate)
+
+
+def _header_map(ws: Any, *, sheet: str, row: int, required: Iterable[str]) -> dict[str, int]:
+    cells = _cell_map(ws)
+    seen: dict[str, int] = {}
+    for column in sorted({column for (cell_row, column) in cells if cell_row == row}):
+        cell = cells[(row, column)]
+        text = _text_value(cell)
+        if text is None or not text.strip():
+            continue
+        label = _normalize_label(text)
+        if label in seen:
+            raise WorkbookValidationError(
+                "DUPLICATE_HEADER",
+                f"duplicate header {text!r}",
+                sheet=sheet,
+                coordinate=cell.coordinate,
+            )
+        seen[label] = column
+    for name in required:
+        if _normalize_label(name) not in seen:
+            raise WorkbookValidationError(
+                "MISSING_REQUIRED_HEADER",
+                f"header {name!r} is missing",
+                sheet=sheet,
+            )
+    return seen
+
+
+def _row_has_payload(cells: Mapping[tuple[int, int], Any], row: int, columns: Iterable[int]) -> bool:
+    for column in columns:
+        cell = cells.get((row, column))
+        if cell is not None and (
+            getattr(cell, "value", None) is not None
+            or getattr(cell, "data_type", None) == "f"
+        ):
+            return True
+    return False
+
+
+def parse_direction_token(value: Any) -> DirectionToken:
+    if not isinstance(value, str):
+        raise WorkbookValidationError(
+            "INVALID_DIRECTION",
+            f"direction token must be text, got {type(value).__name__}",
+        )
+    match = _DIRECTION_RE.fullmatch(value)
+    if match is None:
+        raise WorkbookValidationError(
+            "INVALID_DIRECTION",
+            f"invalid Values direction/type token {value!r}; "
+            "expected i, o, i(type), or o(type)",
+        )
+    channel = "input" if match.group(1) == "i" else "output"
+    direction = "in" if channel == "input" else "out"
+    return DirectionToken(direction, channel, value, match.group(2))
+
+
+parse_direction = parse_direction_token
+
+
+def split_array_column_name(name: str) -> tuple[str, tuple[int, ...]]:
+    if not isinstance(name, str) or not name.strip():
+        raise WorkbookValidationError(
+            "MISSING_COLUMN_NAME",
+            "Values variable name must be non-empty text",
+        )
+    paths = tuple(int(item) for item in _ARRAY_INDEX_RE.findall(name))
+    base = _ARRAY_INDEX_RE.sub("", name)
+    if not base:
+        raise WorkbookValidationError(
+            "INVALID_COLUMN_NAME",
+            f"Values variable name {name!r} has no base",
+        )
+    return base, paths
 
 
 def read_xlsx_bytes(value: str | os.PathLike[str] | Path | bytes | bytearray) -> bytes:
@@ -421,10 +526,11 @@ def validate_xlsx_container(data: bytes) -> None:
 
 
 __all__ = [
-    "CellValue", "ExcelColumnKey", "GeneralIdentityError", "MissingSheetError",
+    "CellValue", "DirectionToken", "ExcelColumnKey", "GeneralIdentityError", "MissingSheetError",
     "PhysicalWorkbook", "PhysicalWorksheet", "UnsupportedFormulaError",
     "WorkbookAdapterError", "WorkbookSecurityError", "WorkbookValidationError",
     "MAX_ARCHIVE_ENTRIES", "MAX_ARCHIVE_MEMBER_BYTES", "MAX_ARCHIVE_TOTAL_BYTES",
-    "MAX_COMPRESSION_RATIO", "load_workbook", "physicalize_workbook",
-    "physicalize_worksheet", "read_xlsx_bytes", "validate_xlsx_container",
+    "MAX_COMPRESSION_RATIO", "load_workbook", "parse_direction", "parse_direction_token",
+    "physicalize_workbook", "physicalize_worksheet", "read_xlsx_bytes",
+    "split_array_column_name", "validate_xlsx_container",
 ]
