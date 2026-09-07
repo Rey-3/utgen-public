@@ -587,13 +587,13 @@ def _publish_workbooks(staged: Mapping[str, Path], output_dir: Path, report: Mig
             os.replace(source, target)
             published.append((target, previous))
     except OSError as exc:
-        target = backups[len(published)][0]
+        target, previous = backups[len(published)]
         report.errors.append(f"cannot publish workbook {target}: {exc}")
-        try:
-            for target, previous in reversed(published):
+        for target, previous in [(target, previous), *reversed(published)]:
+            try:
                 _rollback(target, previous)
-        except Exception as rollback_exc:
-            report.errors.append(f"workbook rollback failed: {rollback_exc}")
+            except Exception as rollback_exc:
+                report.errors.append(f"workbook rollback failed for {target}: {rollback_exc}")
         raise
     return [target for target, _previous in backups]
 
