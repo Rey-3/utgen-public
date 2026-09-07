@@ -264,12 +264,6 @@ def run_user_merge(config=None):
     return workflow_run_user_merge(CONFIG_PATH if config is None else config)
 
 
-def run():
-    """Backward-compatible entry point for the normal iteration workflow."""
-
-    return run_generation()
-
-
 def _load_cli_config(path: Path):
     value = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(value, Mapping):
