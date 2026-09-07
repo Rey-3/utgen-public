@@ -458,6 +458,7 @@ class AnalysisDbWriter:
                 return
 
             restore_temp = None
+            retain_restore = False
             try:
                 fd, restore_name = tempfile.mkstemp(
                     prefix=f".{path.name}.", suffix=".restore", dir=path.parent
@@ -467,21 +468,29 @@ class AnalysisDbWriter:
                     stream.write(previous)
                     stream.flush()
                     os.fsync(stream.fileno())
-                AnalysisDbAdapter().read_module(restore_temp, require_metadata=True)
+                if restore_temp.read_bytes() != previous:
+                    retain_restore = True
+                    raise RuntimeError(
+                        f"restore bytes do not match previous DB; recovery path: {restore_temp}"
+                    )
                 try:
                     os.replace(restore_temp, path)
                 except OSError as exc:
                     try:
                         restored = path.read_bytes() == previous
                     except OSError as read_error:
-                        raise AnalysisDbValidationError(
-                            f"cannot verify restored Analysis DB: {path}: {read_error}"
-                        ) from cause
+                        retain_restore = True
+                        raise RuntimeError(
+                            f"cannot verify restored Analysis DB: {path}: {read_error}; "
+                            f"recovery path: {restore_temp}"
+                        ) from read_error
                     if restored:
                         return
-                    raise AnalysisDbValidationError(
-                        f"cannot restore previous Analysis DB after replace failure: {path}: {exc}"
-                    ) from cause
+                    retain_restore = True
+                    raise RuntimeError(
+                        f"cannot restore previous Analysis DB after replace failure: {path}: {exc}; "
+                        f"recovery path: {restore_temp}"
+                    ) from exc
                 try:
                     restored = path.read_bytes() == previous
                 except OSError as exc:
@@ -497,7 +506,7 @@ class AnalysisDbWriter:
                     f"cannot restore previous Analysis DB: {path}: {exc}"
                 ) from cause
             finally:
-                if restore_temp is not None:
+                if restore_temp is not None and not retain_restore:
                     try:
                         restore_temp.unlink()
                     except FileNotFoundError:
