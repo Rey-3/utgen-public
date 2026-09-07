@@ -18,7 +18,7 @@ from tessy_excel import (
     writeGeneralSheet,
     write_testlist_cells,
 )
-from ..merge import default_stub_body
+from ..merge import _ordered_active_rows, default_stub_body
 from ..values import flatten_values, project_generated_values
 from ._tessy_workbook_io import (
     CellValue,
@@ -622,26 +622,6 @@ def _flatten_channel(function: Mapping[str, Any], row: Mapping[str, Any] | None,
     variables = function["variables"]
     values = row[channel] if row is not None else project_generated_values({}, variables, channel)
     return flatten_values(values, variables, channel=channel)
-
-
-def _ordered_active_rows(function: Mapping[str, Any]) -> list[tuple[str, dict]]:
-    rows = function["rows"]
-    order: list[str] = []
-    for item in function.get("generated_rows", []):
-        order.append(item["row_id"])
-    for decision in function.get("decisions", {}).values():
-        for recipe in decision.get("recipes", []):
-            order.append(recipe["row_id"])
-    order.extend(rows)
-    seen = set()
-    result = []
-    for row_id in order:
-        if row_id in seen or row_id not in rows:
-            continue
-        seen.add(row_id)
-        if rows[row_id]["status"] == "active":
-            result.append((row_id, rows[row_id]))
-    return result
 
 
 def _project_rows(function: Mapping[str, Any], rows: list[tuple[str, dict]]):

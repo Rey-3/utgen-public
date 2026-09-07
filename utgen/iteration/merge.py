@@ -19,7 +19,6 @@ from ..mcdc import eval_expr
 from ..model import And, AssemblyResult, Atom, GeneratedRowProvenance, Not, Or, RecipeProvenance, atoms_of
 _GENERATED_KINDS = frozenset({"Nominal", "Timeout"})
 
-
 @dataclass(frozen=True)
 class DecisionMatch:
     candidate_key: str
@@ -50,7 +49,7 @@ def merge_user(state: dict, function_name: str, workbook_snapshot) -> UserMergeR
     if function_name not in state["functions"]:
         raise ValueError(f"unknown function {function_name!r}")
     _validate_workbook_identity(state, function_name, workbook_snapshot)
-    cases = getattr(workbook_snapshot, "cases", None)
+    cases = _get(workbook_snapshot, "cases")
     if not isinstance(cases, (list, tuple)):
         raise ValueError("workbook snapshot cases must be a sequence")
 
@@ -58,9 +57,6 @@ def merge_user(state: dict, function_name: str, workbook_snapshot) -> UserMergeR
     result = deepcopy(state)
     function = result["functions"][function_name]
     rows = function["rows"]
-    # Reuse the writer's source-order rule for legacy exports.
-    from .adapters.tessy_workbook import _ordered_active_rows
-
     active_ids = [row_id for row_id, _ in _ordered_active_rows(current)]
     legacy = all(_case_row_id(case) is None for case in cases)
     seen: set[str] = set()
@@ -87,7 +83,6 @@ def merge_user(state: dict, function_name: str, workbook_snapshot) -> UserMergeR
         incoming = _snapshot_row(case, function, allow_missing=new_row)
         if new_row:
             rows[row_id] = incoming
-            row_changed += 1
             continue
         old = rows[row_id]
         if old["status"] != "active" or _row_content(old) != _row_content(incoming):
@@ -99,13 +94,13 @@ def merge_user(state: dict, function_name: str, workbook_snapshot) -> UserMergeR
         if row["status"] == "active" and row_id not in seen:
             row.update(owner="user", status="orphaned")
             orphaned += 1
-    stub_changes = _merge_user_stubs(function, workbook_snapshot, result["stub_catalog"])
+    stub_changed, stub_orphaned = _merge_user_stubs(function, workbook_snapshot, result["stub_catalog"])
     validate_module(result)
-    updated = bool(row_changed or orphaned or stub_changes or allocated)
+    updated = bool(row_changed or added or orphaned or stub_changed or stub_orphaned)
     summary = {
         "status": "updated" if updated else "skipped",
         "rows": {"changed": row_changed, "added": added, "orphaned": orphaned},
-        "stubs": {"changed": stub_changes},
+        "stubs": {"changed": stub_changed, "orphaned": stub_orphaned},
     }
     return UserMergeResult(result, summary, tuple(allocated))
 
@@ -126,7 +121,6 @@ def _validate_workbook_identity(state, function_name: str, snapshot) -> None:
             f"{state['project']}/{state['module']}/{function_name}"
         )
 
-
 def _get(item, *names, default=None):
     for name in names:
         value = item.get(name) if isinstance(item, Mapping) and name in item else getattr(item, name, None)
@@ -134,17 +128,33 @@ def _get(item, *names, default=None):
             return value
     return default
 
+def _ordered_active_rows(function: Mapping) -> list[tuple[str, dict]]:
+    """Keep the adapter's generated, decision, then manual export order."""
+    rows = function["rows"]
+    order = [item["row_id"] for item in function.get("generated_rows", [])]
+    order += [
+        recipe["row_id"]
+        for decision in function.get("decisions", {}).values()
+        for recipe in decision.get("recipes", [])
+    ]
+    order += list(rows)
+    seen, result = set(), []
+    for row_id in order:
+        if row_id in seen or row_id not in rows:
+            continue
+        seen.add(row_id)
+        if rows[row_id]["status"] == "active":
+            result.append((row_id, rows[row_id]))
+    return result
 
 def _case_row_id(case):
     return _get(case, "row_id", "external_test_case_id")
-
 
 def _case_description(case) -> str:
     value = _get(case, "state_description", "description", default="")
     if not isinstance(value, str):
         raise ValueError("workbook row description must be text")
     return value
-
 
 def _snapshot_row(case, function: dict, *, allow_missing: bool = False) -> dict:
     return {
@@ -155,7 +165,6 @@ def _snapshot_row(case, function: dict, *, allow_missing: bool = False) -> dict:
         "input": _snapshot_values(case, function, "input", allow_missing),
         "output": _snapshot_values(case, function, "output", allow_missing),
     }
-
 
 def _snapshot_values(case, function: dict, channel: str, allow_missing: bool) -> dict:
     cells = _get(case, f"{channel}_cells")
@@ -195,12 +204,10 @@ def _snapshot_values(case, function: dict, channel: str, allow_missing: bool) ->
     defaults.update(flat)
     return nest_values(defaults, variables, channel)
 
-
 def _row_content(row: Mapping) -> tuple:
     return row["description"], row["input"], row["output"]
 
-
-def _merge_user_stubs(function: dict, snapshot, catalog: Mapping) -> int:
+def _merge_user_stubs(function: dict, snapshot, catalog: Mapping) -> tuple[int, int]:
     stubs = _get(snapshot, "stubs", default=())
     if not isinstance(stubs, (list, tuple)):
         raise ValueError("workbook snapshot stubs must be a sequence")
@@ -214,23 +221,22 @@ def _merge_user_stubs(function: dict, snapshot, catalog: Mapping) -> int:
             raise ValueError(f"duplicate workbook stub: {key!r}")
         seen[key] = body
     current = function["stubs"]
-    changes = 0
+    changed = orphaned = 0
     for key, body in seen.items():
         if key not in catalog or catalog[key]["status"] == "orphaned":
             raise ValueError(f"workbook references an unavailable stub: {key!r}")
         item = current.get(key)
         if item is None:
             current[key] = {"owner": "user", "status": "active", "body": body}
-            changes += 1
+            changed += 1
         elif item["body"] != body or item["status"] != "active":
             item.update(owner="user", status="active", body=body)
-            changes += 1
+            changed += 1
     for key, item in current.items():
         if key not in seen and item["status"] == "active":
             item.update(owner="user", status="orphaned")
-            changes += 1
-    return changes
-
+            orphaned += 1
+    return changed, orphaned
 
 def match_decisions(current_function: dict, candidate_function: dict) -> list[DecisionMatch]:
     """Match candidate decisions in source order by exact readable structure."""
@@ -247,7 +253,6 @@ def match_decisions(current_function: dict, candidate_function: dict) -> list[De
                 matches[index] = key
                 used.add(key)
     return [DecisionMatch(item[0], matches[index]) for index, item in enumerate(candidate_items)]
-
 
 def merge_tool(current: dict, candidate: dict) -> MergeResult:
     """Merge one regenerated candidate into the current module state."""
@@ -289,11 +294,9 @@ def merge_tool(current: dict, candidate: dict) -> MergeResult:
     }
     return MergeResult(state, summary)
 
-
 def _decision_core(decision: dict) -> tuple:
     atoms = decision.get("atoms", {})
     return decision.get("kind", "decision"), decision["expression"], tuple(atoms.values())
-
 
 def _decision_structure(decision: dict) -> tuple:
     atoms = decision.get("atoms", {})
@@ -302,10 +305,8 @@ def _decision_structure(decision: dict) -> tuple:
         for recipe in decision["recipes"]
     )
 
-
 def _recipe_structure(decision: dict, recipe: dict) -> tuple:
     return recipe["result"], tuple(recipe["values"][key] for key in decision["atoms"])
-
 
 def _merge_stub_catalog(current: dict, candidate: dict) -> dict:
     merged = {}
@@ -319,7 +320,6 @@ def _merge_stub_catalog(current: dict, candidate: dict) -> dict:
             item["status"] = "orphaned"
             merged[key] = item
     return merged
-
 
 def _new_function(state: dict, candidate: dict, counters: dict) -> dict:
     function = deepcopy(candidate)

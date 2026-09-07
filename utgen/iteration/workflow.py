@@ -86,7 +86,7 @@ def run_user_merge(config) -> list[ModuleSummary]:
                 function_summaries[function_name] = merged.summary
                 allocated.extend(merged.allocated_ids)
                 if merged.changed:
-                    changed_paths[function_name] = path
+                    changed_paths[function_name] = tuple(item[0] for item in items)
             if not changed_paths:
                 summaries.append(
                     _summary(
@@ -100,8 +100,9 @@ def run_user_merge(config) -> list[ModuleSummary]:
 
             write_module(paths.state, candidate)
             adapter = TessyWorkbookAdapter()
-            for function_name, path in changed_paths.items():
-                adapter.write_function(path, candidate, function_name, template)
+            for function_name, paths in changed_paths.items():
+                for path in paths:
+                    adapter.write_function(path, candidate, function_name, template)
             summaries.append(
                 _summary(
                     project,
