@@ -99,19 +99,14 @@ class _Stub:
 
 def _tag(node: ET.Element) -> str:
     return node.tag.rsplit("}", 1)[-1].lower()
-
 def _child(node: ET.Element, name: str) -> ET.Element | None:
     name = name.lower()
     return next((item for item in list(node) if _tag(item) == name), None)
-
 def _text(value: Any, default: str = "") -> str:
     return default if value is None else str(value)
-
 def _resolve(value: Any, base: Path) -> Path:
     path = Path(os.fspath(value))
     return path if path.is_absolute() else base / path
-
-
 def _direct_config(value: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise TypeError("project_config must be a mapping")
@@ -134,7 +129,6 @@ def _direct_config(value: Mapping[str, Any]) -> dict[str, Any]:
             item[key] = value[key]
     return item
 
-
 def _identity(config: Mapping[str, Any], module_hint: str | None = None) -> tuple[str, str]:
     project = config.get("project") or config.get("project_name") or config.get("name")
     module = config.get("module") or config.get("module_name") or module_hint
@@ -145,7 +139,6 @@ def _identity(config: Mapping[str, Any], module_hint: str | None = None) -> tupl
     if any(ch in project + module for ch in "/\\:\x00"):
         raise ValueError("project/module must be a safe path component")
     return project, module
-
 def _source_file(config: Mapping[str, Any], module: str, metadata: Any) -> str:
     value = config.get("relative_path") or config.get("source_file") or config.get("source")
     value = _text(value or getattr(metadata, "source_file", "") or module)
@@ -153,7 +146,6 @@ def _source_file(config: Mapping[str, Any], module: str, metadata: Any) -> str:
     if not normalized or normalized.startswith("/") or ":" in normalized or ".." in normalized.split("/"):
         raise ValueError("source_file must be a non-empty relative path")
     return value
-
 def _paths(config: Mapping[str, Any], root: Path, module: str) -> tuple[Path, Path, Path, Path]:
     base = Path(config.get("config_dir") or config.get("base_dir") or Path.cwd())
     working_value = config.get("legacy_working_dir") or config.get("working_dir")
@@ -170,13 +162,11 @@ def _paths(config: Mapping[str, Any], root: Path, module: str) -> tuple[Path, Pa
     out_value = config.get("excel_output_dir") or config.get("current_excel_dir")
     excel_out = _resolve(out_value, base) if out_value else (excel_in or root / "iteration" / "current_excel" / Path(module).stem)
     return working, database, excel_in, excel_out
-
 def _read_root(path: Path) -> ET.Element:
     try:
         return ET.parse(path).getroot()
     except (OSError, ET.ParseError) as exc:
         raise ValueError(f"cannot parse legacy XML: {path}") from exc
-
 def _direction(value: Any) -> str:
     value = _text(value, "in").strip().lower()
     return {"in": "input", "i": "input", "input": "input",
@@ -376,7 +366,6 @@ def _baseline(legacy: _LegacyFunction, variables: Mapping[str, Any]) -> list[dic
             row[channel].update({path: "" for path in _schema_leaves(variables, channel) if path not in row[channel]})
     return result
 
-
 def _workbook(directory: Path | None, project: str, module: str, function: str, report: MigrationReport) -> Any | None:
     if directory is None or not directory.exists():
         return None
@@ -442,8 +431,9 @@ def _allocate(prefix, records, existing, report):
             value = ids[index] if index < len(ids) else None
             if value is None and index < len(old_ids) and _valid_id(old_ids[index], prefix):
                 value = old_ids[index]
-            if not _valid_id(value, prefix) or value in seen:
-                if value is not None:
+            valid = _valid_id(value, prefix)
+            if not valid or value in seen:
+                if valid and value in seen:
                     report.ambiguities.append(f"{name}: invalid or duplicate row ID {value!r}; allocated a new ID")
                 highest += 1
                 value = f"{prefix}_{highest:03d}"
@@ -496,29 +486,40 @@ def _attach_provenance(state: dict, candidate: dict | None, report: MigrationRep
         for generated in function["generated_rows"]:
             generated["row_id"] = mapping[generated["row_id"]]
 
-def _state(project, module, source, metadata, rows_by_function, existing, report):
+def _state(project, module, source, metadata, rows_by_function, existing, report, current_catalog):
     prefix = Path(source).stem
     records = [(item[0].name, item[1], item[2]) for item in rows_by_function]
     allocated, maximum = _allocate(prefix, records, existing, report)
-    catalog: dict[str, dict[str, Any]] = {}
+    catalog = {key: dict(entry) for key, entry in current_catalog.items()}
     functions: dict[str, dict[str, Any]] = {}
-    for legacy, _rows, _ids, signatures, bodies, variables in rows_by_function:
-        local = {}
+    for legacy, _rows, _ids, signatures, bodies, variables, used_signatures in rows_by_function:
+        used_keys = [key for key in used_signatures if key in current_catalog]
         for key, signature in signatures.items():
+            if key in current_catalog:
+                continue
             storage = None if signature.return_type == "void" else (signature.storage or f"tessy_{key}")
-            if storage and storage not in variables:
-                variables[storage] = {"type": signature.return_type, "direction": "input", "dimensions": []}
-                for _row_id, row in allocated.get(legacy.name, []):
-                    row["input"].setdefault(storage, "")
-            entry = {"stub_key": key, "status": "active", "function_name": key,
+            entry = {"stub_key": key, "status": "orphaned", "function_name": key,
                      "return_type": signature.return_type, "return_storage": storage,
                      "parameters": [dict(item) for item in signature.parameters]}
             if key in catalog and catalog[key] != entry:
                 report.ambiguities.append(f"stub signature differs for {key!r}")
             catalog.setdefault(key, entry)
-            local[key] = {"owner": "user" if key in bodies else "tool", "status": "active",
-                          "body": bodies.get(key, default_stub_body(
-                              {"return_type": signature.return_type, "return_storage": storage}, key in signatures))}
+        for key in used_keys:
+            signature = signatures[key]
+            storage = current_catalog[key]["return_storage"] or signature.storage
+            if storage and storage not in variables:
+                variables[storage] = {"type": signature.return_type, "direction": "input", "dimensions": []}
+                for _row_id, row in allocated.get(legacy.name, []):
+                    row["input"].setdefault(storage, "")
+        local = {}
+        for key, entry in catalog.items():
+            if entry["status"] == "orphaned":
+                if key in signatures:
+                    local[key] = {"owner": "user" if key in bodies else "tool", "status": "orphaned",
+                                  "body": bodies.get(key, "")}
+                continue
+            body = bodies.get(key, default_stub_body(entry, key in used_keys))
+            local[key] = {"owner": "user" if key in bodies else "tool", "status": "active", "body": body}
         state_rows = {}
         generated = []
         for row_id, row in allocated.get(legacy.name, []):
@@ -532,7 +533,7 @@ def _state(project, module, source, metadata, rows_by_function, existing, report
                                   "description": row["description"], "test_method": "", "input": inputs, "output": outputs}
             generated.append({"row_id": row_id, "kind": "Nominal"})
         functions[legacy.name] = {"max_decision_number": 0, "variables": variables, "decisions": {},
-                                  "generated_rows": generated, "rows": state_rows, "used_stub_keys": list(signatures), "stubs": local}
+                                  "generated_rows": generated, "rows": state_rows, "used_stub_keys": used_keys, "stubs": local}
     result = {"schema_version": 1, "project": project, "module": module, "source_file": source,
               "module_input_hash": f"sha256:{getattr(metadata, 'source_sha256', 'unknown')}",
               "max_row_number": maximum, "stub_catalog": catalog, "functions": functions}
@@ -568,8 +569,9 @@ def _project_and_verify(state: dict[str, Any], output_dir: Path, template: Any, 
             actual = [(case.external_test_case_id, case.state_description, case.input, case.output) for case in snapshot.cases]
             if actual != expected:
                 raise ValueError(f"independent workbook verification failed for {function}")
-            expected_stubs = [(key, state["functions"][function]["stubs"][key]["body"])
-                              for key in state["functions"][function]["stubs"]]
+            expected_stubs = [(key, stub["body"])
+                              for key, stub in state["functions"][function]["stubs"].items()
+                              if stub["status"] == "active"]
             if [(stub.name, stub.body_raw) for stub in snapshot.stubs] != expected_stubs:
                 raise ValueError(f"independent stub verification failed for {function}")
     except Exception as exc:
@@ -600,7 +602,10 @@ def _publish_workbooks(staged: Mapping[str, Path], output_dir: Path, report: Mig
 def _verify_stub_signatures(state: Mapping[str, Any], analysis: Any) -> None:
     expected = build_stub_catalog(analysis)
     actual = state["stub_catalog"]
-    if set(actual) != set(expected):
+    if set(expected) - set(actual) or any(
+        key not in expected and entry["status"] == "active"
+        for key, entry in actual.items()
+    ):
         raise ValueError("re-read Analysis DB stub catalog differs from migrated JSON")
     for key, entry in expected.items():
         current = actual[key]
@@ -687,16 +692,17 @@ def migrate_module(project_config: Mapping[str, Any], state_root: str | os.PathL
             rows = _baseline(function, vars)
             rows, ids, workbook_bodies = _combine(rows, snapshot, vars, report)
             for key in workbook_bodies:
-                if key not in signatures:
+                if key not in signatures and key not in analysis_catalog:
                     report.ambiguities.append(f"{name}: Excel stub {key!r} is not in Analysis DB/XML")
             bodies.update(workbook_bodies)
             legacy_ids = function.row_ids[:len(rows)] + [None] * max(0, len(rows) - len(function.row_ids))
             ids = [value or legacy_ids[index] for index, value in enumerate(ids)] if snapshot is not None else legacy_ids
-            rows_by_function.append((function, rows, ids, signatures, bodies, vars))
+            rows_by_function.append((function, rows, ids, signatures, bodies, vars,
+                                     _analysis_signatures(analysis_functions.get(name), analysis_catalog)))
         report.functions, report.rows = len(rows_by_function), sum(len(item[1]) for item in rows_by_function)
         report.stubs = sum(len(item[3]) for item in rows_by_function)
         candidate = _provenance(analysis, project, module, f"sha256:{metadata.source_sha256}", report)
-        state = _state(project, module, source, metadata, rows_by_function, existing, report)
+        state = _state(project, module, source, metadata, rows_by_function, existing, report, analysis_catalog)
         _attach_provenance(state, candidate, report)
         try:
             validate_module(state)
@@ -735,15 +741,13 @@ def migrate_module(project_config: Mapping[str, Any], state_root: str | os.PathL
         return report
     except Exception as exc:
         report.errors.append(str(exc))
-        return report
-
+    return report
 
 def _load(path: Path) -> Any:
     text = path.read_text(encoding="utf-8")
     if path.suffix.lower() == ".json" or yaml is None:
         return json.loads(text)
     return yaml.safe_load(text)
-
 
 def _configs(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, Mapping):
@@ -770,7 +774,6 @@ def _configs(value: Any) -> list[dict[str, Any]]:
         return [_direct_config({**value, "modules": [item]}) for item in modules]
     return [_direct_config(value)]
 
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Migrate legacy TESSY exports")
     parser.add_argument("--config", required=True, type=Path)
@@ -791,9 +794,7 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps(combined.as_dict(), ensure_ascii=False, indent=2))
     return 1 if combined.errors or combined.ambiguities else 0
 
-
 if __name__ == "__main__":
     raise SystemExit(main())
-
 
 __all__ = ["MigrationReport", "main", "migrate_module"]
