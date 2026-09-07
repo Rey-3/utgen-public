@@ -6,7 +6,6 @@ import multiprocessing as mp
 from pathlib import Path
 import sys
 import tempfile
-from time import perf_counter
 from typing import Mapping
 
 import yaml
@@ -24,55 +23,12 @@ CONFIG_PATH = (
     if getattr(sys, "frozen", False)
     else Path(__file__).with_name("config.yaml")
 )
-TIME_LOG_PATH = CONFIG_PATH.with_name("generation_times.txt")
 FUNCTION_TIMEOUT_SECONDS = 180
-_LAST_CONFIG = None
 
 
 @dataclass(frozen=True)
 class _GeneratedFunction:
     result: AssemblyResult
-
-
-def projects_from_config():
-    global _LAST_CONFIG
-    config = _read_config()
-    _LAST_CONFIG = config
-    tessy_include = config.get("Tessy", {}).get("include", ())
-    if isinstance(tessy_include, str):
-        tessy_include = (tessy_include,)
-    return config["projects"], tessy_include
-
-
-def _read_config():
-    config = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
-    if not isinstance(config, dict):
-        raise ValueError("config.yaml must contain a mapping")
-    return config
-
-
-def iteration_settings_from_config(config=None):
-    config = _read_config() if config is None else config
-    settings = config.get("iteration") or {}
-    if not isinstance(settings, Mapping):
-        raise ValueError("iteration settings must be a mapping")
-    mode = settings.get("mode", "off")
-    if mode not in {"off", "observe", "enforce"}:
-        raise ValueError("iteration.mode must be off, observe, or enforce")
-    state_root = Path(settings.get("state_root", ".utgen"))
-    if not state_root.is_absolute():
-        state_root = CONFIG_PATH.parent / state_root
-    return mode, state_root, str(settings.get("tessy_dialect", "5.1"))
-
-
-def elapsed(start):
-    return f"{perf_counter() - start:.2f}s"
-
-
-def report_time(message):
-    print(message, flush=True)
-    with TIME_LOG_PATH.open("a", encoding="utf-8") as log:
-        log.write(message + "\n")
 
 
 def fallback_rows(function):

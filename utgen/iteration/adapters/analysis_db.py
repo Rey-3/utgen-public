@@ -440,6 +440,20 @@ class AnalysisDbWriter:
                 f"cannot create Analysis DB output directory: {path.parent}"
             ) from exc
 
+        try:
+            previous = path.read_bytes() if path.exists() else None
+        except OSError as exc:
+            raise AnalysisDbValidationError(f"cannot read existing Analysis DB: {path}") from exc
+
+        def restore_previous() -> None:
+            if previous is None:
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    pass
+            else:
+                path.write_bytes(previous)
+
         temporary = None
         try:
             fd, temporary_name = tempfile.mkstemp(
@@ -450,10 +464,23 @@ class AnalysisDbWriter:
                 stream.write(rendered)
                 stream.flush()
                 os.fsync(stream.fileno())
-            AnalysisDbAdapter().validate(temporary, require_metadata=True)
-            os.replace(temporary, path)
+            AnalysisDbAdapter().read_module(temporary, require_metadata=True)
+            try:
+                os.replace(temporary, path)
+            except OSError as exc:
+                try:
+                    replaced = path.read_bytes() == rendered
+                except OSError:
+                    replaced = False
+                if replaced:
+                    restore_previous()
+                raise AnalysisDbValidationError(f"cannot publish Analysis DB: {path}") from exc
             temporary = None
-            AnalysisDbAdapter().read_module(path, require_metadata=True)
+            try:
+                AnalysisDbAdapter().read_module(path, require_metadata=True)
+            except Exception:
+                restore_previous()
+                raise
         except AnalysisDbValidationError:
             raise
         except OSError as exc:

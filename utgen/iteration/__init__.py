@@ -19,7 +19,7 @@ from .values import (
     project_generated_values,
     sync_row_schema,
 )
-from .workflow import ModuleSummary, run_excel_export, run_generation, run_user_merge
+from .workflow import ModuleSummary, run_excel_export, run_user_merge
 
 __all__ = [
     *_adapter_all,
@@ -36,7 +36,6 @@ __all__ = [
     "parse_leaf_path",
     "project_generated_values",
     "run_excel_export",
-    "run_generation",
     "run_user_merge",
     "sync_row_schema",
     "validate_module",

@@ -35,10 +35,9 @@ class ModuleSummary:
         return self.status == "updated"
 
 
-def run_generation(config, generator=None) -> list[ModuleSummary]:
+def run_generation(config, generator) -> list[ModuleSummary]:
     """Run first generation or a complete next-tool merge per module."""
 
-    generator = _generate_module if generator is None else generator
     config, base = _config_and_base(config)
     state_root = _state_root(config, base)
     template = _template_path(config, base)
@@ -116,9 +115,10 @@ def _run_generation_module(
             current = None
 
     database_analysis = None
+    database_metadata = None
     if paths.database.exists():
         try:
-            _metadata, database_analysis = AnalysisDbAdapter().read_module(
+            database_metadata, database_analysis = AnalysisDbAdapter().read_module(
                 paths.database, require_metadata=True
             )
         except Exception:
@@ -129,7 +129,12 @@ def _run_generation_module(
     ):
         try:
             input_hash = _module_input_hash(
-                config, project, module, base, database_analysis
+                config,
+                project,
+                module,
+                base,
+                database_analysis,
+                database_identity=database_metadata.analysis_id,
             )
         except Exception:
             input_hash = None
@@ -165,8 +170,7 @@ def _run_generation_module(
     analysis, generated = generator(
         generation_project, generation_module, include_dirs
     )
-    input_hash = _module_input_hash(config, project, module, base, analysis)
-    candidate = build_candidate(analysis, generated, project, name, input_hash)
+    candidate = build_candidate(analysis, generated, project, name, "pending")
     if current is None:
         state = candidate
         summary = {
@@ -181,7 +185,15 @@ def _run_generation_module(
             "stubs": merged.summary["stubs"],
             "decisions": merged.summary["decisions"],
         }
-    _write_current_database(analysis, paths.database)
+    database_metadata = _write_current_database(analysis, paths.database)
+    state["module_input_hash"] = _module_input_hash(
+        config,
+        project,
+        module,
+        base,
+        analysis,
+        database_identity=database_metadata.analysis_id,
+    )
     write_module(paths.state, state)
     written = _write_active_workbooks(state, module, base, template)
     summary.update(json="updated", excel_written=written)
@@ -210,12 +222,6 @@ def _generation_config(config, base: Path, project_name: str, module: Mapping):
     return result_project, result_module
 
 
-def _generate_module(project, module, include_dirs):
-    """Default hook for callers/tests that provide the generator boundary."""
-
-    raise RuntimeError("run_generation requires a generator callback")
-
-
 def _database_matches(analysis, module: Mapping, base: Path) -> bool:
     expected = Path(os.fspath(module["source_file"]))
     if not expected.is_absolute():
@@ -231,7 +237,15 @@ def _database_matches(analysis, module: Mapping, base: Path) -> bool:
         return False
 
 
-def _module_input_hash(config, project, module, base: Path, analysis) -> str:
+def _module_input_hash(
+    config,
+    project,
+    module,
+    base: Path,
+    analysis,
+    *,
+    database_identity=None,
+) -> str:
     source = Path(os.fspath(module["source_file"]))
     if not source.is_absolute():
         source = base / source
@@ -274,11 +288,13 @@ def _module_input_hash(config, project, module, base: Path, analysis) -> str:
         },
         "files": file_payload,
     }
+    if database_identity is not None:
+        payload["database_identity"] = str(database_identity)
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode()
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _write_current_database(analysis, path: Path) -> None:
+def _write_current_database(analysis, path: Path):
     from utgen.db import XmlDbWriter
 
     path = Path(path)
@@ -290,7 +306,7 @@ def _write_current_database(analysis, path: Path) -> None:
     temporary = Path(temporary_name)
     try:
         XmlDbWriter().write(analysis, temporary)
-        AnalysisDbWriter().write_atomic(temporary, path)
+        return AnalysisDbWriter().write_atomic(temporary, path)
     finally:
         try:
             temporary.unlink()
@@ -345,7 +361,7 @@ def _state_row_summary(state: Mapping) -> dict:
 
 
 def _state_stub_summary(state: Mapping) -> dict:
-    stubs = [stub for function in state["functions"].values() for stub in function["stubs"].values()]
+    stubs = state.get("stub_catalog", {}).values()
     return {
         "active": sum(stub["status"] == "active" for stub in stubs),
         "orphaned": sum(stub["status"] == "orphaned" for stub in stubs),
