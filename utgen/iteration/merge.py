@@ -6,7 +6,8 @@ from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 
-from .state import allocate_decision_key, allocate_row_id
+from .adapters.tessy_workbook import default_stub_body as _default_stub_body
+from .state import allocate_decision_key, allocate_row_id, ordered_active_rows
 from .validation import validate_module
 from .values import (
     flatten_values,
@@ -16,7 +17,17 @@ from .values import (
     sync_row_schema,
 )
 from ..mcdc import eval_expr
-from ..model import And, AssemblyResult, Atom, GeneratedRowProvenance, Not, Or, RecipeProvenance, atoms_of
+from ..model import (
+    And,
+    AssemblyResult,
+    Atom,
+    GeneratedRowProvenance,
+    Not,
+    Or,
+    RecipeProvenance,
+    atom_text,
+    atoms_of,
+)
 _GENERATED_KINDS = frozenset({"Nominal", "Timeout"})
 
 @dataclass(frozen=True)
@@ -58,7 +69,7 @@ def merge_user(state: dict, function_name: str, workbook_snapshot) -> UserMergeR
     result = deepcopy(state)
     function = result["functions"][function_name]
     rows = function["rows"]
-    active_ids = [row_id for row_id, _ in _ordered_active_rows(current)]
+    active_ids = [row_id for row_id, _ in ordered_active_rows(current)]
     legacy = all(_case_row_id(case) is None for case in cases)
     rewrite_required = bool(cases) and any(_case_row_id(case) is None for case in cases)
     seen: set[str] = set()
@@ -129,25 +140,6 @@ def _get(item, *names, default=None):
         if value is not None:
             return value
     return default
-
-def _ordered_active_rows(function: Mapping) -> list[tuple[str, dict]]:
-    """Keep the adapter's generated, decision, then manual export order."""
-    rows = function["rows"]
-    order = [item["row_id"] for item in function.get("generated_rows", [])]
-    order += [
-        recipe["row_id"]
-        for decision in function.get("decisions", {}).values()
-        for recipe in decision.get("recipes", [])
-    ]
-    order += list(rows)
-    seen, result = set(), []
-    for row_id in order:
-        if row_id in seen or row_id not in rows:
-            continue
-        seen.add(row_id)
-        if rows[row_id]["status"] == "active":
-            result.append((row_id, rows[row_id]))
-    return result
 
 def _case_row_id(case):
     return _get(case, "row_id", "external_test_case_id")
@@ -477,7 +469,11 @@ def _merge_stubs(current: dict, candidate: dict, catalog: dict) -> dict:
                 item["status"] = "orphaned"
                 merged[key] = item
             continue
-        incoming = candidate_stubs.get(key) or {"owner": "tool", "status": "active", "body": default_stub_body(entry, key in used)}
+        incoming = candidate_stubs.get(key) or {
+            "owner": "tool",
+            "status": "active",
+            "body": _default_stub_body(entry, key in used),
+        }
         merged[key] = deepcopy(old) if old is not None and old["owner"] == "user" else _tool(incoming)
     for key, old in current_stubs.items():
         if key not in merged:
@@ -536,7 +532,7 @@ def build_candidate(analysis, generated_functions, project, module, input_hash) 
             item = {
                 "status": "active",
                 "expression": _expression_text(decision.expr),
-                "atoms": {f"A{index}": _atom_text(atom) for index, atom in enumerate(atoms, 1)},
+                "atoms": {f"A{index}": atom_text(atom) for index, atom in enumerate(atoms, 1)},
                 "recipes": [],
             }
             if getattr(decision, "kind", ""):
@@ -565,7 +561,7 @@ def build_candidate(analysis, generated_functions, project, module, input_hash) 
             function_state["stubs"][key] = {
                 "owner": "tool",
                 "status": "active",
-                "body": default_stub_body(entry, key in function_state["used_stub_keys"]),
+                "body": _default_stub_body(entry, key in function_state["used_stub_keys"]),
             }
     validate_module(state)
     return state
@@ -593,15 +589,6 @@ def build_stub_catalog(analysis) -> dict:
                 "parameters": parameters,
             }
     return catalog
-
-
-def default_stub_body(catalog_entry, used) -> str:
-    """Return the canonical body for one catalog entry."""
-    return_type = catalog_entry["return_type"]
-    if return_type == "void":
-        return ""
-    storage = catalog_entry["return_storage"]
-    return f"extern {return_type} {storage};\nreturn {storage};" if used else f"{return_type} temp = {{0}};\nreturn temp;"
 
 
 def _assembly_row(result: AssemblyResult, index: int, function) -> dict:
@@ -637,7 +624,7 @@ def _validated_provenance(function, result):
         if type(recipe.decision_id) is not int or recipe.decision_id != decision.id:
             raise ValueError(f"recipe decision_id does not match decision {decision_index}")
         atoms = tuple(atoms_of(decision.expr))
-        if recipe.atom_texts != tuple(_atom_text(atom) for atom in atoms):
+        if recipe.atom_texts != tuple(atom_text(atom) for atom in atoms):
             raise ValueError(f"recipe atom_texts do not match decision {decision_index}")
         if (
             not isinstance(recipe.atom_values, tuple)
@@ -754,22 +741,9 @@ def _stub_parameters(stub):
     return result
 
 
-def _atom_text(atom):
-    if getattr(atom, "text", ""):
-        return str(atom.text)
-    left = getattr(getattr(atom, "var", None), "name", "") or "<unknown>"
-    operator = getattr(getattr(atom, "op", None), "value", getattr(atom, "op", ""))
-    if operator == "truthy":
-        return left
-    right = getattr(atom, "rhs", None)
-    if right is None:
-        right = getattr(getattr(atom, "rhs_var", None), "name", "<unknown>")
-    return f"{left} {operator} {right}"
-
-
 def _expression_text(expression):
     if isinstance(expression, Atom):
-        return _atom_text(expression)
+        return atom_text(expression)
     if isinstance(expression, Not):
         return f"!({_expression_text(expression.child)})"
     if isinstance(expression, And):
@@ -793,7 +767,6 @@ __all__ = [
     "UserMergeResult",
     "build_candidate",
     "build_stub_catalog",
-    "default_stub_body",
     "match_decisions",
     "merge_user",
     "merge_tool",

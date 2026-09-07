@@ -8,6 +8,47 @@ from clang.cindex import CursorKind, Diagnostic, Index, TranslationUnit
 from utgen.clang_setup import configure_libclang
 
 
+_OPERATORS = ("&&", "||", "==", "!=", "<=", ">=", "<<=", ">>=", "<<", ">>",
+              "<", ">", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "=",
+              "&", "|", "^", "+", "-", "*", "/", "%", "!", "++", "--", "~")
+
+
+def operator_spelling(cursor) -> str:
+    """Return the source operator for a binary, compound, or unary cursor."""
+
+    operator = getattr(cursor, "binary_operator", None)
+    if operator is not None:
+        direct = {"Assign": "=", "LAnd": "&&", "LOr": "||"}.get(
+            getattr(operator, "name", operator), "")
+        if direct:
+            return direct
+
+    spelling = getattr(cursor, "spelling", "")
+    if spelling in _OPERATORS:
+        return spelling
+
+    children = list(cursor.get_children())
+    tokens = list(cursor.get_tokens())
+    if cursor.kind == CursorKind.UNARY_OPERATOR:
+        if len(children) == 1:
+            child = children[0]
+            child_start, child_end = child.extent.start.offset, child.extent.end.offset
+            for token in reversed(tokens):
+                if token.extent.end.offset <= child_start and token.spelling in _OPERATORS:
+                    return token.spelling
+            for token in tokens:
+                if token.extent.start.offset >= child_end and token.spelling in _OPERATORS:
+                    return token.spelling
+        return next((token.spelling for token in tokens if token.spelling in _OPERATORS), "")
+
+    if len(children) >= 2:
+        left_end = children[0].extent.end.offset
+        for token in tokens:
+            if token.extent.start.offset >= left_end and token.spelling in _OPERATORS:
+                return token.spelling
+    return next((token.spelling for token in tokens if token.spelling in _OPERATORS), "")
+
+
 class ParseError(Exception):
     """Raised when libclang cannot safely continue parsing the source file."""
 

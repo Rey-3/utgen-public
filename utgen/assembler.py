@@ -12,6 +12,7 @@ from utgen.model import (
     Inventory,
     RecipeProvenance,
     TestRow,
+    atom_text,
     atoms_of,
 )
 from utgen.solver import AtomConstraints, Solver
@@ -268,6 +269,7 @@ class RowAssembler:
         decision, assignment: dict, outcome: bool, concrete_row_index: int,
     ) -> None:
         atoms = tuple(atoms_of(decision.expr))
+        atom_texts = tuple(atom_text(atom) for atom in atoms)
         if outcome is None or any(atom not in assignment for atom in atoms):
             return
         atom_values = tuple(bool(assignment[atom]) for atom in atoms)
@@ -279,7 +281,7 @@ class RowAssembler:
             RecipeProvenance(
                 decision_index,
                 decision.id,
-                tuple(atom.text for atom in atoms),
+                atom_texts,
                 atom_values,
                 bool(outcome),
                 concrete_row_index,

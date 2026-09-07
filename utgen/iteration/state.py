@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import json
 import os
@@ -154,11 +155,32 @@ def allocate_decision_key(function_state: dict) -> str:
     return f"D{next_number}"
 
 
+def ordered_active_rows(function: Mapping) -> list[tuple[str, dict]]:
+    """Keep generated, decision, then manual rows in export order."""
+    rows = function["rows"]
+    order = [item["row_id"] for item in function.get("generated_rows", [])]
+    order += [
+        recipe["row_id"]
+        for decision in function.get("decisions", {}).values()
+        for recipe in decision.get("recipes", [])
+    ]
+    order += list(rows)
+    seen, result = set(), []
+    for row_id in order:
+        if row_id in seen or row_id not in rows:
+            continue
+        seen.add(row_id)
+        if rows[row_id]["status"] == "active":
+            result.append((row_id, rows[row_id]))
+    return result
+
+
 __all__ = [
     "ModulePaths",
     "allocate_decision_key",
     "allocate_row_id",
     "load_module",
     "module_paths",
+    "ordered_active_rows",
     "write_module",
 ]

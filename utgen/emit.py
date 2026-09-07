@@ -12,9 +12,7 @@ class ValueXmlWriter:
     """Serialize generated test rows into the value XML used by the test pipeline."""
 
     def write(self, function: FunctionIR, rows: list[TestRow], path: str | Path,
-              default_range: str | None = None, *, display_version=None,
-              version: str | object | None = None,
-              updated_at: str | None = None) -> None:
+              default_range: str | None = None) -> None:
         """Write one XML argument entry for each externally visible function leaf.
 
         Input values are emitted as ``range`` data, while OUT/INOUT values are
@@ -23,9 +21,6 @@ class ValueXmlWriter:
         """
 
         root = ET.Element("function", name=function.name, file=_source(function))
-        _set_display_metadata(root, display_version=display_version,
-                              version=version, updated_at=updated_at)
-
         # Pointer parameters have an extra ``@name`` pseudo-leaf that controls
         # whether the real pointee is valid or NULL. It is metadata for rendering
         # the pointee value, not a separate argument in the generated XML.
@@ -98,15 +93,11 @@ def _pointer_address(name, addresses):
 class StubXmlWriter:
     """Write the called-function metadata and TESSY-facing stub variable names."""
 
-    def write(self, function: FunctionIR, path: str | Path, *, display_version=None,
-              version: str | object | None = None,
-              updated_at: str | None = None) -> None:
+    def write(self, function: FunctionIR, path: str | Path) -> None:
         """Describe each external call, its return value, and captured arguments."""
 
         root = ET.Element("function_analysis", function_name=function.name,
                           file=_stub_path(_source(function)), line=str(function.line))
-        _set_display_metadata(root, display_version=display_version,
-                              version=version, updated_at=updated_at)
         called = ET.SubElement(root, "called_functions", count=str(len(function.stubs)))
         for stub in function.stubs:
             element = ET.SubElement(called, "function", name=stub.name,
@@ -171,33 +162,6 @@ def _write_stub_xml(root, path: str | Path) -> None:
 
 def _bool(value: bool) -> str:
     return str(value).lower()
-
-
-def _set_display_metadata(root, *, display_version=None, version=None,
-                          updated_at=None) -> None:
-    """Optionally mirror the canonical PR02/PR06 display metadata.
-
-    Keep the old writer's no-metadata path import-free so callers that only
-    use the legacy format do not pay for the iteration adapter package (and
-    cannot trigger an import cycle).  Once metadata is requested, validation
-    is delegated to the one common XML helper used by both PR06 adapters.
-    """
-
-    if display_version is None and version is None and updated_at is None:
-        return
-    from utgen.iteration.adapters._xml_common import XmlMetadataError, coerce_metadata
-
-    try:
-        metadata = coerce_metadata(
-            None,
-            display_version=display_version,
-            version=version,
-            updated_at=updated_at,
-        )
-    except (XmlMetadataError, TypeError) as exc:
-        raise ValueError(str(exc)) from exc
-    root.set("utgen_version", metadata.version)
-    root.set("utgen_updated_at", metadata.updated_at)
 
 
 def _render(leaf, value) -> str:

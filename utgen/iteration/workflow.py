@@ -108,11 +108,7 @@ def _run_generation_module(
     paths = module_paths(state_root, project, name)
     current = None
     if paths.state.exists():
-        try:
-            current = load_module(paths.state)
-        except Exception:
-            # A corrupt or half-written current state is rebuilt from source.
-            current = None
+        current = load_module(paths.state)
 
     database_analysis = None
     database_metadata = None

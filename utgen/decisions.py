@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from clang.cindex import Cursor, CursorKind
 
 from utgen.model import And, Atom, Decision, Guard, Not, Op, Or
+from utgen.parsing import operator_spelling as _operator
 
 
 class _SourceAtomBuilder:
@@ -382,26 +383,6 @@ class DecisionExtractor:
 def _source(cursor: Cursor) -> str:
     """Reconstruct readable source text from the tokens covered by a cursor."""
     return " ".join(token.spelling for token in cursor.get_tokens()).strip()
-
-
-def _operator(cursor: Cursor) -> str:
-    """Get the small operator subset needed by decision extraction.
-
-    Newer libclang bindings expose ``binary_operator`` directly. The token scan is
-    a compatibility fallback; it starts after the left child so operators inside
-    the left expression are not mistaken for the parent operator.
-    """
-    operator = getattr(cursor, "binary_operator", None)
-    if operator is not None and getattr(operator, "name", "Invalid") != "Invalid":
-        return {"Assign": "=", "LAnd": "&&", "LOr": "||"}.get(operator.name, "")
-    children = list(cursor.get_children())
-    if len(children) != 2:
-        return ""
-    left_end = children[0].extent.end.offset
-    for token in cursor.get_tokens():
-        if token.extent.start.offset >= left_end:
-            return token.spelling if token.spelling in ("=", "&&", "||") else ""
-    return ""
 
 
 def _unwrap(cursor: Cursor) -> Cursor:

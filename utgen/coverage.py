@@ -7,7 +7,7 @@ from dataclasses import fields, is_dataclass
 from utgen.interp import Interpreter
 from utgen.model import (And, Atom, Const, Direction, FunctionIR, Index,
                          Inventory, MemberE, Not, Or, Ref, TestRow, Unary,
-                         atoms_of)
+                         atom_text, atoms_of)
 
 
 class CoverageGenerator:
@@ -150,8 +150,8 @@ class CoverageGenerator:
             targets.add((decision.id, False))
             targets.add((decision.id, True))
             for index, atom in enumerate(atoms_of(decision.expr)):
-                targets.add((decision.id, atom.text, False))
-                targets.add((decision.id, atom.text, True))
+                targets.add((decision.id, atom_text(atom), False))
+                targets.add((decision.id, atom_text(atom), True))
                 if atom.var is not None:
                     targets.add((decision.id, "mcdc", index))
         return targets
@@ -174,7 +174,7 @@ class CoverageGenerator:
             for pattern in values:
                 for atom, outcome in zip(atoms_of(decision.expr), pattern):
                     if outcome is not None:
-                        covered.add((decision.id, atom.text, outcome))
+                        covered.add((decision.id, atom_text(atom), outcome))
             for index in range(len(atoms_of(decision.expr))):
                 if CoverageGenerator._independent(decision.expr, index, values):
                     covered.add((decision.id, "mcdc", index))
@@ -430,7 +430,7 @@ class _CoverageState:
             for pattern in new_patterns:
                 for atom, outcome in zip(atoms, pattern):
                     if outcome is not None:
-                        gained.add((decision_id, atom.text, outcome))
+                        gained.add((decision_id, atom_text(atom), outcome))
                 for index in range(len(atoms)):
                     target = decision_id, "mcdc", index
                     if target in self.covered or target in gained:

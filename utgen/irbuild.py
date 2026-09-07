@@ -20,6 +20,7 @@ from utgen.model import (Assign, Binop, Break, CallE, Cast, Const, Decl,
                          DoWhile, ExprStmt, For, If, Index, MemberE, Ref,
                          Return, Switch, SwitchCase, Ternary, Unary, Unknown,
                          While)
+from utgen.parsing import operator_spelling as _operator
 
 
 # These AST nodes only wrap another expression. Removing them keeps the IR stable
@@ -482,6 +483,9 @@ def _literal(cursor: Cursor, macros=None):
     folded = _fold_int(_physical_source(cursor), macros)
     if folded is not None:
         return folded
+    if cursor.kind not in (CursorKind.DECL_REF_EXPR, CursorKind.MACRO_INSTANTIATION,
+                           CursorKind.INTEGER_LITERAL, CursorKind.CHARACTER_LITERAL):
+        return _source(cursor)
     text = _spelling(cursor)
     if text.startswith("'") and text.endswith("'"):
         try:
@@ -520,22 +524,6 @@ def _physical_source(cursor: Cursor) -> str:
         line = linecache.getline(str(file), extent.start.line)
         return line[extent.start.column - 1:extent.end.column - 1]
     return _source(cursor)
-
-
-def _operator(cursor: Cursor) -> str:
-    """Recover an operator from cursor spelling or tokens, depending on libclang's AST output."""
-    spelling = getattr(cursor, "spelling", "")
-    operators = ("&&", "||", "==", "!=", "<=", ">=", "<<=", ">>=", "<<", ">>",
-                 "<", ">", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
-                 "=", "&", "|", "^", "+", "-", "*", "/", "%", "!", "++", "--", "~")
-    if spelling in operators:
-        return spelling
-    # Operator cursors frequently have an empty spelling, while their token stream still
-    # contains the exact C operator. Token fallback makes parsing less version-dependent.
-    for token in cursor.get_tokens():
-        if token.spelling in operators:
-            return token.spelling
-    return ""
 
 
 def _source(cursor: Cursor) -> str:

@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from clang.cindex import Cursor, CursorKind
 
 from utgen.model import And, Atom, Direction, Inventory, Not, Op, Or, Variable
+from utgen.parsing import operator_spelling as _operator
 
 _RELATIONS = {"==": Op.EQ, "!=": Op.NE, "<": Op.LT,
               "<=": Op.LE, ">": Op.GT, ">=": Op.GE}
@@ -788,19 +789,6 @@ def _fold_node(node, macros, seen):
         if isinstance(node.op, ast.RShift) and right >= 0:
             return left >> right
     return None
-
-
-def _operator(cursor: Cursor) -> str:
-    spelling = getattr(cursor, "spelling", "")
-    operators = ("&&", "||", "==", "!=", "<", "<=", ">", ">=", "&", "|", "^",
-                 "+", "-", "*", "/", "%", "<<", ">>", *_ASSIGNMENTS,
-                 "!", "++", "--", "~")
-    if spelling in operators:
-        return spelling
-    for token in cursor.get_tokens():
-        if token.spelling in operators:
-            return token.spelling
-    return ""
 
 
 def _compare(left: int, right: int, op: Op) -> bool:

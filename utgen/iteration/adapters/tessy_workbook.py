@@ -18,7 +18,7 @@ from tessy_excel import (
     writeGeneralSheet,
     write_testlist_cells,
 )
-from ..merge import _ordered_active_rows, default_stub_body
+from ..state import ordered_active_rows
 from ..values import flatten_values, project_generated_values
 from ._tessy_workbook_io import (
     CellValue,
@@ -61,6 +61,17 @@ _CASE_LABEL_RE = re.compile(r"^tc([1-9][0-9]*)\.([0-9]+)$")
 _DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 _TESSY_51_RE = re.compile(r"^5\.1(?:\.[0-9]+)?$")
 _FORMAL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*_[0-9]{3,}$")
+
+
+def default_stub_body(catalog_entry, used) -> str:
+    """Return the canonical body for one catalog entry in TESSY output."""
+    return_type = catalog_entry["return_type"]
+    if return_type == "void":
+        return ""
+    storage = catalog_entry["return_storage"]
+    if used:
+        return f"extern {return_type} {storage};\nreturn {storage};"
+    return f"{return_type} temp = {{0}};\nreturn temp;"
 
 
 @dataclass(frozen=True)
@@ -579,7 +590,7 @@ class TessyWorkbookAdapter:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         function = module_state["functions"][function_name]
-        rows = _ordered_active_rows(function)
+        rows = ordered_active_rows(function)
         columns, projected = _project_rows(function, rows)
         stubs = _project_stubs(module_state, function)
         workbook = _load_template(template_path)
@@ -778,4 +789,5 @@ __all__ = [
     "parse_direction", "parse_direction_token", "parse_workbook", "read",
     "read_complete_export", "read_workbook", "workbook_to_function_snapshot",
     "physicalize_workbook", "physicalize_worksheet", "split_array_column_name",
+    "default_stub_body",
 ]

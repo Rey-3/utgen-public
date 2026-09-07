@@ -162,6 +162,20 @@ class Atom:
         return self.var is not None
 
 
+def atom_text(atom: Atom) -> str:
+    """Return the canonical text used to identify an atom across pipeline stages."""
+
+    if atom.text:
+        return atom.text
+    left = atom.var.name if atom.var is not None else "<unknown>"
+    if atom.op == Op.TRUTHY:
+        return left
+    right = atom.rhs if atom.rhs is not None else (
+        atom.rhs_var.name if atom.rhs_var is not None else "<unknown>"
+    )
+    return f"{left} {atom.op.value} {right}"
+
+
 @dataclass(frozen=True)
 class And:
     """
