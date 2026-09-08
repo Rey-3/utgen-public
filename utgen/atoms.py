@@ -45,7 +45,7 @@ class _ConditionalValue:
 
 
 class CopyPropagation:
-    """Track simple local assignments so conditions can be traced back to real inputs.
+    """Track simple assignments so conditions can be traced back to real inputs.
 
     For example, if ``tmp = input`` and a later decision uses ``tmp``, the builder can
     resolve that use back to ``input``. Writes inside loops are treated conservatively
@@ -206,7 +206,7 @@ class CopyPropagation:
 
     def _set(self, lhs: Cursor, rhs: Cursor | None) -> None:
         key = _cursor_key(lhs)
-        if key and not _is_static(lhs):
+        if key and not (_is_static(lhs) and self._is_local(lhs)):
             self._bindings[key] = rhs
         path = _raw_path(lhs)
         if path and self._is_local(lhs):
