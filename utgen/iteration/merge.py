@@ -5,29 +5,14 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
+import warnings
 
 from .adapters.tessy_workbook import default_stub_body as _default_stub_body
 from .state import allocate_decision_key, allocate_row_id, ordered_active_rows
 from .validation import validate_module
-from .values import (
-    flatten_values,
-    metadata_variables,
-    nest_values,
-    project_generated_values,
-    sync_row_schema,
-)
+from .values import flatten_values, infer_variable_schema, metadata_variables, nest_values, project_generated_values, project_variable_schema, sync_row_schema
 from ..mcdc import eval_expr
-from ..model import (
-    And,
-    AssemblyResult,
-    Atom,
-    GeneratedRowProvenance,
-    Not,
-    Or,
-    RecipeProvenance,
-    atom_text,
-    atoms_of,
-)
+from ..model import And, AssemblyResult, Atom, GeneratedRowProvenance, Not, Or, RecipeProvenance, atom_text, atoms_of
 _GENERATED_KINDS = frozenset({"Nominal", "Timeout"})
 
 @dataclass(frozen=True)
@@ -68,6 +53,7 @@ def merge_user(state: dict, function_name: str, workbook_snapshot) -> UserMergeR
     current = state["functions"][function_name]
     result = deepcopy(state)
     function = result["functions"][function_name]
+    variables_extended = _extend_workbook_variables(result["functions"], function, cases, _get(workbook_snapshot, "columns", default=()))
     rows = function["rows"]
     active_ids = [row_id for row_id, _ in ordered_active_rows(current)]
     legacy = all(_case_row_id(case) is None for case in cases)
@@ -109,7 +95,7 @@ def merge_user(state: dict, function_name: str, workbook_snapshot) -> UserMergeR
             orphaned += 1
     stub_changed, stub_orphaned = _merge_user_stubs(function, workbook_snapshot, result["stub_catalog"])
     validate_module(result)
-    updated = bool(row_changed or added or orphaned or stub_changed or stub_orphaned)
+    updated = bool(variables_extended or row_changed or added or orphaned or stub_changed or stub_orphaned)
     summary = {
         "status": "updated" if updated else "skipped",
         "rows": {"changed": row_changed, "added": added, "orphaned": orphaned},
@@ -160,6 +146,46 @@ def _snapshot_row(case, function: dict, *, allow_missing: bool = False) -> dict:
         "output": _snapshot_values(case, function, "output", allow_missing),
     }
 
+def _extend_workbook_variables(functions: Mapping, function: dict, cases, columns=()) -> bool:
+    grouped = {}
+    for column in columns or ():
+        name = getattr(column, "name", None) or getattr(getattr(column, "key", None), "canonical_name", None)
+        root = name.split(".", 1)[0].split("[", 1)[0] if name else None
+        if name and root: grouped.setdefault(root, [set(), []])[0].add(name); grouped[root][1].append(column)
+    for case in cases:
+        for channel in ("input", "output"):
+            cells = _get(case, f"{channel}_cells")
+            if cells is None: cells = _get(case, channel, default={})
+            if not isinstance(cells, Mapping): continue
+            for key in cells:
+                name = key if isinstance(key, str) else getattr(key, "canonical_name", None)
+                if isinstance(name, str) and name:
+                    root = name.split(".", 1)[0].split("[", 1)[0]
+                    grouped.setdefault(root, [set(), []])[0].add(name)
+    imported = {}
+    for root, (paths, columns_for_root) in grouped.items():
+        if root in function["variables"]: continue
+        known, candidates = False, []
+        for other in functions.values():
+            if root not in other["variables"]: continue
+            known = True
+            projected = project_variable_schema(other["variables"][root], root, paths)
+            if projected is not None and projected not in candidates: candidates.append(projected)
+        if known:
+            if len(candidates) == 1: imported[root] = candidates[0]
+            continue
+        if not columns_for_root: continue
+        hints = {str(getattr(column, "raw_type_hint", "")).strip() for column in columns_for_root if getattr(column, "raw_type_hint", None) and str(getattr(column, "raw_type_hint")).strip()}
+        channels = {getattr(column, "channel", None) for column in columns_for_root}
+        if len(hints) > 1: raise ValueError(f"new workbook variable {root!r} has conflicting types")
+        if len(channels) != 1: raise ValueError(f"new workbook variable {root!r} has conflicting direction")
+        type_hint, direction = next(iter(hints), ""), next(iter(channels))
+        imported[root] = infer_variable_schema(root, paths, type_hint, direction)
+        warnings.warn(f"imported new workbook variable {root!r} as {direction}({type_hint}); verify it against C metadata", UserWarning, stacklevel=2)
+    if not imported: return False
+    old = deepcopy(function["variables"]); function["variables"].update(deepcopy(imported))
+    for row in function["rows"].values(): sync_row_schema(row, old, function["variables"])
+    return True
 def _snapshot_values(case, function: dict, channel: str, allow_missing: bool) -> dict:
     cells = _get(case, f"{channel}_cells")
     if cells is None:

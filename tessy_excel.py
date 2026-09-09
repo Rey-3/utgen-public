@@ -79,7 +79,7 @@ def updateTestlistToExcel(func , templateFile , saveFileName , testList , testMe
     for name, direction, fmt in zip(arg_name, arg_direction, arg_format):
         channel = "input" if direction in {"in", "inout"} else "output"
         base = name.split('.')[0]
-        columns.append((name, channel, convertDirectionToTessyFormat(direction, name, fmt, base not in typed_vars)))
+        columns.append((name, channel, convertDirectionToTessyFormat(direction, name, fmt, name.startswith("tessy_") and base not in typed_vars)))
         typed_vars.add(base)
     rows = []
     for index, values in enumerate(testList, 1):
@@ -106,6 +106,6 @@ def updateTestlistToExcel(func , templateFile , saveFileName , testList , testMe
 
 def convertDirectionToTessyFormat(direction , name='' , fmt='', show_type=True):
     newDir = 'i' if direction == "in" else 'o'
-    if name.startswith('tessy_') and show_type:   ### tessy_<name> variable shows its type once: i(SomeType); other members just i/o
+    if show_type:
         newDir += '(' + fmt + ')'
     return newDir

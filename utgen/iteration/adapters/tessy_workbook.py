@@ -671,12 +671,12 @@ def _column_direction_token(
 ) -> str:
     direction = "in" if channel == "input" else "out"
     root = re.split(r"[.\[]", name, maxsplit=1)[0]
-    if not root.startswith("tessy_") or root in typed_roots:
-        return convertDirectionToTessyFormat(direction, name, show_type=False)
-    typed_roots.add(root)
     spec = function.get("variables", {}).get(root, {})
     type_hint = spec.get("format") or spec.get("fmt") or spec.get("type") or ""
-    return convertDirectionToTessyFormat(direction, root, str(type_hint), bool(type_hint))
+    if not type_hint or root in typed_roots:
+        return convertDirectionToTessyFormat(direction, name, show_type=False)
+    typed_roots.add(root)
+    return convertDirectionToTessyFormat(direction, name, str(type_hint), True)
 
 
 def _project_stubs(state: Mapping[str, Any], function: Mapping[str, Any]) -> list[dict[str, str]]:
