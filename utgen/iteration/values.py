@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 import re
 from typing import Any
 
@@ -130,6 +131,103 @@ def metadata_variables(metadata: Mapping[str, Any]) -> Mapping[str, Any]:
     """Convert FunctionIR/Inventory leaves or plain metadata into state specs."""
 
     return _metadata_variables(metadata)
+
+
+def project_variable_schema(spec: Mapping[str, Any], root: str, paths: set[str]) -> dict | None:
+    """Restrict a known variable schema to the workbook leaves that use it."""
+
+    requested = set()
+    for path in paths:
+        try:
+            tokens = _metadata_path_tokens(path)
+        except StateValidationError:
+            continue
+        if tokens[0] == root:
+            requested.add(tokens[1:])
+    return _project_schema(spec, requested)
+
+
+def infer_variable_schema(root: str, paths: set[str], type_hint: str, direction: str) -> dict:
+    """Build the minimum schema represented by a complete workbook path set."""
+
+    if not isinstance(type_hint, str) or not type_hint.strip():
+        _fail(f"new workbook variable {root!r} has no data type")
+    if not isinstance(direction, str) or direction not in _CHANNELS:
+        _fail(f"new workbook variable {root!r} has invalid direction")
+    if not isinstance(root, str) or not root.strip() or not paths:
+        _fail(f"new workbook variable {root!r} has invalid paths")
+
+    leaf = object()
+    tree: dict = {}
+    for path in paths:
+        if not isinstance(path, str):
+            _fail(f"new workbook variable {root!r} has an invalid path: {path!r}")
+        try:
+            tokens = _metadata_path_tokens(path)
+        except (StateValidationError, TypeError):
+            _fail(f"new workbook variable {root!r} has an invalid path: {path!r}")
+        if not tokens or tokens[0] != root:
+            _fail(f"new workbook variable {root!r} has an invalid path: {path!r}")
+        node = tree
+        for token in tokens[1:]:
+            if leaf in node:
+                _fail(f"new workbook variable {root!r} has an invalid shape")
+            node = node.setdefault(token, {})
+        if node:
+            _fail(f"new workbook variable {root!r} has an invalid shape")
+        node[leaf] = None
+
+    def build(node: dict) -> dict:
+        if leaf in node:
+            if len(node) != 1:
+                _fail(f"new workbook variable {root!r} has an invalid shape")
+            return {"type": "unknown"}
+        keys = list(node)
+        if not keys:
+            _fail(f"new workbook variable {root!r} has an invalid shape")
+        if all(isinstance(key, int) for key in keys):
+            indexes = sorted(keys)
+            if indexes != list(range(len(indexes))):
+                _fail(f"new workbook variable {root!r} has an invalid array shape")
+            children = [build(node[index]) for index in indexes]
+            if any(child != children[0] for child in children[1:]):
+                _fail(f"new workbook variable {root!r} has a non-rectangular array")
+            schema = children[0]
+            schema["dimensions"] = [len(children), *schema.get("dimensions", [])]
+            return schema
+        if not all(isinstance(key, str) for key in keys):
+            _fail(f"new workbook variable {root!r} has an invalid shape")
+        return {"type": "unknown", "fields": {key: build(node[key]) for key in sorted(keys)}}
+
+    result = {"type": type_hint.strip(), "direction": direction}
+    if leaf not in tree:
+        result.update({key: value for key, value in build(tree).items() if key != "type"})
+    return result
+
+
+def _project_schema(spec: Mapping[str, Any], paths: set[tuple[str | int, ...]]) -> dict | None:
+    for size in spec.get("dimensions", []):
+        paths = {
+            path[1:]
+            for path in paths
+            if path and isinstance(path[0], int) and 0 <= path[0] < size
+        }
+    if not paths:
+        return None
+    fields = spec.get("fields")
+    if fields is None:
+        return deepcopy(spec) if () in paths else None
+    selected = {}
+    for name, child in fields.items():
+        child_paths = {path[1:] for path in paths if path and path[0] == name}
+        projected = _project_schema(child, child_paths)
+        if projected is not None:
+            selected[name] = projected
+    if not selected:
+        return None
+    result = deepcopy(spec)
+    result["fields"] = selected
+    return result
 
 
 def _flatten_node(value: object, spec: Mapping[str, Any], path: str, result: dict[str, str], index: int = 0) -> None:
@@ -546,9 +644,11 @@ def _json_native(value: object) -> object:
 
 __all__ = [
     "flatten_values",
+    "infer_variable_schema",
     "metadata_variables",
     "nest_values",
     "parse_leaf_path",
     "project_generated_values",
+    "project_variable_schema",
     "sync_row_schema",
 ]
