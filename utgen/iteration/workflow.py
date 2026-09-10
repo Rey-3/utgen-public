@@ -411,10 +411,10 @@ def run_user_merge(config) -> list[ModuleSummary]:
             entries = _scan_entries(
                 {"projects": [{"name": project, "modules": [module]}]}, base
             )
-            target = (_normal(project), _normal(_module_name(module)))
+            target = (_normal(project), _module_identities(module))
             grouped = {}
             for key, path, snapshot in entries:
-                if key[:2] == target:
+                if key[0] == target[0] and key[1] in target[1]:
                     grouped.setdefault(key[2], []).append((path, snapshot))
             if not grouped:
                 summaries.append(
@@ -550,6 +550,14 @@ def _module_name(module: Mapping) -> str:
     if not isinstance(name, str) or not name:
         raise ValueError("module name must be a non-empty string")
     return name
+
+
+def _module_identities(module: Mapping) -> set[str]:
+    identities = {_normal(_module_name(module))}
+    source = module.get("source_file")
+    if source:
+        identities.add(_normal(Path(os.fspath(source).replace("\\", "/")).stem))
+    return identities
 
 
 def _scan_entries(config, base):

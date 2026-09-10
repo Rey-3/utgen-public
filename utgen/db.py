@@ -64,6 +64,7 @@ class ModuleIndexer:
                                   self._globals(tu, inventory_builder), functions)
         _set_constants(analysis)
         _set_local_functions(analysis)
+        _link_local_call_stubs(analysis)
         return analysis
 
     def _function(self, cursor, tu, inventory_builder, macros=None):
