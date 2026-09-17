@@ -1,9 +1,12 @@
 """Config, CLI, and worker orchestration for the iteration workflow."""
 
 import argparse
+import cProfile
 from dataclasses import dataclass
+from functools import partial
 import multiprocessing as mp
 from pathlib import Path
+import pstats
 import sys
 import tempfile
 from typing import Mapping
@@ -14,7 +17,7 @@ from utgen.assembler import RowAssembler
 from utgen.db import ModuleIndexer, XmlDbReader, XmlDbWriter
 from utgen.interp import Interpreter, Verifier
 from utgen.mcdc import McdcGenerator
-from utgen.model import AssemblyResult, Direction, GeneratedRowProvenance, Inventory, TestRow
+from utgen.model import AssemblyResult, Inventory
 from utgen.solver import Solver
 
 
@@ -31,18 +34,6 @@ class _GeneratedFunction:
     result: AssemblyResult
 
 
-def fallback_rows(function):
-    first, second = {}, {}
-    for leaf in function.leaves:
-        if leaf.direction in (Direction.IN, Direction.INOUT):
-            first[leaf.name] = 0
-            second[leaf.name] = 1
-    return [
-        TestRow(first, "Timeout", "generation timeout"),
-        TestRow(second, "Timeout", "generation timeout"),
-    ]
-
-
 def _verified_result(function, rows, recipes=(), generated_rows=()):
     rows = list(rows)
     Verifier(
@@ -51,42 +42,40 @@ def _verified_result(function, rows, recipes=(), generated_rows=()):
     return AssemblyResult(tuple(rows), tuple(recipes), tuple(generated_rows))
 
 
-def write_timeout_outputs(function):
-    """Return verified timeout rows without emitting legacy XML files."""
-
-    rows = fallback_rows(function)
-    return _verified_result(
-        function,
-        rows,
-        (),
-        (
-            GeneratedRowProvenance("Timeout", 0, 0),
-            GeneratedRowProvenance("Timeout", 1, 1),
-        ),
-    )
+_WORKER_ANALYSIS = None
+_WORKER_PROFILE_DIR = None
 
 
-_WORKER_DATABASE = None
+def initialize_worker(database, profile_dir=None):
+    """Load the Analysis DB once when a worker starts."""
 
-
-def initialize_worker(database):
-    """Retain only the on-disk Analysis DB path when a worker starts."""
-
-    global _WORKER_DATABASE
-    _WORKER_DATABASE = Path(database)
+    global _WORKER_ANALYSIS, _WORKER_PROFILE_DIR
+    _WORKER_ANALYSIS = XmlDbReader().read(Path(database))
+    _WORKER_PROFILE_DIR = None if profile_dir is None else Path(profile_dir)
 
 
 def worker_ready():
-    return _WORKER_DATABASE is not None
+    return _WORKER_ANALYSIS is not None
 
 
 def generate_function(function_name):
     """Generate and verify one function from the worker's Analysis DB."""
 
+    if _WORKER_PROFILE_DIR is None:
+        return _generate_function(function_name)
+    _WORKER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    profiler = cProfile.Profile()
     try:
-        if _WORKER_DATABASE is None:
+        return profiler.runcall(_generate_function, function_name)
+    finally:
+        profiler.dump_stats(_WORKER_PROFILE_DIR / f"{function_name}.prof")
+
+
+def _generate_function(function_name):
+    try:
+        if _WORKER_ANALYSIS is None:
             raise RuntimeError("worker database is not initialized")
-        function = XmlDbReader().read(_WORKER_DATABASE).function(function_name)
+        function = _WORKER_ANALYSIS.function(function_name)
         if function is None:
             raise ValueError(f"Function {function_name!r} was not found")
         result = RowAssembler(
@@ -99,11 +88,11 @@ def generate_function(function_name):
         return "error", f"{type(error).__name__}: {error}"
 
 
-def start_worker(context, database):
+def start_worker(context, database, profile_dir=None, processes=8):
     pool = context.Pool(
-        processes=4,
+        processes=processes,
         initializer=initialize_worker,
-        initargs=(database,),
+        initargs=(database, profile_dir),
     )
     try:
         if not pool.apply(worker_ready):
@@ -128,25 +117,16 @@ def stop_worker(pool, terminate=False):
     pool.join()
 
 
-def run_function(function, pool):
-    result = pool.apply_async(
-        generate_function,
-        (function.name,),
-    )
-    try:
-        payload = result.get(timeout=FUNCTION_TIMEOUT_SECONDS)
-    except mp.TimeoutError:
-        stop_worker(pool, terminate=True)
-        return write_timeout_outputs(function), True
-
+def _collect_function(result):
+    payload = result.get(timeout=FUNCTION_TIMEOUT_SECONDS)
     if isinstance(payload, tuple) and payload and payload[0] == "error":
         raise RuntimeError(payload[1])
     if not isinstance(payload, AssemblyResult):
         raise RuntimeError("generation result did not include an AssemblyResult")
-    return payload, False
+    return payload
 
 
-def generate_module(project, module, include_dirs=()):
+def generate_module(project, module, include_dirs=(), profile_dir=None):
     """Index and generate one module using a temporary worker DB.
 
     The iteration workflow owns the accepted project-scoped DB.  Workers still
@@ -177,31 +157,42 @@ def generate_module(project, module, include_dirs=()):
         XmlDbWriter().write(analysis, database)
         generated = {}
         worker_pool = None
+        worker_profile_dir = None if profile_dir is None else Path(profile_dir) / module["module_name"]
+        functions = tuple(analysis.functions)
         try:
-            worker_pool = start_worker(context, database)
-            functions = tuple(analysis.functions)
-            for index, function in enumerate(functions):
-                result, timed_out = run_function(function, worker_pool)
-                generated[function.name] = _GeneratedFunction(result)
-                if timed_out:
-                    worker_pool = None
-                    if index + 1 < len(functions):
-                        worker_pool = start_worker(context, database)
+            if functions:
+                process_count = min(mp.cpu_count(), len(functions))
+                worker_pool = start_worker(
+                    context, database, worker_profile_dir, process_count
+                )
+                pending = {}
+                for function in functions:
+                    pending[function.name] = worker_pool.apply_async(
+                        generate_function,
+                        (function.name,),
+                    )
+                for function in functions:
+                    result = _collect_function(pending[function.name])
+                    generated[function.name] = _GeneratedFunction(result)
+                stop_worker(worker_pool)
+                worker_pool = None
+        except Exception:
+            stop_worker(worker_pool, terminate=True)
+            worker_pool = None
+            raise
         finally:
             if worker_pool is not None:
                 stop_worker(worker_pool)
     return analysis, generated
 
 
-def run_generation(config=None):
+def run_generation(config=None, profile_dir=None):
     """Run normal generation/next-tool iteration for configured modules."""
 
     from utgen.iteration.workflow import run_generation as workflow_run_generation
 
-    return workflow_run_generation(
-        CONFIG_PATH if config is None else config,
-        generator=generate_module,
-    )
+    generator = generate_module if profile_dir is None else partial(generate_module, profile_dir=profile_dir)
+    return workflow_run_generation(CONFIG_PATH if config is None else config, generator=generator)
 
 
 def run_excel_export(config=None):
@@ -252,6 +243,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="UTGen iteration workflow")
     parser.add_argument("mode", nargs="?", choices=("1", "2", "3"))
     parser.add_argument("--config", type=Path, default=None)
+    parser.add_argument("--profile-dir", type=Path)
     args = parser.parse_args(argv)
     config_path = args.config or CONFIG_PATH
     mode = args.mode
@@ -264,7 +256,17 @@ def main(argv=None):
             parser.error("mode must be 1, 2, or 3")
     _load_cli_config(config_path)
     if mode == "1":
-        result = run_generation(config_path)
+        if args.profile_dir is None:
+            result = run_generation(config_path)
+        else:
+            profiler = cProfile.Profile()
+            profiler.enable()
+            try:
+                result = run_generation(config_path, args.profile_dir)
+            finally:
+                profiler.disable()
+                print("\nTotal profile:")
+                pstats.Stats(profiler).sort_stats("cumulative").print_stats(100)
     elif mode == "2":
         result = run_excel_export(config_path)
     else:
