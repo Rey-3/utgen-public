@@ -9,6 +9,7 @@ from pathlib import Path
 import pstats
 import sys
 import tempfile
+import time
 from typing import Mapping
 
 import yaml
@@ -17,7 +18,7 @@ from utgen.assembler import RowAssembler
 from utgen.db import ModuleIndexer, XmlDbReader, XmlDbWriter
 from utgen.interp import Interpreter, Verifier
 from utgen.mcdc import McdcGenerator
-from utgen.model import AssemblyResult, Inventory
+from utgen.model import AssemblyResult, Direction, GeneratedRowProvenance, Inventory, TestRow
 from utgen.solver import Solver
 
 
@@ -34,12 +35,39 @@ class _GeneratedFunction:
     result: AssemblyResult
 
 
+def fallback_rows(function):
+    first, second = {}, {}
+    for leaf in function.leaves:
+        if leaf.direction in (Direction.IN, Direction.INOUT):
+            first[leaf.name] = 0
+            second[leaf.name] = 1
+    return [
+        TestRow(first, "Timeout", "generation timeout"),
+        TestRow(second, "Timeout", "generation timeout"),
+    ]
+
+
 def _verified_result(function, rows, recipes=(), generated_rows=()):
     rows = list(rows)
     Verifier(
         Interpreter(Inventory(function.leaves, function.stubs), execute_static_helpers=True)
     ).check(function, rows)
     return AssemblyResult(tuple(rows), tuple(recipes), tuple(generated_rows))
+
+
+def write_timeout_outputs(function):
+    """Return verified timeout rows without emitting legacy XML files."""
+
+    rows = fallback_rows(function)
+    return _verified_result(
+        function,
+        rows,
+        (),
+        (
+            GeneratedRowProvenance("Timeout", 0, 0),
+            GeneratedRowProvenance("Timeout", 1, 1),
+        ),
+    )
 
 
 _WORKER_ANALYSIS = None
@@ -89,19 +117,23 @@ def _generate_function(function_name):
 
 
 def start_worker(context, database, profile_dir=None, processes=8):
-    pool = context.Pool(
-        processes=processes,
-        initializer=initialize_worker,
-        initargs=(database, profile_dir),
-    )
+    pools = [
+        context.Pool(
+            processes=1,
+            initializer=initialize_worker,
+            initargs=(database, profile_dir),
+        )
+        for _ in range(processes)
+    ]
     try:
-        if not pool.apply(worker_ready):
-            raise RuntimeError("worker failed to initialize")
+        for pool in pools:
+            if not pool.apply(worker_ready):
+                raise RuntimeError("worker failed to initialize")
     except Exception:
-        pool.terminate()
-        pool.join()
+        for pool in pools:
+            stop_worker(pool, terminate=True)
         raise
-    return pool
+    return pools
 
 
 def stop_worker(pool, terminate=False):
@@ -118,12 +150,23 @@ def stop_worker(pool, terminate=False):
 
 
 def _collect_function(result):
-    payload = result.get(timeout=FUNCTION_TIMEOUT_SECONDS)
+    payload = result.get()
     if isinstance(payload, tuple) and payload and payload[0] == "error":
         raise RuntimeError(payload[1])
     if not isinstance(payload, AssemblyResult):
         raise RuntimeError("generation result did not include an AssemblyResult")
     return payload
+
+
+def _submit_function(pool, function):
+    return (
+        function,
+        pool.apply_async(
+            generate_function,
+            (function.name,),
+        ),
+        time.monotonic(),
+    )
 
 
 def generate_module(project, module, include_dirs=(), profile_dir=None):
@@ -156,33 +199,68 @@ def generate_module(project, module, include_dirs=(), profile_dir=None):
         database = Path(temporary_dir) / f"db_{module['module_name']}.xml"
         XmlDbWriter().write(analysis, database)
         generated = {}
-        worker_pool = None
+        worker_pools = []
+        active = {}
         worker_profile_dir = None if profile_dir is None else Path(profile_dir) / module["module_name"]
         functions = tuple(analysis.functions)
         try:
             if functions:
                 process_count = min(mp.cpu_count(), len(functions))
-                worker_pool = start_worker(
+                worker_pools = start_worker(
                     context, database, worker_profile_dir, process_count
                 )
-                pending = {}
-                for function in functions:
-                    pending[function.name] = worker_pool.apply_async(
-                        generate_function,
-                        (function.name,),
-                    )
-                for function in functions:
-                    result = _collect_function(pending[function.name])
-                    generated[function.name] = _GeneratedFunction(result)
-                stop_worker(worker_pool)
-                worker_pool = None
+                remaining = iter(functions)
+                for pool in worker_pools:
+                    function = next(remaining)
+                    active[pool] = _submit_function(pool, function)
+
+                while active:
+                    now = time.monotonic()
+                    progressed = False
+                    for pool, (function, pending, started_at) in tuple(active.items()):
+                        if pending.ready():
+                            result = _collect_function(pending)
+                            generated[function.name] = _GeneratedFunction(result)
+                            next_function = next(remaining, None)
+                            if next_function is None:
+                                stop_worker(pool)
+                                worker_pools.remove(pool)
+                                del active[pool]
+                            else:
+                                active[pool] = _submit_function(pool, next_function)
+                            progressed = True
+                            continue
+
+                        if now - started_at < FUNCTION_TIMEOUT_SECONDS:
+                            continue
+
+                        stop_worker(pool, terminate=True)
+                        worker_pools.remove(pool)
+                        del active[pool]
+                        generated[function.name] = _GeneratedFunction(
+                            write_timeout_outputs(function)
+                        )
+                        next_function = next(remaining, None)
+                        if next_function is not None:
+                            replacement = start_worker(
+                                context, database, worker_profile_dir, 1
+                            )[0]
+                            worker_pools.append(replacement)
+                            active[replacement] = _submit_function(
+                                replacement, next_function
+                            )
+                        progressed = True
+
+                    if not progressed:
+                        time.sleep(0.01)
         except Exception:
-            stop_worker(worker_pool, terminate=True)
-            worker_pool = None
+            for pool in tuple(worker_pools):
+                stop_worker(pool, terminate=True)
+            worker_pools.clear()
             raise
         finally:
-            if worker_pool is not None:
-                stop_worker(worker_pool)
+            for pool in tuple(worker_pools):
+                stop_worker(pool)
     return analysis, generated
 
 
