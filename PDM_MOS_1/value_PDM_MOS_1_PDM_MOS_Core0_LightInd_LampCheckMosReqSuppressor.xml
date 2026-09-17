@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<function name="PDM_MOS_Core0_LightInd_LampCheckMosReqSuppressor" file="">
+    <argument name="LightInd_BlinkCtrlReq_Out" len="8" format="unsigned" direction="inout" pointer="true" range="0,NULL,0,0,0,0" testmethod="decision" output="0,0,0,0,0,0" />
+    <argument name="CANCtrlReq_Out.CANMosCtrl[13]" len="9" format="PDM_CANCtrlStat_Type" direction="inout" pointer="true" range="0,0,NULL,0,0,0" testmethod="decision" output="0,0,0,0,0,0|0,0,0,0,0,0|0,0,0,0,0,0|0,0,0,0,0,0|0,0,0,0,0,0|0,0,0,0,0,0|0,0,0,0,0,0|0,0,0,0,0,0|0,0,0,0,0,0|0,0,0,0,0,0|0,0,0,0,0,0|0,0,0,0,0,0|0,0,0,0,0,0" />
+    <argument name="LocalCtrlReq_Out.LocalMosCtrl[13]" len="9" format="PDM_LocalCtrlStat_Type" direction="inout" pointer="true" range="0,0,0,NULL,0,0" testmethod="decision" output="0,0,0,0,0,0|0,0,0,0,0,0|0,0,0,0,0,0|0,0,0,0,0,0|0,0,0,0,0,0|0,0,0,0,0,0|0,0,0,0,0,0|0,0,0,0,0,0|0,0,0,0,0,0|0,0,0,0,0,0|0,0,0,0,0,0|0,0,0,0,0,0|0,0,0,0,0,0" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc31_PDMLampCheckCore0ASILB_Event_GetMsg.BrkHighBrkALTurnARTurn_LghtCheckEnable" len="9" format="PDM_LampCheckRoutine_Type" direction="in" pointer="false" range="0,0,0,0,1,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_DiagApp_Srvc31_PDMLampCheckCore0ASILB_Event_GetMsg.BLTurnBRTurn_LghtCheckEnable" len="9" format="PDM_LampCheckRoutine_Type" direction="in" pointer="false" range="0,0,0,0,0,1" testmethod="decision" />
+</function>

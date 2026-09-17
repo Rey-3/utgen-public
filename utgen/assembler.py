@@ -123,11 +123,6 @@ class RowAssembler:
                     by_values[key] = coverage
                     row_indices[key] = len(rows)
                     rows.append(coverage)
-                if collect_provenance:
-                    self._append_coverage_recipes(
-                        recipes, seen_recipes, function, coverage,
-                        decision_index, decision, row_indices[key],
-                    )
 
         if self.include_boundary:
             # Boundary rows exercise values immediately below, at and above relational
@@ -160,6 +155,16 @@ class RowAssembler:
                 by_values[key] = fault
                 row_indices[key] = len(rows)
                 rows.append(fault)
+        if collect_provenance:
+            linked = {item.concrete_row_index for item in recipes}
+            linked.update(item.concrete_row_index for item in generated_rows)
+            source_orders = {}
+            for index, row in enumerate(rows):
+                if index in linked:
+                    continue
+                order = source_orders.get(row.kind, 0)
+                generated_rows.append(GeneratedRowProvenance(row.kind, order, index))
+                source_orders[row.kind] = order + 1
         return (rows, recipes, generated_rows)
 
     @staticmethod
@@ -287,26 +292,3 @@ class RowAssembler:
                 concrete_row_index,
             )
         )
-
-    @staticmethod
-    def _append_coverage_recipes(
-        recipes: list[RecipeProvenance], seen: set, function: FunctionIR,
-        row: TestRow, decision_index: int, decision, concrete_row_index: int,
-    ) -> None:
-        """Attach complete interpreter patterns for concrete repair rows."""
-
-        from utgen.interp import Interpreter
-
-        result = Interpreter(Inventory(function.leaves, function.stubs)).run(function, row.values)
-        atoms = tuple(atoms_of(decision.expr))
-        for pattern in result.conditions.get(decision.id, ()):
-            if len(pattern) != len(atoms) or any(value is None for value in pattern):
-                continue
-            assignment = dict(zip(atoms, pattern))
-            outcome = eval_expr(decision.expr, assignment)
-            if outcome is None:
-                continue
-            RowAssembler._append_recipe(
-                recipes, seen, decision_index, decision, assignment,
-                outcome, concrete_row_index,
-            )

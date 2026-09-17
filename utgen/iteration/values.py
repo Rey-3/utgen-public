@@ -571,7 +571,7 @@ def _generated_flat_values(values, metadata, selected, channel):
             pattern = _array_pattern(name)
             for path in schema_paths:
                 if _array_pattern(path) == pattern:
-                    flat[path] = lexeme
+                    flat.setdefault(path, lexeme)
     for name in schema_paths:
         flat.setdefault(name, "0")
     return flat

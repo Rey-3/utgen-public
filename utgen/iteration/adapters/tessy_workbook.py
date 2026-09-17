@@ -70,7 +70,7 @@ def default_stub_body(catalog_entry, used) -> str:
         return ""
     storage = catalog_entry["return_storage"]
     if used:
-        return f"extern {return_type} {storage};\nreturn {storage};"
+        return f"return {storage};"
     return f"{return_type} temp = {{0}};\nreturn temp;"
 
 
@@ -634,7 +634,8 @@ def _product_ranges(ranges: list[set[int]]) -> Iterable[tuple[int, ...]]:
 def _flatten_channel(function: Mapping[str, Any], row: Mapping[str, Any] | None, channel: str) -> dict[str, str]:
     variables = function["variables"]
     values = row[channel] if row is not None else project_generated_values({}, variables, channel)
-    return flatten_values(values, variables, channel=channel)
+    return {name: value for name, value in flatten_values(values, variables, channel=channel).items()
+            if not name.startswith("@")}
 
 
 def _project_rows(function: Mapping[str, Any], rows: list[tuple[str, dict]]):
@@ -670,8 +671,12 @@ def _column_direction_token(
     typed_roots: set[str],
 ) -> str:
     direction = "in" if channel == "input" else "out"
+    if channel == "output" and name.endswith("()"):
+        return "o"
     root = re.split(r"[.\[]", name, maxsplit=1)[0]
     spec = function.get("variables", {}).get(root, {})
+    if spec.get("pointer") or spec.get("is_pointer"):
+        return convertDirectionToTessyFormat(direction, name, show_type=False)
     type_hint = spec.get("format") or spec.get("fmt") or spec.get("type") or ""
     if not type_hint or root in typed_roots:
         return convertDirectionToTessyFormat(direction, name, show_type=False)

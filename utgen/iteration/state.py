@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 import json
 import os
@@ -156,23 +157,105 @@ def allocate_decision_key(function_state: dict) -> str:
 
 
 def ordered_active_rows(function: Mapping) -> list[tuple[str, dict]]:
-    """Keep generated, decision, then manual rows in export order."""
-    rows = function["rows"]
-    order = [item["row_id"] for item in function.get("generated_rows", [])]
-    order += [
-        recipe["row_id"]
-        for decision in function.get("decisions", {}).values()
-        for recipe in decision.get("recipes", [])
-    ]
-    order += list(rows)
-    seen, result = set(), []
-    for row_id in order:
-        if row_id in seen or row_id not in rows:
+    """Return active physical rows in their persisted mapping order."""
+    return [(row_id, row) for row_id, row in function["rows"].items() if row["status"] == "active"]
+
+
+def _recipe_structure(decision: dict, recipe: dict) -> tuple:
+    return recipe["result"], tuple(recipe["values"][key] for key in decision["atoms"])
+
+
+def _preferred_tool_rows(current: dict, candidate: dict, matches) -> dict:
+    choices = {}
+    current_rows = current["rows"]
+    for match in matches:
+        if match.current_key is None:
             continue
-        seen.add(row_id)
-        if rows[row_id]["status"] == "active":
-            result.append((row_id, rows[row_id]))
+        incoming = candidate["decisions"][match.candidate_key]
+        old_decision = current["decisions"][match.current_key]
+        used: set[int] = set()
+        for recipe in incoming["recipes"]:
+            index = next((index for index, old in enumerate(old_decision["recipes"])
+                          if index not in used and _recipe_structure(old_decision, old) == _recipe_structure(incoming, recipe)), None)
+            if index is None:
+                continue
+            used.add(index)
+            old_id = old_decision["recipes"][index]["row_id"]
+            if current_rows.get(old_id, {}).get("owner") == "tool":
+                choices.setdefault(recipe["row_id"], []).append(old_id)
+    old_generated = current["generated_rows"]
+    used: set[int] = set()
+    for item in candidate["generated_rows"]:
+        index = next((index for index, old in enumerate(old_generated)
+                      if index not in used and old["kind"] == item["kind"]), None)
+        if index is None:
+            continue
+        used.add(index)
+        old_id = old_generated[index]["row_id"]
+        if current_rows.get(old_id, {}).get("owner") == "tool":
+            choices.setdefault(item["row_id"], []).append(old_id)
+    assigned = set()
+    preferred = {}
+    for candidate_id in candidate["rows"]:
+        for old_id in choices.get(candidate_id, ()):
+            if old_id not in assigned:
+                preferred[candidate_id] = old_id
+                assigned.add(old_id)
+                break
+    return preferred
+
+
+def _resolve_row(state, function, candidate, candidate_id, old_id, counters, context):
+    rows = function["rows"]
+    candidate_row = candidate["rows"][candidate_id]
+    if old_id is not None and rows[old_id]["owner"] == "user":
+        if old_id in context["users"]:
+            old_id = None
+        else:
+            context["users"].add(old_id)
+            context["retained"].add(old_id)
+            context["order"].setdefault(candidate_id, old_id)
+            return old_id
+    row_id = context["canonical"].get(candidate_id)
+    if row_id is None:
+        old_id = context["preferred"].get(candidate_id, old_id)
+        if old_id is not None and context["claimed"].get(old_id) not in (None, candidate_id):
+            old_id = None
+        if old_id is None:
+            row_id = allocate_row_id(state)
+            rows[row_id] = _tool(candidate_row)
+            counters["rows_allocated"] += 1
+        else:
+            row_id = old_id
+            _merge_row(rows[row_id], candidate_row, counters)
+            context["claimed"][row_id] = candidate_id
+        context["canonical"][candidate_id] = row_id
+        context["order"][candidate_id] = row_id
+    elif old_id is not None and old_id != row_id and context["claimed"].get(old_id) is None:
+        _mark_orphan(rows.get(old_id), counters)
+    context["retained"].add(row_id)
+    return row_id
+
+
+def _merge_row(current: dict, candidate: dict, counters: dict) -> None:
+    if current["owner"] != "user":
+        current.clear()
+        current.update(_tool(candidate))
+    counters["rows_kept"] += 1
+
+
+def _tool(item: dict) -> dict:
+    result = deepcopy(item)
+    result.update(owner="tool", status="active")
     return result
+
+
+def _mark_orphan(row: dict | None, counters: dict) -> None:
+    if row is None:
+        return
+    if row["status"] != "orphaned":
+        counters["rows_orphaned"] += 1
+    row["status"] = "orphaned"
 
 
 __all__ = [

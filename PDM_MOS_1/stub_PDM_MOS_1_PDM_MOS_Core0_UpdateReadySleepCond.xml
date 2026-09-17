@@ -1,0 +1,23 @@
+<?xml version='1.0' encoding='utf-8'?>
+<function_analysis function_name="PDM_MOS_Core0_UpdateReadySleepCond" file="" line="709">
+  <called_functions count="2">
+    <function name="Rte_PDMMOS_1_PDMLocalCtrl_1_HSDReadySleepCore0ASILB_100ms_GetMsg" file="" line="">
+      <return>
+        <type>boolean</type>
+        <name>tessy_Rte_PDMMOS_1_PDMLocalCtrl_1_HSDReadySleepCore0ASILB_100ms_GetMsg</name>
+      </return>
+    </function>
+    <function name="Rte_PDMMOS_1_PDCModeManager_PDMReadySleepStatCore0ASILB_1ms_SendMsg" file="" line="">
+      <return>
+        <type>void</type>
+        <name>tessy_Rte_PDMMOS_1_PDCModeManager_PDMReadySleepStatCore0ASILB_1ms_SendMsg</name>
+      </return>
+      <arguments>
+        <argument type="PDM_ReadySleepStat_Type" name="Arg0">
+          <type>PDM_ReadySleepStat_Type</type>
+          <name>tessy_Rte_PDMMOS_1_PDCModeManager_PDMReadySleepStatCore0ASILB_1ms_SendMsg__Arg0</name>
+        </argument>
+      </arguments>
+    </function>
+  </called_functions>
+</function_analysis>

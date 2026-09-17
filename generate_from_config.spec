@@ -23,8 +23,7 @@ binaries = [(clang_exe, "clang/bin"), (libclang, "clang/bin")]
 datas = [(resource_dirs[-1], os.path.join("clang", "lib", "clang", version)),
          (os.path.join(here, "template.xlsx"), ".")]
 hiddenimports = (collect_submodules("utgen") + collect_submodules("clang") +
-                 collect_submodules("openpyxl") +
-                 ["tessy_parse", "tessy_create_testlist", "tessy_excel"])
+                 ["tessy_excel"])
 
 a = Analysis(
     [os.path.join(here, "generate_from_config.py")],

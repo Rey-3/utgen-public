@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<function name="PDM_MOS_Core0_DebugInfoCollector" file="">
+    <argument name="PDM_Core0_LoadCtrlSourceDebug[13]" len="8" format="unsigned" direction="in" pointer="false" range="0" testmethod="decision" />
+    <argument name="PDM_Core0_IndLocalCtrlOpStat.LightIndState[6]" len="9" format="PDM_IndOperationStat_Type" direction="in" pointer="false" range="0" testmethod="decision" />
+    <argument name="PDM_Core0_IndBlinkStat[6].Stat" len="9" format="PDM_SlfDiagLightIndBlinkStat_Type[6]" direction="in" pointer="false" range="0" testmethod="decision" />
+    <argument name="PDM_Core0_IndBlinkStat[6].BlinkCnt" len="17" format="PDM_SlfDiagLightIndBlinkStat_Type[6]" direction="in" pointer="false" range="0" testmethod="decision" />
+    <argument name="PDM_Core0_IndBlinkStat[6].CtrlStat" len="9" format="PDM_SlfDiagLightIndBlinkStat_Type[6]" direction="in" pointer="false" range="0" testmethod="decision" />
+    <argument name="PDM_Core0_ShortCircuitStat[6].Stat" len="9" format="PDM_SlfDiagLightIndStat_Type[6]" direction="in" pointer="false" range="0" testmethod="decision" />
+    <argument name="PDM_Core0_ShortCircuitStat[6].FaultTriggerCnt" len="9" format="PDM_SlfDiagLightIndStat_Type[6]" direction="in" pointer="false" range="0" testmethod="decision" />
+    <argument name="PDM_Core0_ShortCircuitStat[6].FaultCnt" len="17" format="PDM_SlfDiagLightIndStat_Type[6]" direction="in" pointer="false" range="0" testmethod="decision" />
+    <argument name="PDM_Core0_ShortCircuitStat[6].RecoveryCnt" len="17" format="PDM_SlfDiagLightIndStat_Type[6]" direction="in" pointer="false" range="0" testmethod="decision" />
+    <argument name="PDM_Core0_ShortCircuitStat[6].NextActiveCycle" len="9" format="PDM_SlfDiagLightIndStat_Type[6]" direction="in" pointer="false" range="0" testmethod="decision" />
+</function>

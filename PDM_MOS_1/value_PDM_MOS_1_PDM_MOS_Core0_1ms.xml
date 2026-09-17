@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<function name="PDM_MOS_Core0_1ms" file="">
+    <argument name="PDM_Core0_EEPROM_SyncFlag" len="8" format="unsigned" direction="inout" pointer="false" range="127,128" testmethod="decision" output="127,127" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckClose_UB_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckClose_VoltDiff_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckClose_Time" len="17" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckClose_Recovery_UB_Thresh1000x" len="17" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckClose_Recovery_VoltDiff_Thresh1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckClose_RecoveryTime" len="17" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckOpen_UB_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckOpen_LoadVoltage_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckOpen_Time" len="17" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckOpen_Recovery_UB_Thresh1000x" len="17" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckOpen_Recovery_VoltDiff_Thresh1000x" len="17" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckOpen_RecoveryTime" len="17" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_Load_Enable[13]" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0|0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_DriverFault_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckClose_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_StuckOpen_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_LRTURN_HardwireFault_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_RRTURN_HardwireFault_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_LightInd_ShortCircuit_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_LightInd_OpenCircuit_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_LightInd_StuckClose_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_DVTest_LoadMOSSelfDiagEn" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_DVTest_LightIndSelfDiagEn" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="PDM_Core0_SlfDiagCfg.PDM_DVTest_LightIndOpenCircuitEn" len="9" format="NvmApp_PDMSelfDiag_Type" direction="out" pointer="false" output="0,0" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_EEPROMInfo1Core0ASILB_Event_GetMsg.EEPROM_InputSampling_SyncFlag" len="9" format="NvmApp_EEPROM_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_EEPROMInfo1Core0ASILB_Event_GetMsg.EEPROM_PDM_SyncFlag" len="9" format="NvmApp_EEPROM_Type" direction="in" pointer="false" range="127,127" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_EEPROMInfo1Core0ASILB_Event_GetMsg.EEPROM_PNG_SyncFlag" len="9" format="NvmApp_EEPROM_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckClose_UB_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckClose_VoltDiff_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckClose_Time" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckClose_Recovery_UB_Thresh1000x" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckClose_Recovery_VoltDiff_Thresh1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckClose_RecoveryTime" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckOpen_UB_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckOpen_LoadVoltage_Threshold1000x" len="33" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckOpen_Time" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckOpen_Recovery_UB_Thresh1000x" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckOpen_Recovery_VoltDiff_Thresh1000x" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckOpen_RecoveryTime" len="17" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_Load_Enable[13]" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_DriverFault_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckClose_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_StuckOpen_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_LRTURN_HardwireFault_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_RRTURN_HardwireFault_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_LightInd_ShortCircuit_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_LightInd_OpenCircuit_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_LightInd_StuckClose_Enable" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_DVTest_LoadMOSSelfDiagEn" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_DVTest_LightIndSelfDiagEn" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+    <argument name="tessy_Rte_PDMMOS_1_NvmApp_PDMSelfDiagCfgCore0ASILB_Event_GetMsg.PDM_DVTest_LightIndOpenCircuitEn" len="9" format="NvmApp_PDMSelfDiag_Type" direction="in" pointer="false" range="0,0" testmethod="decision" />
+</function>

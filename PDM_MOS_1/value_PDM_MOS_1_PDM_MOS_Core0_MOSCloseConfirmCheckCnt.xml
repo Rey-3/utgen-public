@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<function name="PDM_MOS_Core0_MOSCloseConfirmCheckCnt" file="">
+    <argument name="i" len="8" format="unsigned" direction="in" pointer="false" range="0,0,0" testmethod="decision" />
+    <argument name="diffVolt" len="16" format="unsigned" direction="in" pointer="false" range="1000,0,0" testmethod="decision" />
+    <argument name="PDM_Core0_MOSCloseConfirmCnt[13]" len="8" format="unsigned" direction="inout" pointer="false" range="0,0,50" testmethod="decision" output="0,1,0|0,0,0|0,0,0|0,0,0|0,0,0|0,0,0|0,0,0|0,0,0|0,0,0|0,0,0|0,0,0|0,0,0|0,0,0" />
+</function>

@@ -8,12 +8,24 @@ from pathlib import Path
 import warnings
 
 from .adapters.tessy_workbook import default_stub_body as _default_stub_body
-from .state import allocate_decision_key, allocate_row_id, ordered_active_rows
+from .state import (
+    _mark_orphan,
+    _merge_row,
+    _preferred_tool_rows,
+    _recipe_structure,
+    _resolve_row,
+    _tool,
+    allocate_decision_key,
+    allocate_row_id,
+    ordered_active_rows,
+)
 from .validation import validate_module
 from .values import flatten_values, infer_variable_schema, metadata_variables, nest_values, project_generated_values, project_variable_schema, sync_row_schema
 from ..mcdc import eval_expr
 from ..model import And, AssemblyResult, Atom, GeneratedRowProvenance, Not, Or, RecipeProvenance, atom_text, atoms_of
-_GENERATED_KINDS = frozenset({"Nominal", "Timeout"})
+_GENERATED_KINDS = frozenset(
+    {"Nominal", "Timeout", "MC/DC", "Switch", "Coverage", "Boundary", "Fault Injection"}
+)
 
 @dataclass(frozen=True)
 class DecisionMatch:
@@ -226,7 +238,6 @@ def _snapshot_values(case, function: dict, channel: str, allow_missing: bool) ->
 
 def _row_content(row: Mapping) -> tuple:
     return row["description"], row["input"], row["output"]
-
 def _merge_user_stubs(function: dict, snapshot, catalog: Mapping) -> tuple[int, int]:
     stubs = _get(snapshot, "stubs", default=())
     if not isinstance(stubs, (list, tuple)):
@@ -325,9 +336,6 @@ def _decision_structure(decision: dict) -> tuple:
         for recipe in decision["recipes"]
     )
 
-def _recipe_structure(decision: dict, recipe: dict) -> tuple:
-    return recipe["result"], tuple(recipe["values"][key] for key in decision["atoms"])
-
 def _merge_stub_catalog(current: dict, candidate: dict) -> dict:
     merged = {}
     for key, entry in candidate.items():
@@ -341,43 +349,30 @@ def _merge_stub_catalog(current: dict, candidate: dict) -> dict:
             merged[key] = item
     return merged
 
+
 def _new_function(state: dict, candidate: dict, counters: dict) -> dict:
     function = deepcopy(candidate)
     function.update(max_decision_number=0, decisions={}, generated_rows=[], rows={})
-    candidate_rows = candidate["rows"]
+    row_ids = {}
+    for candidate_id, row in candidate["rows"].items():
+        row_id = allocate_row_id(state)
+        function["rows"][row_id] = _tool(row)
+        row_ids[candidate_id] = row_id
+        counters["rows_allocated"] += 1
     for decision in candidate["decisions"].values():
         key = allocate_decision_key(function)
         merged = deepcopy(decision)
         merged["recipes"] = []
         for recipe in decision["recipes"]:
-            row_id = _allocate_candidate_row(state, function, candidate_rows, recipe["row_id"], counters)
             item = deepcopy(recipe)
-            item["row_id"] = row_id
+            item["row_id"] = row_ids[recipe["row_id"]]
             merged["recipes"].append(item)
         function["decisions"][key] = merged
         counters["decisions_added"] += 1
     for generated in candidate["generated_rows"]:
-        row_id = _allocate_candidate_row(state, function, candidate_rows, generated["row_id"], counters)
-        function["generated_rows"].append({"row_id": row_id, "kind": generated["kind"]})
-    linked = {
-        recipe["row_id"]
-        for decision in candidate["decisions"].values()
-        for recipe in decision["recipes"]
-    }
-    linked.update(item["row_id"] for item in candidate["generated_rows"])
-    for old_row_id, row in candidate_rows.items():
-        if old_row_id not in linked:
-            row_id = allocate_row_id(state)
-            function["rows"][row_id] = _tool(row)
-            counters["rows_allocated"] += 1
+        function["generated_rows"].append({"row_id": row_ids[generated["row_id"]], "kind": generated["kind"]})
     function["stubs"] = _merge_stubs({}, candidate, state["stub_catalog"])
     return function
-
-def _allocate_candidate_row(state, function, candidate_rows, candidate_id, counters):
-    row_id = allocate_row_id(state)
-    function["rows"][row_id] = _tool(candidate_rows[candidate_id])
-    counters["rows_allocated"] += 1
-    return row_id
 
 def _merge_function(state: dict, current: dict, candidate: dict, counters: dict) -> dict:
     function = deepcopy(current)
@@ -385,17 +380,26 @@ def _merge_function(state: dict, current: dict, candidate: dict, counters: dict)
     for row in function["rows"].values():
         sync_row_schema(row, current["variables"], candidate["variables"])
     matches = match_decisions(current, candidate)
+    preferred = _preferred_tool_rows(current, candidate, matches)
+    context = {
+        "canonical": {},
+        "order": {},
+        "users": set(),
+        "retained": set(),
+        "preferred": preferred,
+        "claimed": {row_id: candidate_id for candidate_id, row_id in preferred.items()},
+    }
     matched = {item.current_key for item in matches if item.current_key is not None}
     decisions = {}
     for item in matches:
         incoming = candidate["decisions"][item.candidate_key]
         if item.current_key is None:
             key = allocate_decision_key(function)
-            decisions[key] = _merge_decision_rows(state, function, candidate, incoming, None, counters)
+            decisions[key] = _merge_decision_rows(state, function, candidate, incoming, None, counters, context)
             counters["decisions_added"] += 1
         else:
             key = item.current_key
-            decisions[key] = _merge_decision_rows(state, function, candidate, incoming, current["decisions"][key], counters)
+            decisions[key] = _merge_decision_rows(state, function, candidate, incoming, current["decisions"][key], counters, context)
             counters["decisions_matched"] += 1
     for key, old in current["decisions"].items():
         if key in matched:
@@ -403,7 +407,8 @@ def _merge_function(state: dict, current: dict, candidate: dict, counters: dict)
         orphaned = deepcopy(function["decisions"][key])
         orphaned["status"] = "orphaned"
         for recipe in orphaned["recipes"]:
-            _mark_orphan(function["rows"].get(recipe["row_id"]), counters)
+            if recipe["row_id"] not in context["retained"]:
+                _mark_orphan(function["rows"].get(recipe["row_id"]), counters)
         decisions[key] = orphaned
         if old["status"] != "orphaned":
             counters["decisions_orphaned"] += 1
@@ -414,24 +419,34 @@ def _merge_function(state: dict, current: dict, candidate: dict, counters: dict)
     old_generated = current["generated_rows"]
     for item in candidate["generated_rows"]:
         index = next((index for index, old in enumerate(old_generated) if index not in used and old["kind"] == item["kind"]), None)
-        if index is None:
-            row_id = _allocate_candidate_row(state, function, candidate["rows"], item["row_id"], counters)
-        else:
+        old_id = None
+        if index is not None:
             used.add(index)
-            row_id = old_generated[index]["row_id"]
-            _merge_row(function["rows"][row_id], candidate["rows"][item["row_id"]], counters)
+            old_id = old_generated[index]["row_id"]
+        row_id = _resolve_row(state, function, candidate, item["row_id"], old_id, counters, context)
         generated.append({"row_id": row_id, "kind": item["kind"]})
     for index, item in enumerate(old_generated):
         if index not in used:
-            _mark_orphan(function["rows"].get(item["row_id"]), counters)
+            if item["row_id"] not in context["retained"]:
+                _mark_orphan(function["rows"].get(item["row_id"]), counters)
             generated.append(deepcopy(item))
     function["generated_rows"] = generated
+    for candidate_id in candidate["rows"]:
+        if candidate_id not in context["order"]:
+            _resolve_row(state, function, candidate, candidate_id, None, counters, context)
+    ordered = {}
+    for candidate_id in candidate["rows"]:
+        row_id = context["order"].get(candidate_id)
+        if row_id in function["rows"]:
+            ordered[row_id] = function["rows"][row_id]
+    for row_id, row in function["rows"].items():
+        ordered.setdefault(row_id, row)
+    function["rows"] = ordered
     function["used_stub_keys"] = deepcopy(candidate["used_stub_keys"])
     function["stubs"] = _merge_stubs(current, candidate, state["stub_catalog"])
     return function
 
-
-def _merge_decision_rows(state, function, candidate, decision, old_decision, counters):
+def _merge_decision_rows(state, function, candidate, decision, old_decision, counters, context):
     result = deepcopy(decision)
     result["status"] = "active"
     result["recipes"] = []
@@ -446,42 +461,20 @@ def _merge_decision_rows(state, function, candidate, decision, old_decision, cou
             ),
             None,
         ) if old_decision is not None else None
-        if index is None:
-            row_id = _allocate_candidate_row(state, function, candidate["rows"], recipe["row_id"], counters)
-        else:
+        old_id = None
+        if index is not None:
             used.add(index)
-            row_id = old_recipes[index]["row_id"]
-            _merge_row(function["rows"][row_id], candidate["rows"][recipe["row_id"]], counters)
+            old_id = old_recipes[index]["row_id"]
+        row_id = _resolve_row(state, function, candidate, recipe["row_id"], old_id, counters, context)
         item = deepcopy(recipe)
         item["row_id"] = row_id
         result["recipes"].append(item)
     for index, old in enumerate(old_recipes):
         if index not in used:
-            _mark_orphan(function["rows"].get(old["row_id"]), counters)
+            if old["row_id"] not in context["retained"]:
+                _mark_orphan(function["rows"].get(old["row_id"]), counters)
             result["recipes"].append(deepcopy(old))
     return result
-
-
-def _merge_row(current: dict, candidate: dict, counters: dict) -> None:
-    if current["owner"] != "user":
-        current.clear()
-        current.update(_tool(candidate))
-    counters["rows_kept"] += 1
-
-
-def _tool(item: dict) -> dict:
-    result = deepcopy(item)
-    result.update(owner="tool", status="active")
-    return result
-
-
-def _mark_orphan(row: dict | None, counters: dict) -> None:
-    if row is None:
-        return
-    if row["status"] != "orphaned":
-        counters["rows_orphaned"] += 1
-    row["status"] = "orphaned"
-
 
 def _merge_stubs(current: dict, candidate: dict, catalog: dict) -> dict:
     current_stubs, candidate_stubs = current.get("stubs", {}), candidate.get("stubs", {})
@@ -508,7 +501,6 @@ def _merge_stubs(current: dict, candidate: dict, catalog: dict) -> dict:
             merged[key] = item
     return merged
 
-
 def _orphan_function(function: dict, counters: dict) -> None:
     for decision in function["decisions"].values():
         if decision["status"] != "orphaned":
@@ -523,7 +515,6 @@ def _orphan_function(function: dict, counters: dict) -> None:
     for stub in function["stubs"].values():
         stub["status"] = "orphaned"
     function["used_stub_keys"] = []
-
 
 def build_candidate(analysis, generated_functions, project, module, input_hash) -> dict:
     """Project analysis and assembly results into one validated module dict."""
@@ -552,6 +543,10 @@ def build_candidate(analysis, generated_functions, project, module, input_hash) 
             "stubs": {},
         }
         state["functions"][name] = function_state
+        row_ids = []
+        for index in range(len(generated.rows)):
+            row_ids.append(allocate_row_id(state))
+            function_state["rows"][row_ids[-1]] = _assembly_row(generated, index, function)
         for decision_index, decision in enumerate(getattr(function, "decisions", ())):
             decision_key = allocate_decision_key(function_state)
             atoms = tuple(atoms_of(decision.expr))
@@ -572,17 +567,13 @@ def build_candidate(analysis, generated_functions, project, module, input_hash) 
                 if key in seen_recipes:
                     continue
                 seen_recipes.add(key)
-                row_id = allocate_row_id(state)
-                function_state["rows"][row_id] = _assembly_row(generated, recipe.concrete_row_index, function)
                 item["recipes"].append({
-                    "row_id": row_id,
+                    "row_id": row_ids[recipe.concrete_row_index],
                     "result": bool(recipe.result),
                     "values": {f"A{index}": bool(value) for index, value in enumerate(recipe.atom_values, 1)},
                 })
         for generated_row in generated_rows:
-            row_id = allocate_row_id(state)
-            function_state["rows"][row_id] = _assembly_row(generated, generated_row.concrete_row_index, function)
-            function_state["generated_rows"].append({"row_id": row_id, "kind": str(generated_row.kind)})
+            function_state["generated_rows"].append({"row_id": row_ids[generated_row.concrete_row_index], "kind": str(generated_row.kind)})
         for key, entry in state["stub_catalog"].items():
             function_state["stubs"][key] = {
                 "owner": "tool",
@@ -665,7 +656,8 @@ def _validated_provenance(function, result):
             raise ValueError(f"recipe result does not match decision {decision_index}")
         _validate_concrete_index(recipe.concrete_row_index, rows, "recipe")
         grouped[decision_index].append(recipe)
-    keys, expected = set(), {}
+    recipe_indexes = {recipe.concrete_row_index for group in grouped for recipe in group}
+    generated_indexes, keys, expected = set(), set(), {}
     for generated_index, item in enumerate(generated_rows):
         if not isinstance(item, GeneratedRowProvenance):
             raise ValueError(f"generated row {generated_index} is not GeneratedRowProvenance")
@@ -684,13 +676,19 @@ def _validated_provenance(function, result):
         _validate_concrete_index(item.concrete_row_index, rows, "generated row")
         if rows[item.concrete_row_index].kind != item.kind:
             raise ValueError(f"generated row kind {item.kind!r} does not match concrete row kind {rows[item.concrete_row_index].kind!r}")
+        if item.concrete_row_index in generated_indexes:
+            raise ValueError(f"duplicate generated row concrete index: {item.concrete_row_index}")
+        generated_indexes.add(item.concrete_row_index)
+    if recipe_indexes & generated_indexes:
+        raise ValueError("concrete row has both recipe and generated provenance")
+    if recipe_indexes | generated_indexes != set(range(len(rows))):
+        raise ValueError("provenance does not cover every concrete row")
     return grouped, tuple(generated_rows)
 
 
 def _validate_concrete_index(index, rows, source):
     if type(index) is not int or index < 0 or index >= len(rows):
         raise ValueError(f"{source} concrete_row_index is invalid: {index!r}")
-
 
 def _recipe_key(recipe):
     return recipe.decision_index, recipe.decision_id, recipe.atom_texts, recipe.atom_values, recipe.result

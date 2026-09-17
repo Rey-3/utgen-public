@@ -66,7 +66,9 @@ _STUB_CATALOG_KEYS = frozenset({
 _STUB_KEYS = frozenset({"owner", "status", "body"})
 _DIRECTIONS = frozenset({"input", "output", "inout"})
 _CHANNELS = frozenset({"input", "output"})
-_GENERATED_KINDS = frozenset({"Nominal", "Timeout"})
+_GENERATED_KINDS = frozenset({
+    "Nominal", "Timeout", "MC/DC", "Switch", "Coverage", "Boundary", "Fault Injection",
+})
 
 
 def validate_module(state: dict) -> None:
@@ -190,17 +192,21 @@ def _validate_function_links(
     links: dict[str, str],
 ) -> None:
     local_rows = function["rows"]
+    active_recipe_rows = set()
+    for decision in function["decisions"].values():
+        if decision["status"] != "active":
+            continue
+        for recipe in decision["recipes"]:
+            active_recipe_rows.add(recipe["row_id"])
     for decision_key, decision in function["decisions"].items():
         for recipe_index, recipe in enumerate(decision["recipes"]):
             row_id = recipe["row_id"]
             if row_id not in local_rows:
                 _fail(f"recipe refers to unknown row: {row_id!r}")
-            if row_id in links:
-                _fail(f"row has multiple logical links: {row_id}")
             links[row_id] = f"{function_name}.{decision_key}.recipes[{recipe_index}]"
             row = local_rows[row_id]
             if decision["status"] == "orphaned":
-                if row["status"] != "orphaned":
+                if row["status"] != "orphaned" and row_id not in active_recipe_rows:
                     _fail("orphaned Decision recipes must reference orphaned rows")
             elif row["status"] not in {"active", "orphaned"}:
                 _fail("active Decision recipes must reference active or orphaned rows")
