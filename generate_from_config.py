@@ -10,10 +10,12 @@ import pstats
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 from typing import Mapping
 
 import yaml
-
+from clone_tessy_project import TessyProjectCloner
+from tessy_compilation import Tessy_Compilation
 from utgen.assembler import RowAssembler
 from utgen.db import ModuleIndexer, XmlDbReader, XmlDbWriter
 from utgen.interp import Interpreter, Verifier
@@ -289,6 +291,31 @@ def run_user_merge(config=None):
     return workflow_run_user_merge(CONFIG_PATH if config is None else config)
 
 
+def run_tessy_import(config):
+    tessy = config["Tessy"]
+    for project in config.get("projects", ()):
+        workspace = Path(project.get("workspace") or tessy["default_workspace"])
+        project_name = project["name"]
+        root_path = project["root_path"]
+        if not (workspace / project_name).exists():
+            failed = TessyProjectCloner(
+                workspace=workspace,
+                template=tessy.get("template_path") or None,
+            ).run(project_name, root_path)
+            if failed:
+                raise RuntimeError(f"Failed to clone TESSY project {project_name}")
+
+        Tessy_Compilation(
+            work_dir=workspace,
+            root_path=root_path,
+            project_name=project_name,
+            collection_name=project["collection_name"],
+            report_dir=project.get("report_dir", workspace / project_name / "reports"),
+            modules=[SimpleNamespace(**module) for module in project.get("modules", ())],
+        ).compilation()
+    return []
+
+
 def _load_cli_config(path: Path):
     value = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(value, Mapping):
@@ -319,7 +346,7 @@ def main(argv=None):
     """
 
     parser = argparse.ArgumentParser(description="UTGen iteration workflow")
-    parser.add_argument("mode", nargs="?", choices=("1", "2", "3"))
+    parser.add_argument("mode", nargs="?", choices=("1", "2", "3", "4"))
     parser.add_argument("--config", type=Path, default=None)
     parser.add_argument("--profile-dir", type=Path)
     args = parser.parse_args(argv)
@@ -328,11 +355,12 @@ def main(argv=None):
     if mode is None:
         print("1. Normal generation / next tool iteration")
         print("2. Rebuild Excel from current JSON")
-        print("3. Merge user Excel into current JSON")
+        print("3. import excel")
+        print("4. Merge user Excel into current JSON")
         mode = input("Select option: ").strip()
-        if mode not in {"1", "2", "3"}:
-            parser.error("mode must be 1, 2, or 3")
-    _load_cli_config(config_path)
+        if mode not in {"1", "2", "3", "4"}:
+            parser.error("mode must be 1, 2, 3, or 4")
+    config = _load_cli_config(config_path)
     if mode == "1":
         if args.profile_dir is None:
             result = run_generation(config_path)
@@ -347,6 +375,8 @@ def main(argv=None):
                 pstats.Stats(profiler).sort_stats("cumulative").print_stats(100)
     elif mode == "2":
         result = run_excel_export(config_path)
+    elif mode == "3":
+        result = run_tessy_import(config)
     else:
         result = run_user_merge(config_path)
     _print_summaries(result)
