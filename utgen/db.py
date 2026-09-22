@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import fields, is_dataclass, replace
 from pathlib import Path
@@ -34,7 +35,7 @@ class ModuleIndexer:
         # All the include, marco, library will store in here and read by clang
         self.config = config or {}
 
-    def index(self, source: Path, root_path: Path | None = None) -> ModuleAnalysis:
+    def index(self, source: Path, root_path: Path | None = None, progress=None) -> ModuleAnalysis:
 
         # Build one complete module snapshot. The result combines Clang parsing,
         # discovered type information, function IR, and the derived dataflow model.
@@ -55,8 +56,14 @@ class ModuleIndexer:
         self._register_globals(tu, inventory_builder)
 
         functions = []
-        for cursor in function_definitions(tu).values():
-            functions.append(self._function(cursor, tu, inventory_builder, macros))
+        function_cursors = tuple(function_definitions(tu).values())
+        total_functions = len(function_cursors)
+        for index, cursor in enumerate(function_cursors, 1):
+            started_at = time.monotonic()
+            function = self._function(cursor, tu, inventory_builder, macros)
+            functions.append(function)
+            if progress is not None:
+                progress(index, total_functions, function.name, time.monotonic() - started_at)
 
         analysis = ModuleAnalysis(str(source), _sha256(source), include_dirs, headers,
                                   macros, list(inventory_builder.type_graph.enums.values()),

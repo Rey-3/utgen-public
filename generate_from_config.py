@@ -171,6 +171,11 @@ def _submit_function(pool, function):
     )
 
 
+def _print_function_progress(current, total, name, elapsed, status=None):
+    suffix = f"{elapsed:.2f}s" if status is None else f"{status}  {elapsed:.2f}s"
+    print(f"[{current}/{total}] {name:<60} {suffix}")
+
+
 def generate_module(project, module, include_dirs=(), profile_dir=None):
     """Index and generate one module using a temporary worker DB.
 
@@ -195,7 +200,19 @@ def generate_module(project, module, include_dirs=(), profile_dir=None):
             "includes": tuple(include_dirs or ()),
         }
     )
-    analysis = indexer.index(source, root)
+    module_name = module["module_name"]
+    database_started = time.monotonic()
+    print(f"\n{module_name}: Generating analysis database...")
+
+    def report_database_progress(current, total, function_name, elapsed):
+        _print_function_progress(current, total, function_name, elapsed)
+
+    analysis = indexer.index(source, root, progress=report_database_progress)
+    database_elapsed = time.monotonic() - database_started
+    print(f"\n{module_name}: database generation completed")
+    print(f"Functions: {len(analysis.functions)}")
+    print(f"Database time: {database_elapsed:.2f}s")
+
     context = mp.get_context("spawn")
     with tempfile.TemporaryDirectory(prefix="utgen-analysis-") as temporary_dir:
         database = Path(temporary_dir) / f"db_{module['module_name']}.xml"
@@ -208,6 +225,12 @@ def generate_module(project, module, include_dirs=(), profile_dir=None):
         try:
             if functions:
                 process_count = min(mp.cpu_count(), len(functions))
+                generation_started = time.monotonic()
+                completed = 0
+                print(
+                    f"\n{module_name}: Generating test cases with "
+                    f"{process_count} workers..."
+                )
                 worker_pools = start_worker(
                     context, database, worker_profile_dir, process_count
                 )
@@ -221,8 +244,20 @@ def generate_module(project, module, include_dirs=(), profile_dir=None):
                     progressed = False
                     for pool, (function, pending, started_at) in tuple(active.items()):
                         if pending.ready():
-                            result = _collect_function(pending)
+                            elapsed = time.monotonic() - started_at
+                            try:
+                                result = _collect_function(pending)
+                            except Exception:
+                                completed += 1
+                                _print_function_progress(
+                                    completed, len(functions), function.name, elapsed, "ERROR"
+                                )
+                                raise
                             generated[function.name] = _GeneratedFunction(result)
+                            completed += 1
+                            _print_function_progress(
+                                completed, len(functions), function.name, elapsed
+                            )
                             next_function = next(remaining, None)
                             if next_function is None:
                                 stop_worker(pool)
@@ -239,8 +274,13 @@ def generate_module(project, module, include_dirs=(), profile_dir=None):
                         stop_worker(pool, terminate=True)
                         worker_pools.remove(pool)
                         del active[pool]
+                        elapsed = time.monotonic() - started_at
                         generated[function.name] = _GeneratedFunction(
                             write_timeout_outputs(function)
+                        )
+                        completed += 1
+                        _print_function_progress(
+                            completed, len(functions), function.name, elapsed, "TIMEOUT"
                         )
                         next_function = next(remaining, None)
                         if next_function is not None:
@@ -255,6 +295,12 @@ def generate_module(project, module, include_dirs=(), profile_dir=None):
 
                     if not progressed:
                         time.sleep(0.01)
+
+                generation_elapsed = time.monotonic() - generation_started
+                print(f"\n{module_name}: test generation completed")
+                print(f"Functions: {len(functions)}")
+                print(f"Workers: {process_count}")
+                print(f"Wall time: {generation_elapsed:.2f}s")
         except Exception:
             for pool in tuple(worker_pools):
                 stop_worker(pool, terminate=True)
