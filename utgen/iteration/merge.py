@@ -158,11 +158,50 @@ def _snapshot_row(case, function: dict, *, allow_missing: bool = False) -> dict:
         "output": _snapshot_values(case, function, "output", allow_missing),
     }
 
+def _pointer_roots(function: Mapping) -> set[str]:
+    variables = function.get("variables", {})
+    return {
+        name[1:]
+        for name in variables
+        if name.startswith("@") and name[1:] in variables
+    }
+
+
+def _workbook_state_name(function: Mapping, name: str, channel: str) -> str:
+    pointer_roots = _pointer_roots(function)
+    if channel == "input" and name in pointer_roots:
+        return f"@{name}"
+    for root in pointer_roots:
+        storage = f"tessy_{root}"
+        if name == storage or name.startswith(storage + ".") or name.startswith(storage + "["):
+            return root + name[len(storage):]
+    return name
+
+
+def _state_value_root(name: str) -> str:
+    return name.split(".", 1)[0].split("[", 1)[0]
+
+
+def _pointer_address_state_value(name: str, value: str) -> str:
+    root = name[1:]
+    token = value.strip()
+    if token in {"NULL", "0", "0u", "0U"}:
+        return "0"
+    if token in {f"tessy_{root}", "1", "1u", "1U"}:
+        return "1"
+    raise ValueError(
+        f"workbook pointer {root!r} must be NULL or tessy_{root}, got {value!r}"
+    )
+
+
 def _extend_workbook_variables(functions: Mapping, function: dict, cases, columns=()) -> bool:
     grouped = {}
     for column in columns or ():
         name = getattr(column, "name", None) or getattr(getattr(column, "key", None), "canonical_name", None)
-        root = name.split(".", 1)[0].split("[", 1)[0] if name else None
+        channel = getattr(column, "channel", None)
+        if isinstance(name, str) and channel in {"input", "output"}:
+            name = _workbook_state_name(function, name, channel)
+        root = _state_value_root(name) if name else None
         if name and root: grouped.setdefault(root, [set(), []])[0].add(name); grouped[root][1].append(column)
     for case in cases:
         for channel in ("input", "output"):
@@ -172,7 +211,8 @@ def _extend_workbook_variables(functions: Mapping, function: dict, cases, column
             for key in cells:
                 name = key if isinstance(key, str) else getattr(key, "canonical_name", None)
                 if isinstance(name, str) and name:
-                    root = name.split(".", 1)[0].split("[", 1)[0]
+                    name = _workbook_state_name(function, name, channel)
+                    root = _state_value_root(name)
                     grouped.setdefault(root, [set(), []])[0].add(name)
     imported = {}
     for root, (paths, columns_for_root) in grouped.items():
@@ -208,28 +248,31 @@ def _snapshot_values(case, function: dict, channel: str, allow_missing: bool) ->
     defaults = flatten_values(project_generated_values({}, variables, channel), variables, channel)
     flat = {}
     for key, cell in cells.items():
-        name = key if isinstance(key, str) else getattr(key, "canonical_name", None)
-        if not isinstance(name, str) or not name:
+        workbook_name = key if isinstance(key, str) else getattr(key, "canonical_name", None)
+        if not isinstance(workbook_name, str) or not workbook_name:
             raise ValueError("workbook value column has no canonical name")
         if not isinstance(key, str) and getattr(key, "channel", channel) != channel:
-            raise ValueError(f"workbook value channel mismatch for {name!r}")
+            raise ValueError(f"workbook value channel mismatch for {workbook_name!r}")
+        name = _workbook_state_name(function, workbook_name, channel)
         if name not in defaults:
-            raise ValueError(f"workbook value path is outside metadata: {name!r}")
+            raise ValueError(f"workbook value path is outside metadata: {workbook_name!r}")
         if name in flat:
-            raise ValueError(f"duplicate workbook value path: {name!r}")
+            raise ValueError(f"duplicate workbook value path: {workbook_name!r}")
         kind = getattr(cell, "kind", "value")
         if kind == "missing":
             if not allow_missing:
-                raise ValueError(f"workbook missing cell cannot update an existing row: {name!r}")
+                raise ValueError(f"workbook missing cell cannot update an existing row: {workbook_name!r}")
             continue
         if kind == "explicit_empty":
             flat[name] = ""
             continue
         if kind != "value":
-            raise ValueError(f"workbook {kind} cell cannot become a JSON lexeme: {name!r}")
+            raise ValueError(f"workbook {kind} cell cannot become a JSON lexeme: {workbook_name!r}")
         raw = getattr(cell, "raw_text", cell)
         if not isinstance(raw, str) or not raw:
-            raise ValueError(f"workbook value {name!r} is not a non-empty lexeme")
+            raise ValueError(f"workbook value {workbook_name!r} is not a non-empty lexeme")
+        if name.startswith("@") and name[1:] in _pointer_roots(function):
+            raw = _pointer_address_state_value(name, raw)
         flat[name] = raw
     if not allow_missing and set(defaults) - set(flat):
         raise ValueError("workbook is missing one or more schema value cells")

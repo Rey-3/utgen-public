@@ -631,11 +631,51 @@ def _product_ranges(ranges: list[set[int]]) -> Iterable[tuple[int, ...]]:
                 yield (value, *suffix)
 
 
+def _pointer_roots(function: Mapping[str, Any]) -> set[str]:
+    variables = function.get("variables", {})
+    return {
+        name[1:]
+        for name in variables
+        if name.startswith("@") and name[1:] in variables
+    }
+
+
+def _pointer_storage_root(function: Mapping[str, Any], name: str) -> str | None:
+    for root in _pointer_roots(function):
+        storage = f"tessy_{root}"
+        if name == storage or name.startswith(storage + ".") or name.startswith(storage + "["):
+            return root
+    return None
+
+
+def _is_null_pointer_address(value: str) -> bool:
+    token = value.strip()
+    return token == "NULL" or re.fullmatch(r"0[uUlL]*", token) is not None
+
+
 def _flatten_channel(function: Mapping[str, Any], row: Mapping[str, Any] | None, channel: str) -> dict[str, str]:
     variables = function["variables"]
     values = row[channel] if row is not None else project_generated_values({}, variables, channel)
-    return {name: value for name, value in flatten_values(values, variables, channel=channel).items()
-            if not name.startswith("@")}
+    flat = flatten_values(values, variables, channel=channel)
+    pointer_roots = _pointer_roots(function)
+    projected: dict[str, str] = {}
+    for name, value in flat.items():
+        if name.startswith("@") and name[1:] in pointer_roots:
+            if channel != "input":
+                continue
+            root = name[1:]
+            target = root
+            value = "NULL" if _is_null_pointer_address(value) else f"tessy_{root}"
+        else:
+            root = re.split(r"[.\[]", name, maxsplit=1)[0]
+            target = f"tessy_{name}" if root in pointer_roots else name
+        if target in projected:
+            raise WorkbookValidationError(
+                "POINTER_ALIAS_COLLISION",
+                f"TESSY projection maps more than one JSON value to {target!r}",
+            )
+        projected[target] = value
+    return projected
 
 
 def _project_rows(function: Mapping[str, Any], rows: list[tuple[str, dict]]):
@@ -673,6 +713,21 @@ def _column_direction_token(
     direction = "in" if channel == "input" else "out"
     if channel == "output" and name.endswith("()"):
         return "o"
+
+    pointer_roots = _pointer_roots(function)
+    if channel == "input" and name in pointer_roots:
+        return convertDirectionToTessyFormat(direction, name, show_type=False)
+
+    storage_root = _pointer_storage_root(function, name)
+    if storage_root is not None:
+        spec = function.get("variables", {}).get(storage_root, {})
+        typed_root = f"tessy_{storage_root}"
+        type_hint = spec.get("type") or spec.get("format") or spec.get("fmt") or ""
+        if not type_hint or typed_root in typed_roots:
+            return convertDirectionToTessyFormat(direction, name, show_type=False)
+        typed_roots.add(typed_root)
+        return convertDirectionToTessyFormat(direction, name, str(type_hint), True)
+
     root = re.split(r"[.\[]", name, maxsplit=1)[0]
     spec = function.get("variables", {}).get(root, {})
     if spec.get("pointer") or spec.get("is_pointer"):
