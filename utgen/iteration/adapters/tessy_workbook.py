@@ -687,7 +687,21 @@ def _project_rows(function: Mapping[str, Any], rows: list[tuple[str, dict]]):
         output_flat = _flatten_channel(function, None, "output")
     columns = []
     typed_roots: set[str] = set()
-    for name in input_flat:
+    pointer_roots = _pointer_roots(function)
+    parameters = set(function.get("parameters", ()))
+    input_names = list(input_flat)
+
+    def is_parameter_column(name: str) -> bool:
+        if name in pointer_roots:
+            return name in parameters or not parameters
+        root = re.split(r"[.\[]", name, maxsplit=1)[0]
+        return root in parameters and root not in pointer_roots
+
+    ordered_input_names = [
+        *(name for name in input_names if is_parameter_column(name)),
+        *(name for name in input_names if not is_parameter_column(name)),
+    ]
+    for name in ordered_input_names:
         columns.append((name, "input", _column_direction_token(function, name, "input", typed_roots)))
     for name in output_flat:
         columns.append((name, "output", _column_direction_token(function, name, "output", typed_roots)))

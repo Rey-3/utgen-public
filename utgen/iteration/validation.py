@@ -41,7 +41,7 @@ _TOP_LEVEL_KEYS = frozenset({
     "stub_catalog",
     "functions",
 })
-_FUNCTION_KEYS = frozenset({
+_FUNCTION_REQUIRED_KEYS = frozenset({
     "max_decision_number",
     "variables",
     "decisions",
@@ -50,6 +50,7 @@ _FUNCTION_KEYS = frozenset({
     "used_stub_keys",
     "stubs",
 })
+_FUNCTION_KEYS = _FUNCTION_REQUIRED_KEYS | frozenset({"parameters"})
 _ROW_KEYS = frozenset({"owner", "status", "description", "test_method", "input", "output"})
 _DECISION_REQUIRED_KEYS = frozenset({"status", "expression", "atoms", "recipes"})
 _DECISION_OPTIONAL_KEYS = frozenset({"kind", "location"})
@@ -123,7 +124,19 @@ def _validate_function(
     catalog: Mapping[str, Any],
 ) -> dict:
     function = _mapping(function, f"functions.{function_name}")
-    _keys(function, _FUNCTION_KEYS, f"functions.{function_name}")
+    _keys(
+        function,
+        _FUNCTION_KEYS,
+        f"functions.{function_name}",
+        _FUNCTION_REQUIRED_KEYS,
+    )
+    parameters = function.get("parameters", [])
+    if not isinstance(parameters, list):
+        _fail(f"functions.{function_name}.parameters must be a list")
+    if any(not _string(name) for name in parameters):
+        _fail(f"functions.{function_name}.parameters must contain non-empty strings")
+    if len(set(parameters)) != len(parameters):
+        _fail(f"functions.{function_name}.parameters contains duplicates")
     maximum = function["max_decision_number"]
     if type(maximum) is not int or maximum < 0:
         _fail(f"functions.{function_name}.max_decision_number must be non-negative")

@@ -297,6 +297,8 @@ def _new_function(state: dict, candidate: dict, counters: dict) -> dict:
 
 def _merge_function(state: dict, current: dict, candidate: dict, counters: dict) -> dict:
     function = deepcopy(current)
+    if "parameters" in candidate:
+        function["parameters"] = deepcopy(candidate["parameters"])
     function["variables"] = deepcopy(candidate["variables"])
     for row in function["rows"].values():
         sync_row_schema(row, current["variables"], candidate["variables"])
@@ -456,6 +458,7 @@ def build_candidate(analysis, generated_functions, project, module, input_hash) 
         recipes_by_decision, generated_rows = _validated_provenance(function, generated)
         function_state = {
             "max_decision_number": 0,
+            "parameters": _parameter_names(function),
             "variables": metadata_variables(function),
             "decisions": {},
             "generated_rows": [],
@@ -631,6 +634,21 @@ def _functions(analysis):
     if functions is None and isinstance(analysis, Mapping):
         functions = analysis.get("functions", ())
     return tuple(functions or ())
+
+
+def _parameter_names(function) -> list[str]:
+    parameters = getattr(function, "params", ())
+    result = []
+    for parameter in parameters or ():
+        if isinstance(parameter, Mapping):
+            name = parameter.get("name")
+        elif isinstance(parameter, (list, tuple)) and len(parameter) == 2:
+            name = parameter[1]
+        else:
+            continue
+        if isinstance(name, str) and name and name not in result:
+            result.append(name)
+    return result
 
 
 def _used_stub_keys(function):
