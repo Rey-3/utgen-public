@@ -63,6 +63,7 @@ class RowAssembler:
         from utgen.coverage import CoverageGenerator
 
         concrete = CoverageGenerator()
+        deferred_cases = []
         for decision_index, decision in enumerate(function.decisions):
             # A nested decision is only reachable when all of its enclosing guards have
             # the required outcomes. _guards() expands those guards into compatible atom recipes.
@@ -73,6 +74,10 @@ class RowAssembler:
             # MC/DC works with boolean atom outcomes first. The solver below translates
             # those logical True/False assignments into actual C input values.
             assignments = self.mcdc.rows(decision.expr)
+            if decision.kind == "case":
+                deferred_cases.append(decision.id)
+                assignments = [assignment for assignment in assignments
+                               if eval_expr(decision.expr, assignment)]
             for assignment in assignments:
                 for guards in guard_assignments:
                     values = self.solver.solve(self._constraints(guards, assignment))
@@ -114,10 +119,19 @@ class RowAssembler:
                         )
                     break
 
-            # Symbolic MC/DC recipes do not always guarantee that the concrete execution
-            # reaches every expected outcome. Execute/search around the current rows and
-            # add only concrete rows that close remaining coverage gaps for this decision.
+            # Sibling switch arms naturally provide each other's false outcomes. Defer
+            # case repair until all arms exist so those rows stay grouped by source arm.
+            if decision.kind == "case":
+                continue
             for coverage in concrete.rows(function, rows, (decision.id,)):
+                key = tuple(coverage.values.items())
+                if key not in by_values:
+                    by_values[key] = coverage
+                    row_indices[key] = len(rows)
+                    rows.append(coverage)
+
+        if deferred_cases:
+            for coverage in concrete.rows(function, rows, deferred_cases):
                 key = tuple(coverage.values.items())
                 if key not in by_values:
                     by_values[key] = coverage
