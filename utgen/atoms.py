@@ -435,7 +435,10 @@ class AtomBuilder:
                 return _Value(node=_ConditionalValue(
                     self._node(children[0]), self._value(children[1]), self._value(children[2])))
         path = _raw_path(cursor)
-        variable = self._find_variable(path, cursor.kind == CursorKind.DECL_REF_EXPR)
+        source = _unwrap(original)
+        address = (cursor.kind == CursorKind.DECL_REF_EXPR and
+                   not (source.kind == CursorKind.UNARY_OPERATOR and _operator(source) == "*"))
+        variable = self._find_variable(path, address)
         if variable is not None:
             return _Value(variable=variable)
         if cursor.kind == CursorKind.BINARY_OPERATOR:
