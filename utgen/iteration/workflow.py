@@ -163,9 +163,16 @@ def _run_generation_module(
     generation_project, generation_module = _generation_config(
         config, base, project, module
     )
-    analysis, generated = generator(
+    generation = generator(
         generation_project, generation_module, include_dirs
     )
+    if len(generation) == 2:
+        analysis, generated = generation
+        raw_database = None
+    elif len(generation) == 3:
+        analysis, generated, raw_database = generation
+    else:
+        raise ValueError("generator must return (analysis, generated[, raw_database])")
     candidate = build_candidate(analysis, generated, project, name, "pending")
     if current is None:
         state = candidate
@@ -181,7 +188,9 @@ def _run_generation_module(
             "stubs": merged.summary["stubs"],
             "decisions": merged.summary["decisions"],
         }
-    database_metadata = _write_current_database(analysis, paths.database)
+    database_metadata = _write_current_database(
+        analysis, paths.database, raw_database=raw_database
+    )
     state["module_input_hash"] = _module_input_hash(
         config,
         project,
@@ -290,7 +299,10 @@ def _module_input_hash(
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _write_current_database(analysis, path: Path):
+def _write_current_database(analysis, path: Path, raw_database=None):
+    if raw_database is not None:
+        return AnalysisDbWriter().write_atomic(raw_database, Path(path))
+
     from utgen.db import XmlDbWriter
 
     path = Path(path)

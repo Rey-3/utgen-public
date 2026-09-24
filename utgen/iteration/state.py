@@ -127,9 +127,15 @@ def allocate_row_id(state: dict) -> str:
                 highest = max(highest, number)
         if max_row_number < highest:
             _fail("state.max_row_number is below an existing row ID")
-        next_number = max_row_number + 1
-        state["max_row_number"] = next_number
-        return f"{prefix}_{next_number:03d}"
+        return _allocate_row_id(state, prefix)
+
+
+def _allocate_row_id(state: dict, prefix: str | None = None) -> str:
+    """Allocate from an already validated state without rescanning every row."""
+
+    next_number = state["max_row_number"] + 1
+    state["max_row_number"] = next_number
+    return f"{prefix or _row_prefix(state)}_{next_number:03d}"
 
 
 def allocate_decision_key(function_state: dict) -> str:
@@ -151,7 +157,13 @@ def allocate_decision_key(function_state: dict) -> str:
         highest = max(highest, int(match.group("number")))
     if maximum < highest:
         _fail("function.max_decision_number is below an existing Decision key")
-    next_number = maximum + 1
+    return _allocate_decision_key(function_state)
+
+
+def _allocate_decision_key(function_state: dict) -> str:
+    """Allocate from an already validated function without rescanning decisions."""
+
+    next_number = function_state["max_decision_number"] + 1
     function_state["max_decision_number"] = next_number
     return f"D{next_number}"
 
@@ -222,7 +234,7 @@ def _resolve_row(state, function, candidate, candidate_id, old_id, counters, con
         if old_id is not None and context["claimed"].get(old_id) not in (None, candidate_id):
             old_id = None
         if old_id is None:
-            row_id = allocate_row_id(state)
+            row_id = _allocate_row_id(state)
             rows[row_id] = _tool(candidate_row)
             counters["rows_allocated"] += 1
         else:

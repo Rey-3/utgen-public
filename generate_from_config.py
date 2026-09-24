@@ -309,7 +309,8 @@ def generate_module(project, module, include_dirs=(), profile_dir=None):
         finally:
             for pool in tuple(worker_pools):
                 stop_worker(pool)
-    return analysis, generated
+        raw_database = database.read_bytes()
+    return analysis, generated, raw_database
 
 
 def run_generation(config=None, profile_dir=None):

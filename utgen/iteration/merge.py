@@ -7,14 +7,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from .adapters.tessy_workbook import default_stub_body as _default_stub_body
 from .state import (
+    _allocate_decision_key,
+    _allocate_row_id,
     _mark_orphan,
     _merge_row,
     _preferred_tool_rows,
     _recipe_structure,
     _resolve_row,
     _tool,
-    allocate_decision_key,
-    allocate_row_id,
     ordered_active_rows,
 )
 from .validation import validate_module
@@ -79,7 +79,7 @@ def merge_user(state: dict, function_name: str, workbook_snapshot) -> UserMergeR
             if legacy and index < len(active_ids):
                 row_id = active_ids[index]
             else:
-                row_id = allocate_row_id(result)
+                row_id = _allocate_row_id(result)
                 allocated.append(row_id)
                 added += 1
                 new_row = True
@@ -276,12 +276,12 @@ def _new_function(state: dict, candidate: dict, counters: dict) -> dict:
     function.update(max_decision_number=0, decisions={}, generated_rows=[], rows={})
     row_ids = {}
     for candidate_id, row in candidate["rows"].items():
-        row_id = allocate_row_id(state)
+        row_id = _allocate_row_id(state)
         function["rows"][row_id] = _tool(row)
         row_ids[candidate_id] = row_id
         counters["rows_allocated"] += 1
     for decision in candidate["decisions"].values():
-        key = allocate_decision_key(function)
+        key = _allocate_decision_key(function)
         merged = deepcopy(decision)
         merged["recipes"] = []
         for recipe in decision["recipes"]:
@@ -317,7 +317,7 @@ def _merge_function(state: dict, current: dict, candidate: dict, counters: dict)
     for item in matches:
         incoming = candidate["decisions"][item.candidate_key]
         if item.current_key is None:
-            key = allocate_decision_key(function)
+            key = _allocate_decision_key(function)
             decisions[key] = _merge_decision_rows(state, function, candidate, incoming, None, counters, context)
             counters["decisions_added"] += 1
         else:
@@ -469,10 +469,10 @@ def build_candidate(analysis, generated_functions, project, module, input_hash) 
         state["functions"][name] = function_state
         row_ids = []
         for index in range(len(generated.rows)):
-            row_ids.append(allocate_row_id(state))
+            row_ids.append(_allocate_row_id(state))
             function_state["rows"][row_ids[-1]] = _assembly_row(generated, index, function)
         for decision_index, decision in enumerate(getattr(function, "decisions", ())):
-            decision_key = allocate_decision_key(function_state)
+            decision_key = _allocate_decision_key(function_state)
             atoms = tuple(atoms_of(decision.expr))
             item = {
                 "status": "active",
