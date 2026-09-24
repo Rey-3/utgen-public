@@ -149,6 +149,8 @@ class CoverageGenerator:
                 continue
             targets.add((decision.id, False))
             targets.add((decision.id, True))
+            if decision.kind == "case":
+                continue
             for index, atom in enumerate(atoms_of(decision.expr)):
                 targets.add((decision.id, atom_text(atom), False))
                 targets.add((decision.id, atom_text(atom), True))

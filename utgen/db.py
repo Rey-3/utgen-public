@@ -438,7 +438,18 @@ def _link_local_call_stubs(analysis: ModuleAnalysis) -> None:
             helper = analysis.function(name)
             if helper is None or name == function.name:
                 continue
+            parameter_names = {parameter_name for _, parameter_name in helper.params}
             for leaf in helper.leaves:
+                is_parameter = (
+                    leaf.address_of in parameter_names
+                    or any(
+                        leaf.name == parameter
+                        or leaf.name.startswith((parameter + ".", parameter + "["))
+                        for parameter in parameter_names
+                    )
+                )
+                if is_parameter:
+                    continue
                 if leaf.direction in (Direction.IN, Direction.INOUT) and not any(item.name == leaf.name for item in function.leaves):
                     function.leaves.append(leaf)
             for stub in helper.stubs:
