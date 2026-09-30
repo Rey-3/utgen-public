@@ -47,6 +47,7 @@ class Interpreter:
         self.execute_static_helpers = execute_static_helpers
         self._variable_names, self._normalized_names, self._address_names = set(), {}, {}
         self._path_cache = {}
+        self._local_roots = {}
 
         # Pre-compute alternate lookup forms. Concrete array indices can later be
         # matched against inventory entries such as data[0] / data[1] through a
@@ -388,7 +389,11 @@ class Interpreter:
             if value is _UNKNOWN:
                 return _UNKNOWN
             actuals.append(("scalar", value))
-        roots = {name for _, name in helper.params} | self._decl_roots(helper.body)
+        cached = self._local_roots.get(helper.name)
+        if cached is None or cached[0] is not helper.body:
+            cached = helper.body, self._decl_roots(helper.body)
+            self._local_roots[helper.name] = cached
+        roots = {name for _, name in helper.params} | cached[1]
         # Only names owned by the helper frame are snapshotted. Global/output state
         # intentionally remains live so pointer writes and global writes can escape
         # the helper exactly as they would in C.
@@ -442,16 +447,16 @@ class Interpreter:
 
     def _save_frame(self, roots):
         """Snapshot environment entries that belong to a local helper frame."""
-        owned = lambda name: any(name == root or name.startswith((root + ".", root + "[")) for root in roots)
-        return (roots, {name: value for name, value in self.env.items() if owned(name)},
+        prefixes = tuple(prefix for root in roots for prefix in (root + ".", root + "["))
+        owned = lambda name: name in roots or name.startswith(prefixes)
+        return (owned, {name: value for name, value in self.env.items() if owned(name)},
                 {name: value for name, value in self.aliases.items() if owned(name)},
                 {name for name in self.pointers if owned(name)},
                 {name for name in self.unknown if owned(name)})
 
     def _restore_frame(self, snapshot):
         """Remove helper-local mutations and restore the caller's local frame."""
-        roots, env, aliases, pointers, unknown = snapshot
-        owned = lambda name: any(name == root or name.startswith((root + ".", root + "[")) for root in roots)
+        owned, env, aliases, pointers, unknown = snapshot
         for mapping in (self.env, self.aliases):
             for name in tuple(mapping):
                 if owned(name):

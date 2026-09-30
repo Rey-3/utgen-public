@@ -439,8 +439,16 @@ def _link_local_call_stubs(analysis: ModuleAnalysis) -> None:
             if helper is None or name == function.name:
                 continue
             for leaf in helper.leaves:
-                if leaf.direction in (Direction.IN, Direction.INOUT) and not any(item.name == leaf.name for item in function.leaves):
-                    function.leaves.append(leaf)
+                if any(leaf.name == name or leaf.name == "@" + name
+                       or leaf.name.startswith((name + ".", name + "["))
+                       for _, name in helper.params):
+                    continue
+                if leaf.direction in (Direction.IN, Direction.INOUT):
+                    existing = next((item for item in function.leaves if item.name == leaf.name), None)
+                    if existing is None:
+                        function.leaves.append(leaf)
+                    elif existing.direction == Direction.OUT:
+                        function.leaves[function.leaves.index(existing)] = replace(existing, direction=Direction.INOUT)
             for stub in helper.stubs:
                 if not any(item.name == stub.name for item in function.stubs):
                     function.stubs.append(stub)

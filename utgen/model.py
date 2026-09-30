@@ -1256,11 +1256,11 @@ class DataflowResult:
     writes: list
 
     def point(self, decision_id: int) -> DataflowPoint:
-        """ Returns the DataflowPoint associated with the given decision ID"""
-        for point in self.points:
-            if point.decision_id == decision_id:
-                return point
-        raise KeyError(decision_id)
+        """Return every path that reaches the decision, including repeated loop visits."""
+        points = [point for point in self.points if point.decision_id == decision_id]
+        if not points:
+            raise KeyError(decision_id)
+        return DataflowPoint(decision_id, tuple(state for point in points for state in point.states), points[0].location)
 
 
 @dataclass(frozen=True)

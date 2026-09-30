@@ -3,12 +3,14 @@ from __future__ import annotations
 
 from collections import deque
 import re
+import time
+import warnings
 from dataclasses import fields, is_dataclass
 
 from utgen.interp import Interpreter
 from utgen.model import (And, Atom, CallE, Const, Direction, FunctionIR, Index,
                          Inventory, MemberE, Not, Or, Ref, TestRow, Unary,
-                         atom_text, atoms_of)
+                         Ternary, Unknown, atom_text, atoms_of)
 
 
 class CoverageGenerator:
@@ -19,7 +21,8 @@ class CoverageGenerator:
     and MC/DC pairs that symbolic generation did not reach.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, max_seconds: float = 15.0) -> None:
+        self.max_seconds = max_seconds
         self._function = None
         self._inputs = ()
         self._results = {}
@@ -60,6 +63,10 @@ class CoverageGenerator:
 
         if targets <= state.covered:
             return []
+
+        # ponytail: bound heuristic time per decision; raise after measuring missed coverage.
+        deadline = time.monotonic() + self.max_seconds
+        initial_executions = len(self._results)
 
         # Prefer symbolic rows created for this target. Rows that reached the target
         # incidentally are also good seeds. Fall back to one neutral complete row.
@@ -115,14 +122,24 @@ class CoverageGenerator:
                                 continue
                             seen.add(search_key)
 
-                            result = self._run(interpreter, function, candidate)
+                            key = self._key(candidate)
+                            if time.monotonic() >= deadline:
+                                warnings.warn(
+                                    f"{function.name}: coverage search for decisions {sorted(selected)} "
+                                    f"stopped at the {self.max_seconds:g}s budget after "
+                                    f"{len(self._results) - initial_executions} new executions; "
+                                    f"{len(targets - state.covered)} targets remain uncovered.",
+                                    RuntimeWarning,
+                                    stacklevel=2,
+                                )
+                                return generated
+                            result = self._run(interpreter, function, candidate, key)
                             search_results.append(result)
                             gained = state.gained(result) & targets
                             novel = state.novel(result, expanded)
                             useful = bool(gained or novel)
                             if useful:
                                 state.add(result)
-                                key = self._key(candidate)
                                 if key not in emitted:
                                     emitted.add(key)
                                     generated.append(TestRow(
@@ -314,15 +331,14 @@ class CoverageGenerator:
                     names.add(atom.var.name)
                 if atom.rhs_var is not None:
                     names.add(atom.rhs_var.name)
-        raw_paths = set()
+        raw_paths, conditions = set(), {}
 
         def visit(value):
             if is_dataclass(value):
                 decision_id = getattr(value, "decision_id", None)
                 if decision_id in selected:
-                    CoverageGenerator._expression_paths(
-                        getattr(value, "condition", None), raw_paths
-                    )
+                    condition = value.c if isinstance(value, Ternary) else getattr(value, "condition", None)
+                    conditions[decision_id] = condition
                 for item in fields(value):
                     visit(getattr(value, item.name))
             elif isinstance(value, (tuple, list)):
@@ -331,15 +347,21 @@ class CoverageGenerator:
 
         visit(function.body)
         dataflow_paths = set()
-        if function.dataflow is not None:
-            for decision_id in selected:
-                try:
-                    point = function.dataflow.point(decision_id)
-                except KeyError:
-                    continue
+        for decision_id in selected:
+            try:
+                if function.dataflow is None:
+                    raise KeyError(decision_id)
+                point = function.dataflow.point(decision_id)
+            except KeyError:
+                CoverageGenerator._expression_paths(conditions.get(decision_id), raw_paths)
+            else:
                 for state in point.states:
+                    bindings = getattr(state, "values", {})
                     CoverageGenerator._dataflow_paths(
-                        function, state.condition, dataflow_paths
+                        function, conditions.get(decision_id), raw_paths, bindings,
+                    )
+                    CoverageGenerator._dataflow_paths(
+                        function, state.condition, dataflow_paths, bindings,
                     )
 
         # Raw indirect paths can require neutral multi-input combinations. Dataflow
@@ -382,7 +404,7 @@ class CoverageGenerator:
             for state in point.states:
                 for constraint in state.path:
                     CoverageGenerator._dataflow_paths(
-                        function, constraint.expr, paths
+                        function, constraint.expr, paths,
                     )
         normalized = {
             re.sub(r"\[\d+\]", "[*]", path) for path in paths
@@ -399,14 +421,22 @@ class CoverageGenerator:
         return out
 
     @staticmethod
-    def _dataflow_paths(function, value, paths) -> None:
+    def _dataflow_paths(function, value, paths, bindings=None, seen=()) -> None:
         """Collect concrete caller inputs from a substituted dataflow expression."""
         if isinstance(value, CallE):
             helper = function.local_functions.get(value.name)
-            if helper is not None:
+            if helper is not None and ("call", helper.name) not in seen:
+                helper_seen = seen + (("call", helper.name),)
+                used = set()
+                # ponytail: conservative body scan until dataflow preserves input snapshots.
+                CoverageGenerator._dataflow_paths(helper, helper.body, used, seen=helper_seen)
+                used = {re.sub(r"\[\d+\]", "[*]", path) for path in used}
                 mapped = False
                 for leaf in helper.leaves:
                     if leaf.direction not in (Direction.IN, Direction.INOUT):
+                        continue
+                    name = re.sub(r"\[\d+\]", "[*]", leaf.name)
+                    if used and not any(name == path or name.startswith((path + ".", path + "[")) for path in used):
                         continue
                     matched_param = False
                     for index, (_, name) in enumerate(helper.params):
@@ -420,27 +450,49 @@ class CoverageGenerator:
                         if index < len(value.args):
                             base = CoverageGenerator._expression_path(value.args[index])
                             if base:
-                                paths.add(base + leaf.name[len(name):])
+                                CoverageGenerator._dataflow_paths(
+                                    function, Ref(base + leaf.name[len(name):]), paths, bindings, helper_seen,
+                                )
+                                mapped = True
+                            elif leaf.name == name:
+                                CoverageGenerator._dataflow_paths(
+                                    function, value.args[index], paths, bindings, helper_seen,
+                                )
                                 mapped = True
                         break
                     if not matched_param:
-                        paths.add(leaf.name)
+                        CoverageGenerator._dataflow_paths(function, Ref(leaf.name), paths, bindings, helper_seen)
                         mapped = True
                 if mapped:
                     return
 
         path = CoverageGenerator._expression_path(value)
         if path:
+            # Resolve locals and aggregate copies from the existing dataflow bindings.
+            # Unknown values still carry dependency names; they are not treated as known values.
+            key, suffix = path, ""
+            while bindings and key:
+                if key in bindings and key not in seen:
+                    bound = bindings[key]
+                    base = CoverageGenerator._expression_path(bound)
+                    if base != key:
+                        expression = Ref(base + suffix) if base and suffix else bound
+                        CoverageGenerator._dataflow_paths(function, expression, paths, bindings, seen + (key,))
+                        return
+                split = max(key.rfind("."), key.rfind("["))
+                if split < 0:
+                    break
+                key, suffix = key[:split], key[split:] + suffix
             paths.add(path)
             return
         if is_dataclass(value):
             for item in fields(value):
                 CoverageGenerator._dataflow_paths(
-                    function, getattr(value, item.name), paths
+                    function, getattr(value, item.name), paths, bindings, seen,
                 )
         elif isinstance(value, (tuple, list)):
             for item in value:
-                CoverageGenerator._dataflow_paths(function, item, paths)
+                CoverageGenerator._dataflow_paths(function, item, paths, bindings, seen)
 
     @staticmethod
     def _expression_paths(value, paths) -> None:
@@ -466,7 +518,9 @@ class CoverageGenerator:
         Address/dereference wrappers keep the same underlying storage path.
         """
         if isinstance(value, Ref):
-            return value.path
+            return f"{value.path}@{value.scope}" if value.scope else value.path
+        if isinstance(value, Unknown):
+            return value.text
         if isinstance(value, CallE):
             return f"tessy_{value.name}"
         if isinstance(value, MemberE):

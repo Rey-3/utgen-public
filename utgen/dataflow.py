@@ -124,7 +124,7 @@ class DataflowEngine:
         for state in states:
             expression = statement.condition if statement.condition is not None else self._decisions.get(statement.decision_id)
             condition = self._condition(expression, state)
-            point_states.append(replace(state, condition=condition))
+            point_states.append(replace(state, condition=condition if condition is not None else expression))
             true_state = self._branch(state, statement.decision_id, condition, True)
             false_state = self._branch(state, statement.decision_id, condition, False)
             if true_state is not None:
@@ -525,6 +525,10 @@ class DataflowEngine:
                 # Select one arm when the condition is concrete; otherwise retain
                 # both symbolic alternatives instead of guessing an outcome.
                 condition = self._condition(current.c, state, current_seen)
+                if current.decision_id:
+                    self._points.append(DataflowPoint(current.decision_id, (
+                        replace(state, condition=condition if condition is not None else current.c),
+                    )))
                 outcome = self._const_bool(condition)
                 if outcome is not None:
                     stack.append(("eval", current.t if outcome else current.f, current_seen))

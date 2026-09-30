@@ -260,8 +260,7 @@ def generate_module(project, module, include_dirs=(), profile_dir=None):
                             )
                             next_function = next(remaining, None)
                             if next_function is None:
-                                stop_worker(pool)
-                                worker_pools.remove(pool)
+                                pool.close()
                                 del active[pool]
                             else:
                                 active[pool] = _submit_function(pool, next_function)
