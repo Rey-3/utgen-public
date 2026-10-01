@@ -418,11 +418,14 @@ class CoverageGenerator:
 
     @staticmethod
     def _search_key(seed_index, values, search_inputs) -> tuple:
-        """Deduplicate focused states without merging different symbolic seeds."""
-        return seed_index, tuple(
-            (leaf.name, 0 if values.get(leaf.name) == "NULL" else values.get(leaf.name))
-            for leaf in search_inputs
-        )
+        """Key effective inputs, including concrete array overrides, by seed."""
+        key = []
+        for leaf in search_inputs:
+            default = values.get(leaf.name, 1 if leaf.address_of else 0)
+            for name in expand_array_names(leaf.name) or (leaf.name,):
+                value = values.get(name, default)
+                key.append((name, 0 if value == "NULL" else value))
+        return seed_index, tuple(key)
 
     @staticmethod
     def _guard_requirements(function, decision_ids) -> list[tuple[int, bool]]:
@@ -758,11 +761,7 @@ class CoverageGenerator:
         # Normalize only actual function inputs into a stable tuple. This makes cache
         # and duplicate detection insensitive to dictionary order or unrelated values.
         # NULL is normalized to 0 because the interpreter uses the same representation.
-        key = []
-        for leaf in self._inputs:
-            value = values.get(leaf.name, 1 if leaf.address_of else 0)
-            key.append((leaf.name, 0 if value == "NULL" else value))
-        return tuple(key)
+        return self._search_key(None, values, self._inputs)[1]
 
     @staticmethod
     def _description(gained: set[tuple]) -> str:
