@@ -40,7 +40,6 @@ def run_generation(config, generator) -> list[ModuleSummary]:
 
     config, base = _config_and_base(config)
     state_root = _state_root(config, base)
-    template = _template_path(config, base)
     include_dirs = _include_dirs(config, base)
     summaries = []
     for project, module in _configured_modules(config):
@@ -51,7 +50,6 @@ def run_generation(config, generator) -> list[ModuleSummary]:
                     config,
                     base,
                     state_root,
-                    template,
                     include_dirs,
                     project,
                     module,
@@ -68,14 +66,13 @@ def run_excel_export(config) -> list[ModuleSummary]:
 
     config, base = _config_and_base(config)
     state_root = _state_root(config, base)
-    template = _template_path(config, base)
     summaries = []
     for project, module in _configured_modules(config):
         name = _module_name(module)
         try:
             paths = module_paths(state_root, project, name)
             state = load_module(paths.state)
-            written = _write_active_workbooks(state, module, base, template)
+            written = _write_active_workbooks(state, module, base)
             summaries.append(
                 _summary(
                     project,
@@ -98,7 +95,6 @@ def _run_generation_module(
     config,
     base: Path,
     state_root: Path,
-    template,
     include_dirs,
     project: str,
     module: Mapping,
@@ -147,7 +143,7 @@ def _run_generation_module(
                         "stubs": _state_stub_summary(current),
                     },
                 )
-            written = _write_active_workbooks(current, module, base, template)
+            written = _write_active_workbooks(current, module, base)
             return _summary(
                 project,
                 name,
@@ -200,7 +196,7 @@ def _run_generation_module(
         database_identity=database_metadata.analysis_id,
     )
     write_module(paths.state, state)
-    written = _write_active_workbooks(state, module, base, template)
+    written = _write_active_workbooks(state, module, base)
     summary.update(json="updated", excel_written=written)
     return _summary(project, name, "updated", summary)
 
@@ -350,11 +346,11 @@ def _workbooks_valid(state: Mapping, module: Mapping, base: Path) -> bool:
     return True
 
 
-def _write_active_workbooks(state: Mapping, module: Mapping, base: Path, template) -> int:
+def _write_active_workbooks(state: Mapping, module: Mapping, base: Path) -> int:
     adapter = TessyWorkbookAdapter()
     paths = _workbook_paths(state, module, base)
     for function_name, path in paths.items():
-        adapter.write_function(path, state, function_name, template)
+        adapter.write_function(path, state, function_name)
     return len(paths)
 
 
@@ -416,7 +412,6 @@ def run_user_merge(config) -> list[ModuleSummary]:
 
     config, base = _config_and_base(config)
     state_root = _state_root(config, base)
-    template = _template_path(config, base)
     summaries = []
     for project, module in _configured_modules(config):
         try:
@@ -489,7 +484,7 @@ def run_user_merge(config) -> list[ModuleSummary]:
                 if paths_to_write is None:
                     continue
                 for path in paths_to_write:
-                    adapter.write_function(path, candidate, function_name, template)
+                    adapter.write_function(path, candidate, function_name)
                     written_count += 1
             status = "updated" if changed_paths else "skipped"
             summaries.append(
@@ -674,14 +669,6 @@ def _include_dirs(config, base):
         path = Path(os.fspath(item))
         result.append(str(path if path.is_absolute() else base / path))
     return tuple(result)
-
-
-def _template_path(config, base):
-    value = (config.get("Tessy") or {}).get("template_path")
-    if not value:
-        return None
-    path = Path(os.fspath(value))
-    return path if path.is_absolute() else base / path
 
 
 __all__ = [
