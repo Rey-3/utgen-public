@@ -248,13 +248,11 @@ class XmlDbWriter:
             self._leaf(element, leaf)
         for decision in function.decisions:
             self._decision(element, decision)
-        # The executable IR and dataflow snapshot are stored separately: Body keeps
-        # program structure, while Dataflow keeps path-dependent symbolic states.
+        # The reader rebuilds dataflow after linking helpers. Saving its shared
+        # snapshots would expand expression graphs into large, redundant XML trees.
         body = ET.SubElement(element, "Body")
         for statement in function.body:
             self._statement(body, statement)
-        if function.dataflow is not None:
-            self._dataflow(element, function.dataflow)
 
     def _stub(self, parent, stub):
         attrs = {"name": stub.name, "return": stub.ret_struct or ""}
@@ -372,26 +370,6 @@ class XmlDbWriter:
         element = ET.SubElement(parent, tag)
         for statement in statements:
             self._statement(element, statement)
-
-    def _dataflow(self, parent, result):
-        element = ET.SubElement(parent, "Dataflow")
-        for point in result.points:
-            item = ET.SubElement(element, "Point", decision=_optional(point.decision_id),
-                                 location=point.location)
-            for state in point.states:
-                _write_state(item, state)
-        returns = ET.SubElement(element, "Returns")
-        for state, value in result.returns:
-            item = ET.SubElement(returns, "ReturnState")
-            _write_state(item, state)
-            if value is not None:
-                output = ET.SubElement(item, "Value")
-                _write_expr(output, value)
-        writes = ET.SubElement(element, "Writes")
-        for name, value in result.writes:
-            item = ET.SubElement(writes, "Write", name=str(name))
-            _write_node(item, value)
-
 
 class XmlDbReader:
 
@@ -615,10 +593,6 @@ def _read_values(value):
         except ValueError:
             result.append(item)
     return tuple(result)
-
-
-def _optional(value):
-    return "" if value is None else str(value)
 
 
 def _line(location):
@@ -1205,34 +1179,6 @@ def _read_variable(name, variables):
 def _read_child_node(parent, tag, variables):
     item = parent.find(tag)
     return _read_node(item[0], variables) if item is not None and len(item) else None
-
-
-def _write_state(parent, state):
-
-    attrs = {"reachable": str(state.reachable).lower(), "unknown": _values(state.unknown)}
-    element = ET.SubElement(parent, "State", **attrs)
-    if state.condition is not None:
-        condition = ET.SubElement(element, "Condition")
-        _write_node(condition, state.condition)
-    path = ET.SubElement(element, "Path")
-    for constraint in state.path:
-        item = ET.SubElement(path, "Constraint", decision=_optional(constraint.decision_id),
-                             outcome=str(constraint.outcome).lower())
-        _write_node(item, constraint.expr)
-    values = ET.SubElement(element, "Values")
-    for name, value in state.values.items():
-        item = ET.SubElement(values, "Value", name=name)
-        _write_node(item, value)
-    aliases = ET.SubElement(element, "Aliases")
-    # targets=None means alias analysis lost the exact destination. Keep that distinct
-    # from an empty target tuple by writing an explicit unknown flag.
-    for name, targets in state.aliases.items():
-        attrs = {"name": name}
-        if targets is None:
-            attrs["unknown"] = "true"
-        else:
-            attrs["targets"] = _values(targets)
-        ET.SubElement(aliases, "Alias", **attrs)
 
 
 def _read_dataflow(element, variables):
