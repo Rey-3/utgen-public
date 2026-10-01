@@ -64,6 +64,7 @@ class RowAssembler:
 
         concrete = CoverageGenerator()
         deferred_cases = []
+        repair_lengths = {}
         for decision_index, decision in enumerate(function.decisions):
             # A nested decision is only reachable when all of its enclosing guards have
             # the required outcomes. _guards() expands those guards into compatible atom recipes.
@@ -129,9 +130,21 @@ class RowAssembler:
                     by_values[key] = coverage
                     row_indices[key] = len(rows)
                     rows.append(coverage)
+            repair_lengths[decision.id] = len(rows)
 
         if deferred_cases:
             for coverage in concrete.rows(function, rows, deferred_cases):
+                key = tuple(coverage.values.items())
+                if key not in by_values:
+                    by_values[key] = coverage
+                    row_indices[key] = len(rows)
+                    rows.append(coverage)
+
+        # Later decisions can supply seeds that an earlier repair did not have.
+        for decision_id, repaired_length in repair_lengths.items():
+            if len(rows) <= repaired_length:
+                continue
+            for coverage in concrete.rows(function, rows, (decision_id,)):
                 key = tuple(coverage.values.items())
                 if key not in by_values:
                     by_values[key] = coverage

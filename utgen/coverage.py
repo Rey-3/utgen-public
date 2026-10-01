@@ -10,7 +10,7 @@ from dataclasses import fields, is_dataclass
 from utgen.interp import Interpreter
 from utgen.model import (And, Atom, Binop, CallE, Cast, Const, Direction, FunctionIR, Index,
                          Inventory, MemberE, Not, Or, Ref, TestRow, Unary,
-                         Ternary, Unknown, atom_text, atoms_of)
+                         Ternary, Unknown, atom_text, atoms_of, expand_array_names)
 
 
 class CoverageGenerator:
@@ -65,20 +65,20 @@ class CoverageGenerator:
         if targets <= state.covered:
             return []
 
-        # ponytail: bound heuristic time per decision; raise after measuring missed coverage.
-        deadline = time.monotonic() + self.max_seconds
         initial_executions = len(self._results)
 
         # Prefer symbolic rows created for this target. Rows that reached the target
         # incidentally are also good seeds. Fall back to one neutral complete row.
         guards = self._guard_requirements(function, selected)
         seed_decisions = selected | {decision_id for decision_id, _ in guards}
-        seeds, seed_keys = [], set()
+        seeds, seed_keys, preferred_seeds = [], set(), set()
         for row, values, result in evidence:
             guard_seed = bool(guards) and row.intent.get(guards[-1][0]) == (not guards[-1][1])
             if not (selected.intersection(row.intent) or selected.intersection(result.observed) or guard_seed):
                 continue
             key = self._key(values)
+            if selected.intersection(row.intent) or guard_seed:
+                preferred_seeds.add(key)
             if key in seed_keys:
                 continue
             seed_keys.add(key)
@@ -87,40 +87,56 @@ class CoverageGenerator:
             seeds.append(self._defaults(inputs))
 
         helpers = set()
-        relevant, combination_inputs = self._decision_inputs(function, inputs, selected, helpers)
-        # Include earlier sanitizing branches before indirect combinations consume the budget.
-        relevant.update(self._path_inputs(function, inputs, selected))
+        controls = {}
+        operands = set()
+        relevant, combination_inputs = self._decision_inputs(function, inputs, selected, helpers, controls, operands)
         expanded = set(selected)
         direct = set(combination_inputs)
         for decision in function.decisions:
             if decision.id in seed_decisions:
                 for atom in atoms_of(decision.expr):
                     direct.update(variable.name for variable in (atom.var, atom.rhs_var) if variable is not None)
+                    if decision.id in selected:
+                        operands.update(variable.name for variable in (atom.var, atom.rhs_var) if variable is not None)
+        operand_outputs = {name for leaf in inputs if leaf.direction == Direction.INOUT and leaf.name in operands
+                           for name in expand_array_names(leaf.name) or (leaf.name,)}
+        prefer_controls = any(atom.var is not None for decision in function.decisions if decision.id in selected
+                              for atom in atoms_of(decision.expr))
         generated = []
         emitted = {self._key(row.values) for row in existing}
 
+        # ponytail: bound candidate search per decision; dependency setup is not search time.
+        deadline = time.monotonic() + self.max_seconds
         while True:
             search_inputs = [leaf for leaf in inputs if leaf.name in relevant]
-            search_inputs.sort(key=lambda leaf: (leaf.name not in direct, not leaf.name.startswith("tessy_")))
+            search_inputs.sort(key=lambda leaf: (leaf.name not in operands,
+                                                 prefer_controls and leaf.name not in controls,
+                                                 controls.get(leaf.name, float("inf")) if prefer_controls else 0,
+                                                 leaf.name not in direct, not leaf.name.startswith("tessy_")))
             search_results = []
 
             if search_inputs:
                 # Freeze each input's representative domain to its seed.
                 # This prevents variable-to-variable probes from walking across the
                 # integer range as other inputs are mutated.
-                queue, focused_seeds = deque(), set()
-                for index, values in enumerate(seeds):
+                queue, deferred, focused_seeds = deque(), deque(), set()
+                for index, values in sorted(enumerate(seeds), key=lambda item: self._key(item[1]) not in preferred_seeds):
                     key = self._search_key(None, values, search_inputs)
                     if key not in focused_seeds:
                         focused_seeds.add(key)
-                        queue.append((index, values.copy(), 0))
+                        frontier = queue if self._key(values) in preferred_seeds or search_inputs[0].name in operands else deferred
+                        frontier.append((index, values.copy(), 0))
                 seen = {
                     self._search_key(index, values, search_inputs)
                     for index, values in enumerate(seeds)
                 }
                 domains = {}
+                initial_pass = True
 
-                while queue:
+                while queue or deferred:
+                    if not queue:
+                        queue, deferred = deferred, queue
+                        initial_pass = False
                     seed_index, base, leaf_index = queue.popleft()
                     if seed_index not in helper_patterns:
                         helper_patterns[seed_index] = self._helper_patterns(
@@ -129,7 +145,10 @@ class CoverageGenerator:
                     for leaf in search_inputs[leaf_index:]:
                         # Visit one input per seed before deeper combinations take over.
                         if leaf_index + 1 < len(search_inputs):
-                            queue.append((seed_index, base, leaf_index + 1))
+                            # Try direct operands in every seed before its indirect frontier.
+                            frontier = queue if (not initial_pass or self._key(seeds[seed_index]) in preferred_seeds
+                                                 or search_inputs[leaf_index + 1].name in operands) else deferred
+                            frontier.append((seed_index, base, leaf_index + 1))
                         domain_key = seed_index, leaf.name
                         if domain_key not in domains:
                             domains[domain_key] = self._values(
@@ -159,20 +178,28 @@ class CoverageGenerator:
                             search_results.append(result)
                             gained = state.gained(result) & targets
                             novel = state.novel(result, expanded)
-                            base_result = self._run(interpreter, function, base) if helpers or guards else None
-                            guard_progress = {
+                            base_result = self._run(interpreter, function, base) if helpers or guards or operand_outputs else None
+                            control_progress = {
                                 ("guard", decision_id, required)
                                 for decision_id, required in guards
                                 if required in result.observed.get(decision_id, set())
                                 and required not in base_result.observed.get(decision_id, set())
                             } - helper_patterns[seed_index]
+                            # An upstream control can change a counter before its condition flips.
+                            # ponytail: final INOUT values approximate progress until decision snapshots are available.
+                            control_progress |= {
+                                ("operand", name, result.outputs[name])
+                                for name in operand_outputs
+                                if leaf.name not in operands and name in result.outputs and name in base_result.outputs
+                                and result.outputs[name] != base_result.outputs[name]
+                            } - helper_patterns[seed_index]
                             helper_progress = self._helper_patterns(result, helpers) - helper_patterns[seed_index]
                             if helper_progress and selected.intersection(base_result.observed) and not selected.intersection(result.observed):
                                 helper_progress = set()
-                            useful = bool(gained or novel or guard_progress or helper_progress)
+                            useful = bool(gained or novel or control_progress or helper_progress)
                             if useful:
                                 helper_patterns[seed_index].update(helper_progress)
-                                helper_patterns[seed_index].update(guard_progress)
+                                helper_patterns[seed_index].update(control_progress)
                                 state.add(result)
                                 if (gained or novel) and key not in emitted:
                                     emitted.add(key)
@@ -193,12 +220,17 @@ class CoverageGenerator:
                                 if gained or novel:
                                     new_index = len(seeds)
                                     seeds.append(candidate)
-                                next_leaf = 0 if gained or novel else (leaf_index + 1) % len(search_inputs)
-                                queue.appendleft((new_index, candidate, next_leaf))
+                                    preferred_seeds.add(key)
+                                next_leaf = 0 if gained or novel or control_progress else (leaf_index + 1) % len(search_inputs)
+                                # Helper-only progress must not starve the remaining inputs.
+                                if gained or novel or control_progress or not operand_outputs:
+                                    queue.appendleft((new_index, candidate, next_leaf))
+                                else:
+                                    deferred.append((new_index, candidate, next_leaf))
                                 if next_leaf:
-                                    queue.append((new_index, candidate, 0))
+                                    deferred.append((new_index, candidate, 0))
                             elif leaf.name in combination_inputs:
-                                queue.append((seed_index, candidate, 0))
+                                deferred.append((seed_index, candidate, 0))
                         break
 
             observed_results = [result for _, _, result in evidence] + search_results
@@ -220,7 +252,7 @@ class CoverageGenerator:
                 return generated
 
             expanded.add(guard_id)
-            guard_inputs, guard_combinations = self._decision_inputs(function, inputs, (guard_id,), helpers)
+            guard_inputs, guard_combinations = self._decision_inputs(function, inputs, (guard_id,), helpers, controls)
             relevant.update(guard_inputs)
             combination_inputs.update(guard_combinations)
 
@@ -318,9 +350,11 @@ class CoverageGenerator:
             if selected is not None and decision.id not in selected:
                 continue
             for atom in atoms_of(decision.expr):
-                if atom.var is leaf and isinstance(atom.rhs, int):
+                left_matches = atom.var is not None and atom.var.name == leaf.name
+                right_matches = atom.rhs_var is not None and atom.rhs_var.name == leaf.name
+                if left_matches and isinstance(atom.rhs, int):
                     values.update((atom.rhs - 1, atom.rhs, atom.rhs + 1))
-                other = atom.rhs_var if atom.var is leaf else atom.var if atom.rhs_var is leaf else None
+                other = atom.rhs_var if left_matches else atom.var if right_matches else None
                 if other is not None and base is not None and isinstance(base.get(other.name), int):
                     value = base[other.name]
                     values.update((value - 1, value, value + 1))
@@ -409,12 +443,14 @@ class CoverageGenerator:
         return out
 
     @staticmethod
-    def _decision_inputs(function, inputs, decision_ids, helpers=None) -> tuple[set[str], set[str]]:
+    def _decision_inputs(function, inputs, decision_ids, helpers=None, controls=None, operands=None) -> tuple[set[str], set[str]]:
         """Find inputs that can influence the selected decisions.
 
         Direct symbolic variables come from decision atoms. IR expression paths are
         scanned as well so array/member/dereferenced inputs that were not represented
         by Atom.var can still participate in multi-step candidate combinations.
+        Optional output mappings rank controls by branch distance and identify
+        direct operand inputs without changing the dependency set.
         """
         selected = ({decision.id for decision in function.decisions}
                     if decision_ids is None else set(decision_ids))
@@ -427,7 +463,7 @@ class CoverageGenerator:
                     names.add(atom.var.name)
                 if atom.rhs_var is not None:
                     names.add(atom.rhs_var.name)
-        raw_paths, conditions = set(), {}
+        raw_paths, control_paths, conditions = set(), {}, {}
 
         def visit(value):
             if is_dataclass(value):
@@ -442,7 +478,14 @@ class CoverageGenerator:
                     visit(item)
 
         visit(function.body)
+        operand_paths = set()
+        for decision_id in selected:
+            CoverageGenerator._expression_paths(conditions.get(decision_id), operand_paths)
+        operand_normalized = {re.sub(r"\[\d+\]", "[*]", path) for path in operand_paths}
         dataflow_paths, memo = set(), {"helpers": helpers if helpers is not None else set()}
+        return_paths = {"return_inputs": True}
+        # Helper history must not outrank the current path's actual controls.
+        argument_paths = {"arguments_only": True}
         for decision_id in selected:
             try:
                 if function.dataflow is None:
@@ -454,8 +497,26 @@ class CoverageGenerator:
                 for state in point.states:
                     bindings = getattr(state, "values", {})
                     CoverageGenerator._dataflow_paths(
-                        function, conditions.get(decision_id), raw_paths, bindings, memo=memo,
+                        function, conditions.get(decision_id), raw_paths, bindings, memo=return_paths,
                     )
+                    if controls is not None:
+                        paths = set()
+                        CoverageGenerator._dataflow_paths(
+                            function, conditions.get(decision_id), paths, bindings, memo=argument_paths,
+                        )
+                        for path in paths:
+                            control_paths.setdefault(path, float("inf"))
+                        # The closest branch controls an operand's most recent reset/increment.
+                        for distance, constraint in enumerate(reversed(getattr(state, "path", ()))):
+                            CoverageGenerator._dataflow_paths(
+                                function, constraint.expr, dataflow_paths, bindings, resolved=True, memo=memo,
+                            )
+                            paths = set()
+                            CoverageGenerator._dataflow_paths(
+                                function, constraint.expr, paths, bindings, resolved=True, memo=argument_paths,
+                            )
+                            for path in paths:
+                                control_paths[path] = min(distance, control_paths.get(path, float("inf")))
                     CoverageGenerator._dataflow_paths(
                         function, state.condition, dataflow_paths, bindings, resolved=True, memo=memo,
                     )
@@ -470,6 +531,10 @@ class CoverageGenerator:
         normalized = raw_normalized | {
             re.sub(r"\[\d+\]", "[*]", path) for path in dataflow_paths
         }
+        control_normalized = {}
+        for path, distance in control_paths.items():
+            name = re.sub(r"\[\d+\]", "[*]", path)
+            control_normalized[name] = min(distance, control_normalized.get(name, float("inf")))
         combination_inputs = set()
 
         def matches(leaf_name, paths):
@@ -484,37 +549,12 @@ class CoverageGenerator:
                 names.add(leaf.name)
             if leaf.name not in symbolic and matches(leaf_name, raw_normalized):
                 combination_inputs.add(leaf.name)
+            if controls is not None and matches(leaf_name, control_normalized):
+                distance = min(distance for path, distance in control_normalized.items() if matches(leaf_name, (path,)))
+                controls[leaf.name] = min(distance, controls.get(leaf.name, float("inf")))
+            if operands is not None and matches(leaf_name, operand_normalized):
+                operands.add(leaf.name)
         return names, combination_inputs
-
-    @staticmethod
-    def _path_inputs(function, inputs, decision_ids) -> set[str]:
-        """Find inputs in path constraints leading to the selected decisions."""
-        if function.dataflow is None:
-            return set()
-        paths, memo = set(), {}
-        for decision_id in set(decision_ids):
-            try:
-                point = function.dataflow.point(decision_id)
-            except KeyError:
-                continue
-            for state in point.states:
-                for constraint in state.path:
-                    CoverageGenerator._dataflow_paths(
-                        function, constraint.expr, paths, getattr(state, "values", {}), resolved=True, memo=memo,
-                    )
-        normalized = {
-            re.sub(r"\[\d+\]", "[*]", path) for path in paths
-        }
-        out = set()
-        for leaf in inputs:
-            leaf_name = re.sub(r"\[\d+\]", "[*]", leaf.name)
-            if leaf_name in normalized or any(
-                leaf_name.startswith(path + ".")
-                or leaf_name.startswith(path + "[")
-                for path in normalized
-            ):
-                out.add(leaf.name)
-        return out
 
     @staticmethod
     def _dataflow_paths(function, value, paths, bindings=None, seen=(), resolved=False, memo=None) -> None:
@@ -539,8 +579,17 @@ class CoverageGenerator:
                     memo["helpers"].add(helper.name)
                 helper_seen = seen + (("call", helper.name),)
                 used = set()
-                # ponytail: conservative body scan until dataflow preserves input snapshots.
-                CoverageGenerator._dataflow_paths(helper, helper.body, used, seen=helper_seen, memo=memo)
+                returns = getattr(helper.dataflow, "returns", ())
+                has_writes = any(leaf.direction != Direction.IN and leaf.name != f"{helper.name}()"
+                                 for leaf in helper.leaves)
+                if memo.get("return_inputs") and returns and not has_writes:
+                    for state, returned in returns:
+                        CoverageGenerator._dataflow_paths(helper, returned, used, state.values, helper_seen, resolved=True, memo=memo)
+                        for constraint in state.path:
+                            CoverageGenerator._dataflow_paths(helper, constraint.expr, used, state.values, helper_seen, resolved=True, memo=memo)
+                else:
+                    # ponytail: conservatively retain side-effect reads until write snapshots are available.
+                    CoverageGenerator._dataflow_paths(helper, helper.body, used, seen=helper_seen, memo=memo)
                 used = {re.sub(r"\[\d+\]", "[*]", path) for path in used}
                 mapped = False
                 for leaf in helper.leaves:
@@ -574,7 +623,7 @@ class CoverageGenerator:
                                 )
                                 mapped = True
                         break
-                    if not matched_param:
+                    if not matched_param and not memo.get("arguments_only"):
                         # Caller bindings include later calls, not this helper's entry state.
                         paths.add(leaf.name)
                         # ponytail: conservatively retain earlier global-copy sources;
