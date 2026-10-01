@@ -37,6 +37,7 @@ class DataflowEngine:
         self._points, self._returns, self._writes = [], [], []
         self._leaves = set()
         self._decisions = {decision.id: decision.expr for decision in function_ir.decisions}
+        self._local_functions = function_ir.local_functions
         values = {}
         aliases = {}
         # Inputs begin as symbolic references to themselves. Pointer roots also
@@ -69,17 +70,22 @@ class DataflowEngine:
         if isinstance(statement, Decl):
             result = []
             for state in states:
+                state = self._declare_pointer(state, statement)
                 if statement.static_name:
                     state = self._bind_static(state, statement)
                 elif statement.init is None:
                     state = self._poison(state, (self._path(Ref(statement.name, statement.scope)),))
                 else:
                     state = self._assign_lvalue(state, Ref(statement.name, statement.scope), statement.init, "=")
-                result.append(self._declare_pointer(state, statement))
+                result.append(state)
             return _Flow(tuple(result))
         if isinstance(statement, Assign):
             result = []
             for state in states:
+                if statement.decision_id:
+                    self._points.append(DataflowPoint(statement.decision_id, (
+                        replace(state, condition=self._condition(statement.value, state)),
+                    )))
                 result.append(self._assign_lvalue(state, statement.lhs, statement.value, statement.op))
             return _Flow(tuple(result))
         if isinstance(statement, If):
@@ -144,7 +150,11 @@ class DataflowEngine:
         # This keeps one loop implementation while preserving writes from `init`.
         initialized = self._block(states, statement.init)
         loop = While(statement.cond, statement.body + statement.increment, statement.runtime_cond)
-        return self._loop(initialized.active, loop, self._written(statement.init))
+        # One symbolic pass must also represent later indices, whose branches may
+        # be skipped at the initial index. Concrete execution still uses the real loop.
+        iterators = tuple(self._written(statement.increment))
+        active = tuple(self._poison(state, iterators) for state in initialized.active)
+        return self._loop(active, loop, self._written(statement.init))
 
     def _loop(self, states, statement, extra_written=()):
         # The engine models the zero-iteration exit and one pass through the body.
@@ -244,15 +254,14 @@ class DataflowEngine:
 
     def _condition(self, expression, state, seen=()):
         # Convert a decision into the current symbolic state, then constant-fold it.
-        # If any part is Unknown, returning None avoids claiming a false precision.
+        # Keep Unknown operands for dependency tracing; only Const can prune a branch.
         if expression is None:
             return None
         if isinstance(expression, (Atom, And, Not, Or)):
             result = self._node_expr(expression, state, seen)
         else:
             result = self._substitute(expression, state, seen)
-        result = self._fold(result)
-        return None if self._has_unknown(result) else result
+        return self._fold(result)
 
     def _node_expr(self, node, state, seen=()):
         # Decision nodes used by MC/DC are translated back into ordinary symbolic
@@ -292,14 +301,14 @@ class DataflowEngine:
         if not targets:
             return self._poison(state, ())
         value = self._substitute(expression, state)
-        result = state
+        result = self._call_effect(state, expression) if isinstance(expression, CallE) and expression.name in self._local_functions else state
         for path in targets:
             result = self._assign_path(result, path, value, operator)
         # For a direct assignment, also propagate pointer alias information. This
         # is what lets a later dereference follow assignments such as `p = &x`.
         alias_targets = self._pointer_targets(expression, state)
         key = self._path(lhs)
-        if operator == "=" and key:
+        if operator == "=" and key in state.aliases:
             aliases = dict(result.aliases)
             aliases[key] = alias_targets if alias_targets is not None else None
             result = replace(result, aliases=aliases)
@@ -508,9 +517,8 @@ class DataflowEngine:
                 stack.append(("eval", current.base, current_seen))
                 continue
             if isinstance(current, Index):
-                stack.append(("build_index",))
-                stack.append(("eval", current.idx, current_seen))
-                stack.append(("eval", current.base, current_seen))
+                # An array initializer is a value, not a replacement for its storage.
+                values.append(Unknown(path) if path else current)
                 continue
             if isinstance(current, Binop):
                 stack.append(("build_binop", current.op))
@@ -623,31 +631,48 @@ class DataflowEngine:
         value = self._const_int(expression)
         return None if value is None else bool(value)
 
-    def _has_unknown(self, expression):
-        if isinstance(expression, Unknown):
-            return True
-        if isinstance(expression, Unary):
-            return self._has_unknown(expression.x)
-        if isinstance(expression, Binop):
-            return self._has_unknown(expression.l) or self._has_unknown(expression.r)
-        if isinstance(expression, Ternary):
-            return (self._has_unknown(expression.c) or self._has_unknown(expression.t)
-                    or self._has_unknown(expression.f))
-        if isinstance(expression, Cast):
-            return self._has_unknown(expression.x)
-        if isinstance(expression, Phi):
-            return (self._has_unknown(expression.condition) or self._has_unknown(expression.when_true)
-                    or self._has_unknown(expression.when_false))
-        if isinstance(expression, (And, Or)):
-            return any(self._has_unknown(child) for child in expression.children)
-        return False
-
     def _call_effect(self, state, expression):
         # The callee body is not interpreted here, so side effects are conservative.
         # Pointer arguments identify memory that may be modified; TESSY argument
         # pseudo-variables are poisoned as well so later analysis does not reuse
         # stale symbolic values across an external call.
         if isinstance(expression, CallE):
+            helper = self._local_functions.get(expression.name)
+            if helper is not None:
+                values = dict(state.values)
+                written = set()
+                unresolved = False
+                call = self._substitute(expression, state)
+                arguments = list(call.args)
+                for index, (type_name, _) in enumerate(helper.params):
+                    if "*" in type_name and index < len(expression.args):
+                        targets = self._pointer_argument_targets(expression.args[index], state)
+                        if targets and len(targets) == 1:
+                            arguments[index] = Unary("&", Ref(targets[0]))
+                call = CallE(call.name, tuple(arguments))
+                for leaf in helper.leaves:
+                    if leaf.direction not in (Direction.OUT, Direction.INOUT):
+                        continue
+                    if leaf.name == helper.name + "()" or leaf.name.startswith((helper.name + "().", helper.name + "()[")):
+                        continue
+                    parameter = next((
+                        (index, type_name, name) for index, (type_name, name) in enumerate(helper.params)
+                        if leaf.name == name or leaf.name.startswith((name + ".", name + "["))
+                    ), None)
+                    if parameter is not None:
+                        index, type_name, name = parameter
+                        if "*" in type_name and index < len(expression.args):
+                            targets = self._pointer_argument_targets(expression.args[index], state)
+                            unresolved |= targets is None
+                            for target in targets or ():
+                                written.add(target + leaf.name[len(name):])
+                        continue
+                    written.add(leaf.name)
+                for path in written:
+                    # A conditional helper write can preserve the preceding value.
+                    values[path] = Phi(Unknown("call side effect"), call, values.get(path, Ref(path)))
+                state = replace(state, values=values)
+                return self._poison(state, tuple(values) if unresolved else tuple(written))
             names = list(state.values)
             pointer_arg = False
             for index, argument in enumerate(expression.args):
@@ -713,6 +738,8 @@ class DataflowEngine:
             elif isinstance(statement, Assign):
                 path = self._path(statement.lhs)
                 names.add(path or "*")
+            elif isinstance(statement, ExprStmt) and isinstance(statement.expr, Unary) and statement.expr.op in ("++", "--"):
+                names.add(self._path(statement.expr.x) or "*")
             elif isinstance(statement, If):
                 names.update(self._written(statement.then))
                 names.update(self._written(statement.els))
@@ -808,4 +835,8 @@ class DataflowEngine:
             while (len(prefix) > length or
                    prefix and not self._same(prefix[-1], state.path[len(prefix) - 1])):
                 prefix.pop()
+        alternatives = tuple(And(tuple(
+            item.expr if item.outcome else Not(item.expr) for item in state.path[len(prefix):]
+        )) for state in states)
+        prefix.append(PathConstraint(None, Or(alternatives), True))
         return DataflowState(values, aliases=aliases, path=tuple(prefix), unknown=tuple(sorted(unknown)))

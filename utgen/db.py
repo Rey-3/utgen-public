@@ -89,7 +89,6 @@ class ModuleIndexer:
                               cursor.result_type.spelling, _is_static(cursor), params,
                               inventory.stubs, inventory.variables, decisions,
                               tuple(body))
-        DataflowEngine().analyze(function)
         return function
 
     def _includes(self, source: Path, root_path: Path):
@@ -430,28 +429,37 @@ class XmlDbReader:
 def _link_local_call_stubs(analysis: ModuleAnalysis) -> None:
 
     # A caller can execute a local helper during interpretation. Pull the helper
-    # inputs and external stubs into the caller so the caller has everything needed
+    # global inputs/outputs and external stubs into the caller so it has everything needed
     # to generate values for that transitive dependency after loading from XML.
     for function in analysis.functions:
-        names = _called_names(function.body)
-        for name in names:
-            helper = analysis.function(name)
-            if helper is None or name == function.name:
+        names = list(_called_names(function.body))
+        seen = {function.name}
+        while names:
+            name = names.pop()
+            if name in seen:
                 continue
+            seen.add(name)
+            helper = analysis.function(name)
+            if helper is None:
+                continue
+            names.extend(_called_names(helper.body))
             for leaf in helper.leaves:
+                if leaf.name == helper.name + "()" or leaf.name.startswith((helper.name + "().", helper.name + "()[")):
+                    continue
                 if any(leaf.name == name or leaf.name == "@" + name
                        or leaf.name.startswith((name + ".", name + "["))
                        for _, name in helper.params):
                     continue
-                if leaf.direction in (Direction.IN, Direction.INOUT):
-                    existing = next((item for item in function.leaves if item.name == leaf.name), None)
-                    if existing is None:
-                        function.leaves.append(leaf)
-                    elif existing.direction == Direction.OUT:
-                        function.leaves[function.leaves.index(existing)] = replace(existing, direction=Direction.INOUT)
+                existing = next((item for item in function.leaves if item.name == leaf.name), None)
+                if existing is None:
+                    function.leaves.append(leaf)
+                elif existing.direction != leaf.direction:
+                    function.leaves[function.leaves.index(existing)] = replace(existing, direction=Direction.INOUT)
             for stub in helper.stubs:
                 if not any(item.name == stub.name for item in function.stubs):
                     function.stubs.append(stub)
+    for function in analysis.functions:
+        DataflowEngine().analyze(function)
 
 
 def _set_constants(analysis: ModuleAnalysis) -> None:

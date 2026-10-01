@@ -8,7 +8,7 @@ import warnings
 from dataclasses import fields, is_dataclass
 
 from utgen.interp import Interpreter
-from utgen.model import (And, Atom, CallE, Const, Direction, FunctionIR, Index,
+from utgen.model import (And, Atom, Binop, CallE, Cast, Const, Direction, FunctionIR, Index,
                          Inventory, MemberE, Not, Or, Ref, TestRow, Unary,
                          Ternary, Unknown, atom_text, atoms_of)
 
@@ -50,6 +50,7 @@ class CoverageGenerator:
         # once preserves any coverage they already provide while avoiding the old
         # "every historical row x every input" frontier explosion.
         state = _CoverageState(function)
+        helper_patterns = {}
         evidence, evidence_keys = [], set()
         for row in existing:
             values = row.values.copy()
@@ -70,9 +71,12 @@ class CoverageGenerator:
 
         # Prefer symbolic rows created for this target. Rows that reached the target
         # incidentally are also good seeds. Fall back to one neutral complete row.
+        guards = self._guard_requirements(function, selected)
+        seed_decisions = selected | {decision_id for decision_id, _ in guards}
         seeds, seed_keys = [], set()
         for row, values, result in evidence:
-            if not (selected.intersection(row.intent) or selected.intersection(result.observed)):
+            guard_seed = bool(guards) and row.intent.get(guards[-1][0]) == (not guards[-1][1])
+            if not (selected.intersection(row.intent) or selected.intersection(result.observed) or guard_seed):
                 continue
             key = self._key(values)
             if key in seed_keys:
@@ -82,38 +86,56 @@ class CoverageGenerator:
         if not seeds:
             seeds.append(self._defaults(inputs))
 
-        relevant, combination_inputs = self._decision_inputs(function, inputs, selected)
+        helpers = set()
+        relevant, combination_inputs = self._decision_inputs(function, inputs, selected, helpers)
+        # Include earlier sanitizing branches before indirect combinations consume the budget.
+        relevant.update(self._path_inputs(function, inputs, selected))
         expanded = set(selected)
-        guards = self._guard_requirements(function, selected)
+        direct = set(combination_inputs)
+        for decision in function.decisions:
+            if decision.id in seed_decisions:
+                for atom in atoms_of(decision.expr):
+                    direct.update(variable.name for variable in (atom.var, atom.rhs_var) if variable is not None)
         generated = []
         emitted = {self._key(row.values) for row in existing}
-        path_expanded = False
 
         while True:
             search_inputs = [leaf for leaf in inputs if leaf.name in relevant]
+            search_inputs.sort(key=lambda leaf: (leaf.name not in direct, not leaf.name.startswith("tessy_")))
             search_results = []
 
             if search_inputs:
-                # Freeze each input's representative domain to its symbolic seed.
+                # Freeze each input's representative domain to its seed.
                 # This prevents variable-to-variable probes from walking across the
                 # integer range as other inputs are mutated.
-                queue = deque((index, values.copy()) for index, values in enumerate(seeds))
+                queue, focused_seeds = deque(), set()
+                for index, values in enumerate(seeds):
+                    key = self._search_key(None, values, search_inputs)
+                    if key not in focused_seeds:
+                        focused_seeds.add(key)
+                        queue.append((index, values.copy(), 0))
                 seen = {
                     self._search_key(index, values, search_inputs)
                     for index, values in enumerate(seeds)
                 }
-                domains = {
-                    (index, leaf.name): self._values(
-                        leaf, function, seed, index_values, expanded
-                    )
-                    for index, seed in enumerate(seeds)
-                    for leaf in search_inputs
-                }
+                domains = {}
 
                 while queue:
-                    seed_index, base = queue.popleft()
-                    for leaf in search_inputs:
-                        for value in domains[seed_index, leaf.name]:
+                    seed_index, base, leaf_index = queue.popleft()
+                    if seed_index not in helper_patterns:
+                        helper_patterns[seed_index] = self._helper_patterns(
+                            self._run(interpreter, function, seeds[seed_index]), helpers,
+                        )
+                    for leaf in search_inputs[leaf_index:]:
+                        # Visit one input per seed before deeper combinations take over.
+                        if leaf_index + 1 < len(search_inputs):
+                            queue.append((seed_index, base, leaf_index + 1))
+                        domain_key = seed_index, leaf.name
+                        if domain_key not in domains:
+                            domains[domain_key] = self._values(
+                                leaf, function, seeds[seed_index], index_values, expanded,
+                            )
+                        for value in domains[domain_key]:
                             if value == base.get(leaf.name):
                                 continue
                             candidate = base | {leaf.name: value}
@@ -137,10 +159,22 @@ class CoverageGenerator:
                             search_results.append(result)
                             gained = state.gained(result) & targets
                             novel = state.novel(result, expanded)
-                            useful = bool(gained or novel)
+                            base_result = self._run(interpreter, function, base) if helpers or guards else None
+                            guard_progress = {
+                                ("guard", decision_id, required)
+                                for decision_id, required in guards
+                                if required in result.observed.get(decision_id, set())
+                                and required not in base_result.observed.get(decision_id, set())
+                            } - helper_patterns[seed_index]
+                            helper_progress = self._helper_patterns(result, helpers) - helper_patterns[seed_index]
+                            if helper_progress and selected.intersection(base_result.observed) and not selected.intersection(result.observed):
+                                helper_progress = set()
+                            useful = bool(gained or novel or guard_progress or helper_progress)
                             if useful:
+                                helper_patterns[seed_index].update(helper_progress)
+                                helper_patterns[seed_index].update(guard_progress)
                                 state.add(result)
-                                if key not in emitted:
+                                if (gained or novel) and key not in emitted:
                                     emitted.add(key)
                                     generated.append(TestRow(
                                         candidate,
@@ -153,25 +187,21 @@ class CoverageGenerator:
                             # Direct symbolic inputs already have combined values from
                             # the solver/MC/DC seed. Only indirect/path-derived inputs
                             # need neutral intermediate states to build combinations.
-                            if useful or leaf.name in combination_inputs:
-                                queue.append((seed_index, candidate))
+                            if useful:
+                                # New coverage supplies a better seed for arithmetic boundaries.
+                                new_index = seed_index
+                                if gained or novel:
+                                    new_index = len(seeds)
+                                    seeds.append(candidate)
+                                next_leaf = 0 if gained or novel else (leaf_index + 1) % len(search_inputs)
+                                queue.appendleft((new_index, candidate, next_leaf))
+                                if next_leaf:
+                                    queue.append((new_index, candidate, 0))
+                            elif leaf.name in combination_inputs:
+                                queue.append((seed_index, candidate, 0))
+                        break
 
-            # The focused target search is exhausted. A reached target can still
-            # depend on earlier branches that sanitize or rewrite its operands.
-            # Add those control-path inputs only after direct repair was insufficient.
             observed_results = [result for _, _, result in evidence] + search_results
-            target_reached = any(
-                selected.intersection(result.observed)
-                for result in observed_results
-            )
-            if target_reached and not path_expanded:
-                path_expanded = True
-                path_inputs = self._path_inputs(function, inputs, selected)
-                extra = path_inputs - relevant
-                if extra:
-                    relevant.update(extra)
-                    continue
-
             # If the target was never reached, expand only its enclosing guards.
             guard_id = None
             for candidate_id, required in guards:
@@ -190,7 +220,7 @@ class CoverageGenerator:
                 return generated
 
             expanded.add(guard_id)
-            guard_inputs, guard_combinations = self._decision_inputs(function, inputs, (guard_id,))
+            guard_inputs, guard_combinations = self._decision_inputs(function, inputs, (guard_id,), helpers)
             relevant.update(guard_inputs)
             combination_inputs.update(guard_combinations)
 
@@ -201,6 +231,16 @@ class CoverageGenerator:
         if key not in self._results:
             self._results[key] = interpreter.run(function, values)
         return self._results[key]
+
+    @staticmethod
+    def _helper_patterns(result, helpers=None):
+        out = set()
+        for key, patterns in getattr(result, "helper_conditions", {}).items():
+            if helpers is not None and key[0] not in helpers:
+                continue
+            for pattern in patterns:
+                out.add((key, pattern))
+        return out
 
     def _set_function(self, function):
         # Cached execution results are valid only for the exact FunctionIR object.
@@ -284,7 +324,63 @@ class CoverageGenerator:
                 if other is not None and base is not None and isinstance(base.get(other.name), int):
                     value = base[other.name]
                     values.update((value - 1, value, value + 1))
+        if base is not None and function.dataflow is not None:
+            linear_values = {}
+            for name, value in base.items():
+                linear_values[re.sub(r"\[\d+\]", "[*]", name)] = value
+            name = re.sub(r"\[\d+\]", "[*]", leaf.name)
+            visited = set()
+
+            def probe(expression):
+                if id(expression) in visited:
+                    return
+                visited.add(id(expression))
+                if isinstance(expression, Binop) and expression.op in ("==", "!=", "<", "<=", ">", ">="):
+                    left = CoverageGenerator._linear_value(expression.l, name, linear_values)
+                    right = CoverageGenerator._linear_value(expression.r, name, linear_values)
+                    if left is not None and right is not None and left[0] != right[0]:
+                        boundary = (right[1] - left[1]) // (left[0] - right[0])
+                        values.update((boundary - 1, boundary, boundary + 1))
+                if is_dataclass(expression):
+                    for item in fields(expression):
+                        probe(getattr(expression, item.name))
+                elif isinstance(expression, (tuple, list)):
+                    for item in expression:
+                        probe(item)
+
+            for decision in function.decisions:
+                if selected is not None and decision.id not in selected:
+                    continue
+                try:
+                    point = function.dataflow.point(decision.id)
+                except KeyError:
+                    continue
+                for state in point.states:
+                    probe(state.condition)
         return tuple(value for value in sorted(values) if leaf.ctype.lo <= value <= leaf.ctype.hi)
+
+    @staticmethod
+    def _linear_value(expression, name, values):
+        """Resolve an additive expression as coefficient * input + offset."""
+        if isinstance(expression, Const) and isinstance(expression.value, int):
+            return 0, expression.value
+        if isinstance(expression, Cast):
+            return CoverageGenerator._linear_value(expression.x, name, values)
+        path = CoverageGenerator._expression_path(expression)
+        if path:
+            path = re.sub(r"\[\d+\]", "[*]", path)
+            if path == name:
+                return 1, 0
+            value = values.get(path)
+            if isinstance(value, int):
+                return 0, value
+        if isinstance(expression, Binop) and expression.op in ("+", "-"):
+            left = CoverageGenerator._linear_value(expression.l, name, values)
+            right = CoverageGenerator._linear_value(expression.r, name, values)
+            if left is not None and right is not None:
+                sign = 1 if expression.op == "+" else -1
+                return left[0] + sign * right[0], left[1] + sign * right[1]
+        return None
 
     @staticmethod
     def _search_key(seed_index, values, search_inputs) -> tuple:
@@ -313,7 +409,7 @@ class CoverageGenerator:
         return out
 
     @staticmethod
-    def _decision_inputs(function, inputs, decision_ids) -> tuple[set[str], set[str]]:
+    def _decision_inputs(function, inputs, decision_ids, helpers=None) -> tuple[set[str], set[str]]:
         """Find inputs that can influence the selected decisions.
 
         Direct symbolic variables come from decision atoms. IR expression paths are
@@ -337,7 +433,7 @@ class CoverageGenerator:
             if is_dataclass(value):
                 decision_id = getattr(value, "decision_id", None)
                 if decision_id in selected:
-                    condition = value.c if isinstance(value, Ternary) else getattr(value, "condition", None)
+                    condition = value.c if isinstance(value, Ternary) else getattr(value, "condition", getattr(value, "value", None))
                     conditions[decision_id] = condition
                 for item in fields(value):
                     visit(getattr(value, item.name))
@@ -346,7 +442,7 @@ class CoverageGenerator:
                     visit(item)
 
         visit(function.body)
-        dataflow_paths = set()
+        dataflow_paths, memo = set(), {"helpers": helpers if helpers is not None else set()}
         for decision_id in selected:
             try:
                 if function.dataflow is None:
@@ -358,10 +454,10 @@ class CoverageGenerator:
                 for state in point.states:
                     bindings = getattr(state, "values", {})
                     CoverageGenerator._dataflow_paths(
-                        function, conditions.get(decision_id), raw_paths, bindings,
+                        function, conditions.get(decision_id), raw_paths, bindings, memo=memo,
                     )
                     CoverageGenerator._dataflow_paths(
-                        function, state.condition, dataflow_paths, bindings,
+                        function, state.condition, dataflow_paths, bindings, resolved=True, memo=memo,
                     )
 
         # Raw indirect paths can require neutral multi-input combinations. Dataflow
@@ -395,7 +491,7 @@ class CoverageGenerator:
         """Find inputs in path constraints leading to the selected decisions."""
         if function.dataflow is None:
             return set()
-        paths = set()
+        paths, memo = set(), {}
         for decision_id in set(decision_ids):
             try:
                 point = function.dataflow.point(decision_id)
@@ -404,7 +500,7 @@ class CoverageGenerator:
             for state in point.states:
                 for constraint in state.path:
                     CoverageGenerator._dataflow_paths(
-                        function, constraint.expr, paths,
+                        function, constraint.expr, paths, getattr(state, "values", {}), resolved=True, memo=memo,
                     )
         normalized = {
             re.sub(r"\[\d+\]", "[*]", path) for path in paths
@@ -421,15 +517,30 @@ class CoverageGenerator:
         return out
 
     @staticmethod
-    def _dataflow_paths(function, value, paths, bindings=None, seen=()) -> None:
-        """Collect concrete caller inputs from a substituted dataflow expression."""
+    def _dataflow_paths(function, value, paths, bindings=None, seen=(), resolved=False, memo=None) -> None:
+        """Reuse shared snapshot paths within this dependency collection."""
+        if memo is None:
+            memo = {}
+        identity = value if isinstance(value, (Ref, Unknown)) else id(value)
+        key = (id(function), identity, id(bindings), frozenset(seen), resolved)
+        if key not in memo:
+            # Retain both objects so temporary references cannot reuse their IDs.
+            memo[key] = (value, bindings, set())
+            CoverageGenerator._collect_dataflow_paths(function, value, memo[key][2], bindings, seen, resolved, memo)
+        paths.update(memo[key][2])
+
+    @staticmethod
+    def _collect_dataflow_paths(function, value, paths, bindings, seen, resolved, memo) -> None:
+        """Collect input paths while preserving already-substituted value snapshots."""
         if isinstance(value, CallE):
             helper = function.local_functions.get(value.name)
             if helper is not None and ("call", helper.name) not in seen:
+                if "helpers" in memo:
+                    memo["helpers"].add(helper.name)
                 helper_seen = seen + (("call", helper.name),)
                 used = set()
                 # ponytail: conservative body scan until dataflow preserves input snapshots.
-                CoverageGenerator._dataflow_paths(helper, helper.body, used, seen=helper_seen)
+                CoverageGenerator._dataflow_paths(helper, helper.body, used, seen=helper_seen, memo=memo)
                 used = {re.sub(r"\[\d+\]", "[*]", path) for path in used}
                 mapped = False
                 for leaf in helper.leaves:
@@ -448,26 +559,61 @@ class CoverageGenerator:
                             continue
                         matched_param = True
                         if index < len(value.args):
-                            base = CoverageGenerator._expression_path(value.args[index])
-                            if base:
+                            argument = value.args[index]
+                            base = CoverageGenerator._expression_path(argument)
+                            if leaf.name == name:
                                 CoverageGenerator._dataflow_paths(
-                                    function, Ref(base + leaf.name[len(name):]), paths, bindings, helper_seen,
+                                    function, argument, paths, bindings, helper_seen, resolved=resolved, memo=memo,
                                 )
                                 mapped = True
-                            elif leaf.name == name:
+                            elif base:
+                                path = base + leaf.name[len(name):]
                                 CoverageGenerator._dataflow_paths(
-                                    function, value.args[index], paths, bindings, helper_seen,
+                                    function, CoverageGenerator._path_reference(argument, path),
+                                    paths, bindings, helper_seen, resolved=resolved, memo=memo,
                                 )
                                 mapped = True
                         break
                     if not matched_param:
-                        CoverageGenerator._dataflow_paths(function, Ref(leaf.name), paths, bindings, helper_seen)
+                        # Caller bindings include later calls, not this helper's entry state.
+                        paths.add(leaf.name)
+                        # ponytail: conservatively retain earlier global-copy sources;
+                        # exact call-time snapshots would require a larger IR change.
+                        path = re.sub(r"\[\d+\]", "[*]", leaf.name)
+                        write_key = ("writes", id(function))
+                        if write_key not in memo:
+                            memo[write_key] = {}
+                            for written, origin in getattr(function.dataflow, "writes", ()):
+                                while isinstance(origin, Cast):
+                                    origin = origin.x
+                                if isinstance(origin, (Ref, CallE, Binop)):
+                                    name = re.sub(r"\[\d+\]", "[*]", written)
+                                    memo[write_key].setdefault(name, []).append(origin)
+                        prefixes = (path, *(path[:match.start()] for match in re.finditer(r"[.\[]", path)))
+                        for name in prefixes:
+                            for origin in memo[write_key].get(name, ()):
+                                base = CoverageGenerator._expression_path(origin)
+                                expression = CoverageGenerator._path_reference(origin, base + path[len(name):]) if path != name else origin
+                                CoverageGenerator._dataflow_paths(function, expression, paths, bindings, helper_seen, resolved=True, memo=memo)
                         mapped = True
                 if mapped:
                     return
 
         path = CoverageGenerator._expression_path(value)
         if path:
+            # Resolved references are snapshots; Unknown locals still need provenance.
+            if resolved:
+                paths.add(path)
+                if not isinstance(CoverageGenerator._path_reference(value, path), Unknown):
+                    return
+            if "[*]" in path and bindings:
+                matched = False
+                for key, bound in bindings.items():
+                    if key not in seen and key != path and re.sub(r"\[\d+\]", "[*]", key) == path:
+                        CoverageGenerator._dataflow_paths(function, bound, paths, bindings, seen + (key,), resolved=True, memo=memo)
+                        matched = True
+                if matched:
+                    return
             # Resolve locals and aggregate copies from the existing dataflow bindings.
             # Unknown values still carry dependency names; they are not treated as known values.
             key, suffix = path, ""
@@ -476,8 +622,9 @@ class CoverageGenerator:
                     bound = bindings[key]
                     base = CoverageGenerator._expression_path(bound)
                     if base != key:
-                        expression = Ref(base + suffix) if base and suffix else bound
-                        CoverageGenerator._dataflow_paths(function, expression, paths, bindings, seen + (key,))
+                        expression = CoverageGenerator._path_reference(bound, base + suffix) if base and suffix else bound
+                        # Bindings already describe the value at assignment time.
+                        CoverageGenerator._dataflow_paths(function, expression, paths, bindings, seen + (key,), resolved=True, memo=memo)
                         return
                 split = max(key.rfind("."), key.rfind("["))
                 if split < 0:
@@ -488,11 +635,18 @@ class CoverageGenerator:
         if is_dataclass(value):
             for item in fields(value):
                 CoverageGenerator._dataflow_paths(
-                    function, getattr(value, item.name), paths, bindings, seen,
+                    function, getattr(value, item.name), paths, bindings, seen, resolved=resolved, memo=memo,
                 )
         elif isinstance(value, (tuple, list)):
             for item in value:
-                CoverageGenerator._dataflow_paths(function, item, paths, bindings, seen)
+                CoverageGenerator._dataflow_paths(function, item, paths, bindings, seen, resolved=resolved, memo=memo)
+
+    @staticmethod
+    def _path_reference(value, path):
+        """Preserve unknown provenance when rebuilding a field or argument path."""
+        while isinstance(value, (MemberE, Index, Unary)):
+            value = value.x if isinstance(value, Unary) else value.base
+        return Unknown(path) if isinstance(value, Unknown) else Ref(path)
 
     @staticmethod
     def _expression_paths(value, paths) -> None:

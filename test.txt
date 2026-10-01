@@ -1,0 +1,1142 @@
+*******************************************************************************
+* MODULE                   PDM_ProtectionCtrl_1
+* TESTOBJECT               PDM_ProtectionCtrl_Core0_1ms
+*******************************************************************************
+* MODE OF INSTRUMENTATION  testobject only
+* TESSY VERSION            5.1.8
+* DATE OF INSTRUMENTATION  01.10.2026 14:21:08
+*******************************************************************************
+* MC/DC-COVERAGE            93.50%
+*******************************************************************************
+* DECISIONS                34
+* UNREACHED DECISIONS      0
+* REACHED DECISIONS        34
+*******************************************************************************
+* SOURCE(S):
+* D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2376
+   Decision : (PDM_Core0_EEPROM_SyncFlag != Rte_EEPROMInfoCore0.EEPROM_PDM_SyncFlag)
+   Coverage : 100.00%
+
+   Atom 1    : (PDM_Core0_EEPROM_SyncFlag != Rte_EEPROMInfoCore0.EEPROM_PDM_SyncFlag)
+
+
+   | Atom 1  |   
+   +---------+---
+   |    0    | 1.1
+   |    1    | 2.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2444
+   Decision : i < (uint8) PDM_LOAD_NUM
+   Coverage : 100.00%
+
+   | i < (uint8) PDM_LOAD_NUM  |   
+   +---------------------------+---
+   |             0             | 1.1
+   |             1             | 1.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2446
+   Decision : (i <= (uint8) PDM_LOAD_RZCU_B2)
+   Coverage : 100.00%
+
+   | (i <= (uint8) PDM_LOAD_RZCU_B2) |   
+   +---------------------------------+---
+   |                0                | 1.1
+   |                1                | 1.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2467
+   Decision : (i == (uint8) PDM_LOAD_RZCU_B1)
+   Coverage : 100.00%
+
+   | (i == (uint8) PDM_LOAD_RZCU_B1) |   
+   +---------------------------------+---
+   |                0                | 1.1
+   |                1                | 1.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2470
+   Decision : ((KL30Volt10x >= (PDM_Cfg_Core0[i].MOSDriverOpVoltNormal / 100u)) && (KL30VoltFaultState == 0u))
+   Coverage : 100.00%
+
+   Atom 1    : (KL30Volt10x >= (PDM_Cfg_Core0[i].MOSDriverOpVoltNormal / 100u))
+   Atom 2    : (KL30VoltFaultState == 0u)
+
+
+   | Atom 1  | Atom 2  |   
+   +---------+---------+---
+   |    0    |    -    | 4.1
+   |    1    |    0    | 5.1
+   |    1    |    1    | 1.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2471
+   Decision : (PDMPZCUFireWarnInfo.PDM_PZCUBXFireWarningStatus == 1u)
+   Coverage : 100.00%
+
+   | (PDMPZCUFireWarnInfo.PDM_PZCUBXFireWarningStatus == 1u) |   
+   +---------------------------------------------------------+---
+   |                            0                            | 1.1
+   |                            1                            | 6.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2472
+   Decision : ((PDMPZCUVehStsInfo.Msg_Status == CANSIG_MSG_RECEIVED) && (PDMPZCUVehStsInfo.Msg_Error_Info == (0x00u)))
+   Coverage : 100.00%
+
+   Atom 1    : (PDMPZCUVehStsInfo.Msg_Status == CANSIG_MSG_RECEIVED)
+   Atom 2    : (PDMPZCUVehStsInfo.Msg_Error_Info == (0x00u))
+
+
+   | Atom 1  | Atom 2  |   
+   +---------+---------+---
+   |    0    |    -    | 1.1
+   |    1    |    0    | 8.1
+   |    1    |    1    | 7.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2485
+   Decision : ((PDM_Cfg_Core0[i].MOSType == EFUSE) || (PDM_Cfg_Core0[i].MOSType == HSD))
+   Coverage : 100.00%
+
+   Atom 1    : (PDM_Cfg_Core0[i].MOSType == EFUSE)
+   Atom 2    : (PDM_Cfg_Core0[i].MOSType == HSD)
+
+
+   | Atom 1  | Atom 2  |   
+   +---------+---------+---
+   |    0    |    0    | 9.1
+   |    0    |    1    | 1.1
+   |    1    |    -    | 10.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2488
+   Decision : (PDM_Core0_TemperatureState[i] == Temperature_State_Normal)
+   Coverage : 100.00%
+
+   | (PDM_Core0_TemperatureState[i] == Temperature_State_Normal) |   
+   +-----------------------------------------------------------+---
+   |                              0                              | 11.1
+   |                              1                              | 1.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2491
+   Decision : (faultOvertemperatureIsDetected == 1u)
+   Coverage : 100.00%
+
+   | (faultOvertemperatureIsDetected == 1u)  |   
+   +-----------------------------------------+---
+   |                    0                    | 1.1
+   |                    1                    | 12.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2492
+   Decision : (PDM_Core0_TemperatureState[i] != Temperature_State_Normal)
+   Coverage : 100.00%
+
+   | (PDM_Core0_TemperatureState[i] != Temperature_State_Normal) |   
+   +-----------------------------------------------------------+---
+   |                              0                              | 1.1
+   |                              1                              | 12.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2500
+   Decision : ((temp10x < PDM_Core0_Recover_Cfg[i].RecoveryOverTempThreshold) && (tempIsValid == 1u))
+   Coverage : 100.00%
+
+   Atom 1    : (temp10x < PDM_Core0_Recover_Cfg[i].RecoveryOverTempThreshold)
+   Atom 2    : (tempIsValid == 1u)
+
+
+   | Atom 1  | Atom 2  |   
+   +---------+---------+---
+   |    0    |    -    | 11.1
+   |    1    |    0    | 15.1
+   |    1    |    1    | 13.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2507
+   Decision : (recoveryOvertemperatureIsSuccess == 1u)
+   Coverage : 100.00%
+
+   | (recoveryOvertemperatureIsSuccess == 1u)  |   
+   +-------------------------------------------+---
+   |                     0                     | 11.1
+   |                     1                     | 16.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2511
+   Decision : (PDM_Core0_State[i] == State_Normal)
+   Coverage : 100.00%
+
+   | (PDM_Core0_State[i] == State_Normal)  |   
+   +---------------------------------------+---
+   |                   0                   | 17.1
+   |                   1                   | 1.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2513
+   Decision : (PDM_Core0_Config.PDM_Load_Enable[i] == 1u)
+   Coverage : 100.00%
+
+   | (PDM_Core0_Config.PDM_Load_Enable[i] == 1u) |   
+   +---------------------------------------------+---
+   |                      0                      | 1.1
+   |                      1                      | 18.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2515
+   Decision : ((PDM_Cfg_Core0[i].MOSType == EFUSE) || (PDM_Cfg_Core0[i].MOSType == HSD))
+   Coverage : 100.00%
+
+   Atom 1    : (PDM_Cfg_Core0[i].MOSType == EFUSE)
+   Atom 2    : (PDM_Cfg_Core0[i].MOSType == HSD)
+
+
+   | Atom 1  | Atom 2  |   
+   +---------+---------+---
+   |    0    |    0    | 19.1
+   |    0    |    1    | 18.1
+   |    1    |    -    | 20.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2522
+   Decision : (PDM_Core0_State[i] != State_Normal)
+   Coverage :  50.00%
+
+   | (PDM_Core0_State[i] != State_Normal)  |   
+   +---------------------------------------+---
+   |                   0                   | 18.1
+   |                   1                   |
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2537
+   Decision : (PDM_Core0_State[i] == State_FaultShortcurrent)
+   Coverage : 100.00%
+
+   | (PDM_Core0_State[i] == State_FaultShortcurrent) |   
+   +-------------------------------------------------+---
+   |                        0                        | 17.1
+   |                        1                        | 21.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2541
+   Decision : (PDM_Core0_State[i] == State_FaultOvercurrent)
+   Coverage : 100.00%
+
+   | (PDM_Core0_State[i] == State_FaultOvercurrent)  |   
+   +-------------------------------------------------+---
+   |                        0                        | 17.1
+   |                        1                        | 22.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2545
+   Decision : (PDM_Core0_State[i] == State_FaultFireWarning)
+   Coverage : 100.00%
+
+   | (PDM_Core0_State[i] == State_FaultFireWarning)  |   
+   +-------------------------------------------------+---
+   |                        0                        | 17.1
+   |                        1                        | 23.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2549
+   Decision : (PDM_Core0_State[i] == State_FaultOvertemperature)
+   Coverage : 100.00%
+
+   | (PDM_Core0_State[i] == State_FaultOvertemperature)  |   
+   +-----------------------------------------------------+---
+   |                          0                          | 24.1
+   |                          1                          | 17.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2551
+   Decision : (PDM_Core0_TemperatureState[i] == Temperature_State_Normal)
+   Coverage : 100.00%
+
+   | (PDM_Core0_TemperatureState[i] == Temperature_State_Normal) |   
+   +-----------------------------------------------------------+---
+   |                              0                              | 25.1
+   |                              1                              | 17.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2553
+   Decision : (PDM_Core0_State[i] == State_FaultKL30UnderVoltageDiscon)
+   Coverage : 100.00%
+
+   | (PDM_Core0_State[i] == State_FaultKL30UnderVoltageDiscon) |   
+   +-----------------------------------------------------------+---
+   |                             0                             | 26.1
+   |                             1                             | 24.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2555
+   Decision : ((KL30Volt10x >= PDM_Core0_Recover_Cfg[i].RecoveryKL30UnderVoltageThreshold) && (KL30VoltFaultState == 0u))
+   Coverage : 100.00%
+
+   Atom 1    : (KL30Volt10x >= PDM_Core0_Recover_Cfg[i].RecoveryKL30UnderVoltageThreshold)
+   Atom 2    : (KL30VoltFaultState == 0u)
+
+
+   | Atom 1  | Atom 2  |   
+   +---------+---------+---
+   |    0    |    -    | 27.1
+   |    1    |    0    | 28.1
+   |    1    |    1    | 24.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2558
+   Decision : (PDM_Core0_State[i] == State_FaultKL30UnderVoltage)
+   Coverage : 100.00%
+
+   | (PDM_Core0_State[i] == State_FaultKL30UnderVoltage) |   
+   +-----------------------------------------------------+---
+   |                          0                          | 29.1
+   |                          1                          | 26.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2560
+   Decision : (KL30VoltFaultState == 0u)
+   Coverage : 100.00%
+
+   | (KL30VoltFaultState == 0u)  |   
+   +-----------------------------+---
+   |              0              | 30.1
+   |              1              | 26.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2562
+   Decision : (KL30Volt10x < (PDM_Cfg_Core0[i].MOSDriverOpVoltBelow / 100u))
+   Coverage : 100.00%
+
+   Atom 1    : (KL30Volt10x < (PDM_Cfg_Core0[i].MOSDriverOpVoltBelow / 100u))
+
+
+   | Atom 1  |   
+   +---------+---
+   |    0    | 26.1
+   |    1    | 31.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2576
+   Decision : (IoHw_LoadDriverStat.DriverState[i] == 1u)
+   Coverage : 100.00%
+
+   | (IoHw_LoadDriverStat.DriverState[i] == 1u)  |   
+   +---------------------------------------------+---
+   |                      0                      | 26.1
+   |                      1                      | 32.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2585
+   Decision : (((KL30VoltFaultState == 0u) && (KL30Volt10x < (PDM_Cfg_Core0[i].MOSDriverOpVoltNormal / 100u))) && (PDM_Core0_Recover_Stat[i].KL30UVEFuseIntReentryCnt >= 50u))
+   Coverage :  75.00%
+
+   Atom 1    : (KL30VoltFaultState == 0u)
+   Atom 2    : (KL30Volt10x < (PDM_Cfg_Core0[i].MOSDriverOpVoltNormal / 100u))
+   Atom 3    : (PDM_Core0_Recover_Stat[i].KL30UVEFuseIntReentryCnt >= 50u)
+
+
+   | Atom 1  | Atom 2  | Atom 3  |   
+   +---------+---------+---------+---
+   |    0    |    -    |    -    | 30.1
+   |    1    |    0    |    -    | 26.1
+   |    1    |    1    |    0    | 34.1
+   |    1    |    1    |    1    |
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2591
+   Decision : (PDM_Core0_Recover_Stat[i].KL30UVEFuseIntReentryCnt >= 50u)
+   Coverage :  50.00%
+
+   | (PDM_Core0_Recover_Stat[i].KL30UVEFuseIntReentryCnt >= 50u) |   
+   +-----------------------------------------------------------+---
+   |                              0                              | 26.1
+   |                              1                              |
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2597
+   Decision : (PDM_Core0_Recover_Stat[i].KL30UVEFuseVoltBelowReentryCnt >= 10u)
+   Coverage :  50.00%
+
+   Atom 1    : (PDM_Core0_Recover_Stat[i].KL30UVEFuseVoltBelowReentryCnt >= 10u)
+
+
+   | Atom 1  |   
+   +---------+---
+   |    0    | 26.1
+   |    1    |
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2605
+   Decision : ((KL30Volt10x >= PDM_Core0_Recover_Cfg[i].RecoveryKL30UnderVoltageThreshold) && (KL30VoltFaultState == 0u))
+   Coverage : 100.00%
+
+   Atom 1    : (KL30Volt10x >= PDM_Core0_Recover_Cfg[i].RecoveryKL30UnderVoltageThreshold)
+   Atom 2    : (KL30VoltFaultState == 0u)
+
+
+   | Atom 1  | Atom 2  |   
+   +---------+---------+---
+   |    0    |    -    | 36.1
+   |    1    |    0    | 30.1
+   |    1    |    1    | 26.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2621
+   Decision : (recoveryIsSuccess == 1u)
+   Coverage : 100.00%
+
+   | (recoveryIsSuccess == 1u) |   
+   +---------------------------+---
+   |             0             | 21.1
+   |             1             | 17.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_1.c
+   Function : PDM_ProtectionCtrl_Core0_1ms
+   Line     : 2625
+   Decision : (PDM_Core0_TemperatureState[i] == Temperature_State_Fault)
+   Coverage :  50.00%
+
+   | (PDM_Core0_TemperatureState[i] == Temperature_State_Fault)  |   
+   +-----------------------------------------------------------+---
+   |                              0                              | 17.1
+   |                              1                              |
+
+*******************************************************************************
+
+
+*******************************************************************************
+* MODULE                   PDM_ProtectionCtrl_2
+* TESTOBJECT               PDM_ProtectionCtrl_Core1_1ms
+*******************************************************************************
+* MODE OF INSTRUMENTATION  testobject only
+* TESSY VERSION            5.1.8
+* DATE OF INSTRUMENTATION  01.10.2026 14:20:24
+*******************************************************************************
+* MC/DC-COVERAGE            96.00%
+*******************************************************************************
+* DECISIONS                33
+* UNREACHED DECISIONS      0
+* REACHED DECISIONS        33
+*******************************************************************************
+* SOURCE(S):
+* D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 1995
+   Decision : i < (uint8) PDM_LOAD_NUM
+   Coverage : 100.00%
+
+   | i < (uint8) PDM_LOAD_NUM  |   
+   +---------------------------+---
+   |             0             | 1.1
+   |             1             | 1.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 1997
+   Decision : (i <= (uint8) PDM_LOAD_RZCU_B2)
+   Coverage : 100.00%
+
+   | (i <= (uint8) PDM_LOAD_RZCU_B2) |   
+   +---------------------------------+---
+   |                0                | 1.1
+   |                1                | 1.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2014
+   Decision : (i == (uint8) PDM_LOAD_RZCU_B2)
+   Coverage : 100.00%
+
+   | (i == (uint8) PDM_LOAD_RZCU_B2) |   
+   +---------------------------------+---
+   |                0                | 1.1
+   |                1                | 1.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2017
+   Decision : ((KL30Volt10x >= (PDM_Cfg_Core1[i].MOSDriverOpVoltNormal / 100u)) && (KL30VoltFaultState == 0u))
+   Coverage : 100.00%
+
+   Atom 1    : (KL30Volt10x >= (PDM_Cfg_Core1[i].MOSDriverOpVoltNormal / 100u))
+   Atom 2    : (KL30VoltFaultState == 0u)
+
+
+   | Atom 1  | Atom 2  |   
+   +---------+---------+---
+   |    0    |    -    | 2.1
+   |    1    |    0    | 3.1
+   |    1    |    1    | 1.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2018
+   Decision : (PDMPZCUFireWarnInfo.PDM_PZCUBXFireWarningStatus == 1u)
+   Coverage : 100.00%
+
+   | (PDMPZCUFireWarnInfo.PDM_PZCUBXFireWarningStatus == 1u) |   
+   +---------------------------------------------------------+---
+   |                            0                            | 1.1
+   |                            1                            | 4.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2019
+   Decision : ((PDMPZCUVehStsInfo.Msg_Status == CANSIG_MSG_RECEIVED) && (PDMPZCUVehStsInfo.Msg_Error_Info == (0x00u)))
+   Coverage : 100.00%
+
+   Atom 1    : (PDMPZCUVehStsInfo.Msg_Status == CANSIG_MSG_RECEIVED)
+   Atom 2    : (PDMPZCUVehStsInfo.Msg_Error_Info == (0x00u))
+
+
+   | Atom 1  | Atom 2  |   
+   +---------+---------+---
+   |    0    |    -    | 1.1
+   |    1    |    0    | 6.1
+   |    1    |    1    | 5.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2031
+   Decision : ((PDM_Cfg_Core1[i].MOSType == EFUSE) || (PDM_Cfg_Core1[i].MOSType == HSD))
+   Coverage : 100.00%
+
+   Atom 1    : (PDM_Cfg_Core1[i].MOSType == EFUSE)
+   Atom 2    : (PDM_Cfg_Core1[i].MOSType == HSD)
+
+
+   | Atom 1  | Atom 2  |   
+   +---------+---------+---
+   |    0    |    0    | 7.1
+   |    0    |    1    | 1.1
+   |    1    |    -    | 8.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2034
+   Decision : (PDM_Core1_TemperatureState[i] == Temperature_State_Normal)
+   Coverage : 100.00%
+
+   | (PDM_Core1_TemperatureState[i] == Temperature_State_Normal) |   
+   +-----------------------------------------------------------+---
+   |                              0                              | 9.1
+   |                              1                              | 1.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2037
+   Decision : (faultOvertemperatureIsDetected == 1u)
+   Coverage : 100.00%
+
+   | (faultOvertemperatureIsDetected == 1u)  |   
+   +-----------------------------------------+---
+   |                    0                    | 1.1
+   |                    1                    | 10.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2038
+   Decision : (PDM_Core1_TemperatureState[i] != Temperature_State_Normal)
+   Coverage : 100.00%
+
+   | (PDM_Core1_TemperatureState[i] != Temperature_State_Normal) |   
+   +-----------------------------------------------------------+---
+   |                              0                              | 1.1
+   |                              1                              | 10.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2046
+   Decision : ((temp10x < PDM_Core1_Recover_Cfg[i].RecoveryOverTempThreshold) && (tempIsValid == 1u))
+   Coverage : 100.00%
+
+   Atom 1    : (temp10x < PDM_Core1_Recover_Cfg[i].RecoveryOverTempThreshold)
+   Atom 2    : (tempIsValid == 1u)
+
+
+   | Atom 1  | Atom 2  |   
+   +---------+---------+---
+   |    0    |    -    | 9.1
+   |    1    |    0    | 13.1
+   |    1    |    1    | 11.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2053
+   Decision : (recoveryOvertemperatureIsSuccess == 1u)
+   Coverage : 100.00%
+
+   | (recoveryOvertemperatureIsSuccess == 1u)  |   
+   +-------------------------------------------+---
+   |                     0                     | 9.1
+   |                     1                     | 14.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2057
+   Decision : (PDM_Core1_State[i] == State_Normal)
+   Coverage : 100.00%
+
+   | (PDM_Core1_State[i] == State_Normal)  |   
+   +---------------------------------------+---
+   |                   0                   | 15.1
+   |                   1                   | 1.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2059
+   Decision : (PDM_Core1_Config.PDM_Load_Enable[i] == 1u)
+   Coverage : 100.00%
+
+   | (PDM_Core1_Config.PDM_Load_Enable[i] == 1u) |   
+   +---------------------------------------------+---
+   |                      0                      | 1.1
+   |                      1                      | 16.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2061
+   Decision : ((PDM_Cfg_Core1[i].MOSType == EFUSE) || (PDM_Cfg_Core1[i].MOSType == HSD))
+   Coverage : 100.00%
+
+   Atom 1    : (PDM_Cfg_Core1[i].MOSType == EFUSE)
+   Atom 2    : (PDM_Cfg_Core1[i].MOSType == HSD)
+
+
+   | Atom 1  | Atom 2  |   
+   +---------+---------+---
+   |    0    |    0    | 17.1
+   |    0    |    1    | 16.1
+   |    1    |    -    | 18.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2068
+   Decision : (PDM_Core1_State[i] != State_Normal)
+   Coverage :  50.00%
+
+   | (PDM_Core1_State[i] != State_Normal)  |   
+   +---------------------------------------+---
+   |                   0                   | 16.1
+   |                   1                   |
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2081
+   Decision : (PDM_Core1_State[i] == State_FaultShortcurrent)
+   Coverage : 100.00%
+
+   | (PDM_Core1_State[i] == State_FaultShortcurrent) |   
+   +-------------------------------------------------+---
+   |                        0                        | 15.1
+   |                        1                        | 20.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2085
+   Decision : (PDM_Core1_State[i] == State_FaultOvercurrent)
+   Coverage : 100.00%
+
+   | (PDM_Core1_State[i] == State_FaultOvercurrent)  |   
+   +-------------------------------------------------+---
+   |                        0                        | 15.1
+   |                        1                        | 21.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2089
+   Decision : (PDM_Core1_State[i] == State_FaultFireWarning)
+   Coverage : 100.00%
+
+   | (PDM_Core1_State[i] == State_FaultFireWarning)  |   
+   +-------------------------------------------------+---
+   |                        0                        | 15.1
+   |                        1                        | 22.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2093
+   Decision : (PDM_Core1_State[i] == State_FaultOvertemperature)
+   Coverage : 100.00%
+
+   | (PDM_Core1_State[i] == State_FaultOvertemperature)  |   
+   +-----------------------------------------------------+---
+   |                          0                          | 23.1
+   |                          1                          | 15.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2095
+   Decision : (PDM_Core1_TemperatureState[i] == Temperature_State_Normal)
+   Coverage : 100.00%
+
+   | (PDM_Core1_TemperatureState[i] == Temperature_State_Normal) |   
+   +-----------------------------------------------------------+---
+   |                              0                              | 24.1
+   |                              1                              | 15.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2097
+   Decision : (PDM_Core1_State[i] == State_FaultKL30UnderVoltageDiscon)
+   Coverage : 100.00%
+
+   | (PDM_Core1_State[i] == State_FaultKL30UnderVoltageDiscon) |   
+   +-----------------------------------------------------------+---
+   |                             0                             | 25.1
+   |                             1                             | 23.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2099
+   Decision : ((KL30Volt10x >= PDM_Core1_Recover_Cfg[i].RecoveryKL30UnderVoltageThreshold) && (KL30VoltFaultState == 0u))
+   Coverage : 100.00%
+
+   Atom 1    : (KL30Volt10x >= PDM_Core1_Recover_Cfg[i].RecoveryKL30UnderVoltageThreshold)
+   Atom 2    : (KL30VoltFaultState == 0u)
+
+
+   | Atom 1  | Atom 2  |   
+   +---------+---------+---
+   |    0    |    -    | 26.1
+   |    1    |    0    | 27.1
+   |    1    |    1    | 23.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2102
+   Decision : (PDM_Core1_State[i] == State_FaultKL30UnderVoltage)
+   Coverage : 100.00%
+
+   | (PDM_Core1_State[i] == State_FaultKL30UnderVoltage) |   
+   +-----------------------------------------------------+---
+   |                          0                          | 28.1
+   |                          1                          | 25.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2104
+   Decision : (KL30VoltFaultState == 0u)
+   Coverage : 100.00%
+
+   | (KL30VoltFaultState == 0u)  |   
+   +-----------------------------+---
+   |              0              | 29.1
+   |              1              | 25.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2106
+   Decision : (KL30Volt10x < (PDM_Cfg_Core1[i].MOSDriverOpVoltBelow / 100u))
+   Coverage : 100.00%
+
+   Atom 1    : (KL30Volt10x < (PDM_Cfg_Core1[i].MOSDriverOpVoltBelow / 100u))
+
+
+   | Atom 1  |   
+   +---------+---
+   |    0    | 25.1
+   |    1    | 30.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2120
+   Decision : (IoHw_LoadDriverStat.DriverState[i] == 1u)
+   Coverage : 100.00%
+
+   | (IoHw_LoadDriverStat.DriverState[i] == 1u)  |   
+   +---------------------------------------------+---
+   |                      0                      | 25.1
+   |                      1                      | 31.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2129
+   Decision : (((KL30VoltFaultState == 0u) && (KL30Volt10x < (PDM_Cfg_Core1[i].MOSDriverOpVoltNormal / 100u))) && (PDM_Core1_Recover_Stat[i].KL30UVEFuseIntReentryCnt >= 50u))
+   Coverage :  75.00%
+
+   Atom 1    : (KL30VoltFaultState == 0u)
+   Atom 2    : (KL30Volt10x < (PDM_Cfg_Core1[i].MOSDriverOpVoltNormal / 100u))
+   Atom 3    : (PDM_Core1_Recover_Stat[i].KL30UVEFuseIntReentryCnt >= 50u)
+
+
+   | Atom 1  | Atom 2  | Atom 3  |   
+   +---------+---------+---------+---
+   |    0    |    -    |    -    | 29.1
+   |    1    |    0    |    -    | 25.1
+   |    1    |    1    |    0    | 33.1
+   |    1    |    1    |    1    |
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2135
+   Decision : (PDM_Core1_Recover_Stat[i].KL30UVEFuseIntReentryCnt >= 50u)
+   Coverage : 100.00%
+
+   | (PDM_Core1_Recover_Stat[i].KL30UVEFuseIntReentryCnt >= 50u) |   
+   +-----------------------------------------------------------+---
+   |                              0                              | 25.1
+   |                              1                              | 34.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2141
+   Decision : (PDM_Core1_Recover_Stat[i].KL30UVEFuseVoltBelowReentryCnt >= 10u)
+   Coverage : 100.00%
+
+   Atom 1    : (PDM_Core1_Recover_Stat[i].KL30UVEFuseVoltBelowReentryCnt >= 10u)
+
+
+   | Atom 1  |   
+   +---------+---
+   |    0    | 25.1
+   |    1    | 36.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2149
+   Decision : ((KL30Volt10x >= PDM_Core1_Recover_Cfg[i].RecoveryKL30UnderVoltageThreshold) && (KL30VoltFaultState == 0u))
+   Coverage : 100.00%
+
+   Atom 1    : (KL30Volt10x >= PDM_Core1_Recover_Cfg[i].RecoveryKL30UnderVoltageThreshold)
+   Atom 2    : (KL30VoltFaultState == 0u)
+
+
+   | Atom 1  | Atom 2  |   
+   +---------+---------+---
+   |    0    |    -    | 37.1
+   |    1    |    0    | 29.1
+   |    1    |    1    | 25.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2165
+   Decision : (recoveryIsSuccess == 1u)
+   Coverage : 100.00%
+
+   | (recoveryIsSuccess == 1u) |   
+   +---------------------------+---
+   |             0             | 20.1
+   |             1             | 15.1
+
+*******************************************************************************
+
+
+
+   File     : D:\SW\liauto_pdc\Application\app_source\AppSWC\PDM\PDM_ProtectionCtrl_2.c
+   Function : PDM_ProtectionCtrl_Core1_1ms
+   Line     : 2168
+   Decision : (PDM_Core1_TemperatureState[i] == Temperature_State_Fault)
+   Coverage :  50.00%
+
+   | (PDM_Core1_TemperatureState[i] == Temperature_State_Fault)  |   
+   +-----------------------------------------------------------+---
+   |                              0                              | 15.1
+   |                              1                              |
+
+*******************************************************************************
+
+

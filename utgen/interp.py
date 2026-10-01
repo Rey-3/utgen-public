@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from functools import cache
 import re
 from dataclasses import dataclass, field, fields, is_dataclass
 
@@ -32,6 +33,7 @@ class ExecResult:
     loops: dict[int, set[bool]] = field(default_factory=dict)
     outputs: dict[str, int] = field(default_factory=dict)
     unknown: set[str] = field(default_factory=set)
+    helper_conditions: dict[tuple[str, int], set[tuple]] = field(default_factory=dict)
 
 
 class Interpreter:
@@ -46,6 +48,7 @@ class Interpreter:
         self.inventory = inventory
         self.execute_static_helpers = execute_static_helpers
         self._variable_names, self._normalized_names, self._address_names = set(), {}, {}
+        self._array_variables = {}
         self._path_cache = {}
         self._local_roots = {}
 
@@ -55,6 +58,7 @@ class Interpreter:
         for variable in inventory.variables:
             self._variable_names.add(variable.name)
             self._normalized_names[variable.name] = _INDEX_PATH.sub("[*]", variable.name)
+            self._array_variables[self._normalized_names[variable.name]] = variable
             if variable.address_of:
                 self._address_names.setdefault(variable.address_of, []).append(variable.name)
 
@@ -373,7 +377,7 @@ class Interpreter:
         if helper.name in self._local_stack or len(expression.args) != len(helper.params):
             return _UNKNOWN
         actuals = []
-        for (type_name, _), actual in zip(helper.params, expression.args):
+        for (type_name, formal), actual in zip(helper.params, expression.args):
             if "*" in type_name:
                 target = self._path(actual.x) if isinstance(actual, Unary) and actual.op == "&" else self._path(actual)
                 if not target:
@@ -381,7 +385,8 @@ class Interpreter:
                 actuals.append(("pointer", target))
                 continue
             source = self._path(actual) if isinstance(actual, (Ref, MemberE, Index)) else ""
-            members = self._aggregate(source)
+            aggregate = any(leaf.name.startswith((formal + ".", formal + "[")) for leaf in helper.leaves)
+            members = self._aggregate(source) if aggregate else {}
             if members:
                 actuals.append(("aggregate", members))
                 continue
@@ -391,13 +396,14 @@ class Interpreter:
             actuals.append(("scalar", value))
         cached = self._local_roots.get(helper.name)
         if cached is None or cached[0] is not helper.body:
-            cached = helper.body, self._decl_roots(helper.body)
+            roots = {name for _, name in helper.params} | self._decl_roots(helper.body)
+            prefixes = tuple(prefix for root in roots for prefix in (root + ".", root + "["))
+            cached = helper.body, cache(lambda name: name in roots or name.startswith(prefixes))
             self._local_roots[helper.name] = cached
-        roots = {name for _, name in helper.params} | cached[1]
         # Only names owned by the helper frame are snapshotted. Global/output state
         # intentionally remains live so pointer writes and global writes can escape
         # the helper exactly as they would in C.
-        snapshot = self._save_frame(roots)
+        snapshot = self._save_frame(cached[1])
         recording = self.recording
         self._local_stack.append(helper.name)
         try:
@@ -445,10 +451,8 @@ class Interpreter:
         visit(statements)
         return roots
 
-    def _save_frame(self, roots):
+    def _save_frame(self, owned):
         """Snapshot environment entries that belong to a local helper frame."""
-        prefixes = tuple(prefix for root in roots for prefix in (root + ".", root + "["))
-        owned = lambda name: name in roots or name.startswith(prefixes)
         return (owned, {name: value for name, value in self.env.items() if owned(name)},
                 {name: value for name, value in self.aliases.items() if owned(name)},
                 {name for name in self.pointers if owned(name)},
@@ -499,7 +503,11 @@ class Interpreter:
 
     def _record(self, decision_id, outcome, leaves=()):
         """Record decision coverage plus the observed short-circuit pattern."""
-        if not self.recording or decision_id not in self.decision_expr:
+        if not self.recording:
+            # Helper paths guide search without entering the caller's coverage map.
+            self.result.helper_conditions.setdefault((self._local_stack[-1], decision_id), set()).add(tuple(leaves) if leaves else (outcome,))
+            return
+        if decision_id not in self.decision_expr:
             return
         self.outcomes[decision_id] = outcome
         self.observed.setdefault(decision_id, set()).add(outcome)
@@ -675,7 +683,7 @@ class Interpreter:
         Python integers do not overflow, so values are masked to the declared bit
         width and then converted back from two's-complement for signed C types.
         """
-        variable = self.inventory.find(path)
+        variable = self.inventory.find(path) or self._array_variables.get(self._normalized_path(path))
         if variable is None or not isinstance(value, int):
             return value
         value &= (1 << variable.ctype.bits) - 1
