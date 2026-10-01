@@ -17,7 +17,7 @@ import yaml
 from clone_tessy_project import TessyProjectCloner
 from tessy_compilation import Tessy_Compilation
 from utgen.assembler import RowAssembler
-from utgen.db import ModuleIndexer, XmlDbReader, XmlDbWriter
+from utgen.db import ModuleIndexer, XmlDbWriter
 from utgen.interp import Interpreter, Verifier
 from utgen.mcdc import McdcGenerator
 from utgen.model import AssemblyResult, Direction, GeneratedRowProvenance, Inventory, TestRow
@@ -76,11 +76,11 @@ _WORKER_ANALYSIS = None
 _WORKER_PROFILE_DIR = None
 
 
-def initialize_worker(database, profile_dir=None):
-    """Load the Analysis DB once when a worker starts."""
+def initialize_worker(analysis, profile_dir=None):
+    """Reuse the indexed graph; spawn preserves its shared objects."""
 
     global _WORKER_ANALYSIS, _WORKER_PROFILE_DIR
-    _WORKER_ANALYSIS = XmlDbReader().read(Path(database))
+    _WORKER_ANALYSIS = analysis
     _WORKER_PROFILE_DIR = None if profile_dir is None else Path(profile_dir)
 
 
@@ -118,12 +118,12 @@ def _generate_function(function_name):
         return "error", f"{type(error).__name__}: {error}"
 
 
-def start_worker(context, database, profile_dir=None, processes=8):
+def start_worker(context, analysis, profile_dir=None, processes=8):
     pools = [
         context.Pool(
             processes=1,
             initializer=initialize_worker,
-            initargs=(database, profile_dir),
+            initargs=(analysis, profile_dir),
         )
         for _ in range(processes)
     ]
@@ -177,11 +177,10 @@ def _print_function_progress(current, total, name, elapsed, status=None):
 
 
 def generate_module(project, module, include_dirs=(), profile_dir=None):
-    """Index and generate one module using a temporary worker DB.
+    """Index once and pass the precomputed graph to each worker.
 
-    The iteration workflow owns the accepted project-scoped DB.  Workers still
-    consume the existing XML representation, but it is kept in a temporary
-    directory and never becomes a second source of truth.
+    The iteration workflow owns the accepted project-scoped XML DB. Its temporary
+    export is separate from worker transport, which preserves object sharing.
     """
 
     root = Path(project.get("root_path", "."))
@@ -232,7 +231,7 @@ def generate_module(project, module, include_dirs=(), profile_dir=None):
                     f"{process_count} workers..."
                 )
                 worker_pools = start_worker(
-                    context, database, worker_profile_dir, process_count
+                    context, analysis, worker_profile_dir, process_count
                 )
                 remaining = iter(functions)
                 for pool in worker_pools:
@@ -284,7 +283,7 @@ def generate_module(project, module, include_dirs=(), profile_dir=None):
                         next_function = next(remaining, None)
                         if next_function is not None:
                             replacement = start_worker(
-                                context, database, worker_profile_dir, 1
+                                context, analysis, worker_profile_dir, 1
                             )[0]
                             worker_pools.append(replacement)
                             active[replacement] = _submit_function(
