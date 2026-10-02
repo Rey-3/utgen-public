@@ -19,7 +19,7 @@ from tessy_excel import (
     write_testlist_cells,
 )
 from ..state import ordered_active_rows
-from ..values import flatten_values, project_generated_values
+from ..values import flatten_values, pointer_member_storage, project_generated_values
 from ._tessy_workbook_io import (
     CellValue,
     DirectionToken,
@@ -653,38 +653,47 @@ def _is_null_pointer_address(value: str) -> bool:
     return token == "NULL" or re.fullmatch(r"0[uUlL]*", token) is not None
 
 
-def _flatten_channel(function: Mapping[str, Any], row: Mapping[str, Any] | None, channel: str) -> dict[str, str]:
+def _flatten_channel(function: Mapping[str, Any], row: Mapping[str, Any] | None, channel: str, members) -> dict[str, str]:
     variables = function["variables"]
     values = row[channel] if row is not None else project_generated_values({}, variables, channel)
     flat = flatten_values(values, variables, channel=channel)
     pointer_roots = _pointer_roots(function)
     projected: dict[str, str] = {}
     for name, value in flat.items():
-        if name.startswith("@") and name[1:] in pointer_roots:
+        if name in members:
+            storage, _ = members[name]
+            pairs = ((name, "NULL" if value.strip() == "NULL" else storage),
+                     (storage, "0" if value.strip() == "NULL" else value))
+        elif name.startswith("@") and name[1:] in pointer_roots:
             if channel != "input":
                 continue
             root = name[1:]
             target = root
             value = "NULL" if _is_null_pointer_address(value) else f"tessy_{root}"
+            pairs = ((target, value),)
         else:
             root = re.split(r"[.\[]", name, maxsplit=1)[0]
             target = f"tessy_{name}" if root in pointer_roots else name
-        if target in projected:
-            raise WorkbookValidationError(
-                "POINTER_ALIAS_COLLISION",
-                f"TESSY projection maps more than one JSON value to {target!r}",
-            )
-        projected[target] = value
+            pairs = ((target, value),)
+        for target, value in pairs:
+            if target in projected:
+                raise WorkbookValidationError(
+                    "POINTER_ALIAS_COLLISION",
+                    f"TESSY projection maps more than one JSON value to {target!r}",
+                )
+            projected[target] = value
     return projected
 
 
 def _project_rows(function: Mapping[str, Any], rows: list[tuple[str, dict]]):
+    members = pointer_member_storage(function["variables"])
+    storage_types = dict(members.values())
     if rows:
-        input_flat = _flatten_channel(function, rows[0][1], "input")
-        output_flat = _flatten_channel(function, rows[0][1], "output")
+        input_flat = _flatten_channel(function, rows[0][1], "input", members)
+        output_flat = _flatten_channel(function, rows[0][1], "output", members)
     else:
-        input_flat = _flatten_channel(function, None, "input")
-        output_flat = _flatten_channel(function, None, "output")
+        input_flat = _flatten_channel(function, None, "input", members)
+        output_flat = _flatten_channel(function, None, "output", members)
     columns = []
     typed_roots: set[str] = set()
     pointer_roots = _pointer_roots(function)
@@ -702,17 +711,17 @@ def _project_rows(function: Mapping[str, Any], rows: list[tuple[str, dict]]):
         *(name for name in input_names if not is_parameter_column(name)),
     ]
     for name in ordered_input_names:
-        columns.append((name, "input", _column_direction_token(function, name, "input", typed_roots)))
+        columns.append((name, "input", _column_direction_token(function, name, "input", typed_roots, members, storage_types)))
     for name in output_flat:
-        columns.append((name, "output", _column_direction_token(function, name, "output", typed_roots)))
+        columns.append((name, "output", _column_direction_token(function, name, "output", typed_roots, members, storage_types)))
     projected = []
     for row_id, row in rows:
         projected.append(
             {
                 "id": row_id,
                 "description": row["description"],
-                "input": _flatten_channel(function, row, "input"),
-                "output": _flatten_channel(function, row, "output"),
+                "input": _flatten_channel(function, row, "input", members),
+                "output": _flatten_channel(function, row, "output", members),
             }
         )
     return columns, projected
@@ -723,10 +732,19 @@ def _column_direction_token(
     name: str,
     channel: str,
     typed_roots: set[str],
+    members,
+    storage_types,
 ) -> str:
     direction = "in" if channel == "input" else "out"
     if channel == "output" and name.endswith("()"):
         return "o"
+    if name in members:
+        return convertDirectionToTessyFormat(direction, name, show_type=False)
+    if name in storage_types:
+        root = name.split("[")[0]
+        show_type = root not in typed_roots
+        typed_roots.add(root)
+        return convertDirectionToTessyFormat(direction, name, storage_types[name], show_type)
 
     pointer_roots = _pointer_roots(function)
     if channel == "input" and name in pointer_roots:

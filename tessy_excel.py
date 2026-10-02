@@ -1,7 +1,25 @@
 from datetime import date
+from collections import Counter
 import os
+import re
 
 from openpyxl import load_workbook
+
+
+def pointer_member_storage_names(paths, reserved_names=()):
+    """Name separate pointee storage while retaining every array dimension."""
+    stems = {path: re.sub(r'\[\d+\]', '', path.rsplit('.', 1)[-1])
+             + ('_array' if '[' in path else '') for path in paths}
+    counts = Counter(stems.values())
+    result = {}
+    for path, stem in stems.items():
+        if counts[stem] > 1 or 'tessy_' + stem in reserved_names:
+            owner = re.sub(r'\[\d+\]', '', path)
+            stem = re.sub(r'[^A-Za-z0-9_]', '_', owner) + ('_array' if '[' in path else '')
+        result[path] = 'tessy_' + stem + ''.join(re.findall(r'\[\d+\]', path))
+    if len(set(result.values())) != len(result):
+        raise ValueError("struct pointer storage names collide")
+    return result
 
 ### need to install https://openpyxl.readthedocs.io/en/stable/
 def writeGeneralSheet(ws, project_name, module_name, func_name, export_date=None):
@@ -78,7 +96,7 @@ def updateTestlistToExcel(func , templateFile , saveFileName , testList , testMe
     typed_vars = set()
     for name, direction, fmt in zip(arg_name, arg_direction, arg_format):
         channel = "input" if direction in {"in", "inout"} else "output"
-        base = name.split('.')[0]
+        base = name.split('.')[0].split('[')[0]
         columns.append((name, channel, convertDirectionToTessyFormat(direction, name, fmt, name.startswith("tessy_") and base not in typed_vars)))
         typed_vars.add(base)
     rows = []

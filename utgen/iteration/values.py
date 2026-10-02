@@ -7,6 +7,8 @@ from copy import deepcopy
 import re
 from typing import Any
 
+from tessy_excel import pointer_member_storage_names
+from ..model import expand_array_names
 from .validation import (
     StateValidationError,
     _CHANNELS,
@@ -131,6 +133,37 @@ def metadata_variables(metadata: Mapping[str, Any]) -> Mapping[str, Any]:
     """Convert FunctionIR/Inventory leaves or plain metadata into state specs."""
 
     return _metadata_variables(metadata)
+
+
+def pointer_member_storage(variables: Mapping[str, Any]) -> dict[str, tuple[str, str]]:
+    """Map struct pointer leaves to their backing cell and pointee declaration."""
+    declared = {}
+
+    def collect(spec, path):
+        path += ''.join(f'[{size}]' for size in spec.get('dimensions', []))
+        if 'fields' in spec:
+            for name, child in spec['fields'].items():
+                collect(child, f'{path}.{name}')
+        elif '.' in path and spec.get('pointer', spec.get('is_pointer', False)):
+            declared[path] = spec
+
+    for root, spec in variables.items():
+        # An @ control already projects the entire pointed-to object.
+        if not root.startswith('@') and f'@{root}' not in variables:
+            collect(spec, root)
+    result = {}
+    reserved = set(variables) | {f'tessy_{name[1:]}' for name in variables if name.startswith('@')}
+    storage_names = pointer_member_storage_names(declared, reserved)
+    for path, spec in declared.items():
+        storage = storage_names[path]
+        if storage.split('[')[0] in reserved:
+            _fail(f'struct pointer storage conflicts with a variable: {storage!r}')
+        shape = ''.join(re.findall(r'\[\d+\]', path))
+        type_hint = spec['type'] + (' ' + shape if shape else '')
+        names = expand_array_names(path) if shape else [path]
+        targets = expand_array_names(storage) if shape else [storage]
+        result.update({name: (target, type_hint) for name, target in zip(names, targets)})
+    return result
 
 
 def project_variable_schema(spec: Mapping[str, Any], root: str, paths: set[str]) -> dict | None:

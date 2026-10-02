@@ -10,6 +10,7 @@ from .values import (
     flatten_values,
     infer_variable_schema,
     nest_values,
+    pointer_member_storage,
     project_generated_values,
     project_variable_schema,
     sync_row_schema,
@@ -33,7 +34,9 @@ def _pointer_roots(function: Mapping) -> set[str]:
     }
 
 
-def _workbook_state_name(function: Mapping, name: str, channel: str) -> str:
+def _workbook_state_name(function: Mapping, name: str, channel: str, storage_members) -> str:
+    if name in storage_members:
+        return storage_members[name]
     pointer_roots = _pointer_roots(function)
     if channel == "input" and name in pointer_roots:
         return f"@{name}"
@@ -62,11 +65,12 @@ def _pointer_address_state_value(name: str, value: str) -> str:
 
 def extend_workbook_variables(functions: Mapping, function: dict, cases, columns=()) -> bool:
     grouped = {}
+    storage_members = {storage: name for name, (storage, _) in pointer_member_storage(function["variables"]).items()}
     for column in columns or ():
         name = getattr(column, "name", None) or getattr(getattr(column, "key", None), "canonical_name", None)
         channel = getattr(column, "channel", None)
         if isinstance(name, str) and channel in {"input", "output"}:
-            name = _workbook_state_name(function, name, channel)
+            name = _workbook_state_name(function, name, channel, storage_members)
         root = _state_value_root(name) if name else None
         if name and root:
             grouped.setdefault(root, [set(), []])[0].add(name)
@@ -81,7 +85,7 @@ def extend_workbook_variables(functions: Mapping, function: dict, cases, columns
             for key in cells:
                 name = key if isinstance(key, str) else getattr(key, "canonical_name", None)
                 if isinstance(name, str) and name:
-                    name = _workbook_state_name(function, name, channel)
+                    name = _workbook_state_name(function, name, channel, storage_members)
                     root = _state_value_root(name)
                     grouped.setdefault(root, [set(), []])[0].add(name)
 
@@ -141,6 +145,11 @@ def snapshot_values(case, function: dict, channel: str, allow_missing: bool) -> 
     variables = function["variables"]
     defaults = flatten_values(project_generated_values({}, variables, channel), variables, channel)
     flat = {}
+    members = pointer_member_storage(variables)
+    storage_members = {storage: name for name, (storage, _) in members.items()}
+    workbook_names = {key if isinstance(key, str) else getattr(key, "canonical_name", None) for key in cells}
+    address_columns = {name for name, (storage, _) in members.items() if storage in workbook_names}
+    addresses = {}
     pointer_roots = _pointer_roots(function)
     for key, cell in cells.items():
         workbook_name = key if isinstance(key, str) else getattr(key, "canonical_name", None)
@@ -148,10 +157,15 @@ def snapshot_values(case, function: dict, channel: str, allow_missing: bool) -> 
             raise ValueError("workbook value column has no canonical name")
         if not isinstance(key, str) and getattr(key, "channel", channel) != channel:
             raise ValueError(f"workbook value channel mismatch for {workbook_name!r}")
-        name = _workbook_state_name(function, workbook_name, channel)
+        name = _workbook_state_name(function, workbook_name, channel, storage_members)
         if name not in defaults:
             raise ValueError(f"workbook value path is outside metadata: {workbook_name!r}")
-        if name in flat:
+        raw = getattr(cell, "raw_text", cell)
+        is_member_address = workbook_name in members and (
+            workbook_name in address_columns or raw == members[workbook_name][0]
+        )
+        destination = addresses if is_member_address else flat
+        if name in destination:
             raise ValueError(f"duplicate workbook value path: {workbook_name!r}")
 
         kind = getattr(cell, "kind", "value")
@@ -160,19 +174,35 @@ def snapshot_values(case, function: dict, channel: str, allow_missing: bool) -> 
                 raise ValueError(f"workbook missing cell cannot update an existing row: {workbook_name!r}")
             continue
         if kind == "explicit_empty":
+            if is_member_address:
+                raise ValueError(f"workbook pointer address cannot be empty: {workbook_name!r}")
             flat[name] = ""
             continue
         if kind != "value":
             raise ValueError(f"workbook {kind} cell cannot become a JSON lexeme: {workbook_name!r}")
-        raw = getattr(cell, "raw_text", cell)
         if not isinstance(raw, str) or not raw:
             raise ValueError(f"workbook value {workbook_name!r} is not a non-empty lexeme")
         if name.startswith("@") and name[1:] in pointer_roots:
             raw = _pointer_address_state_value(name, raw)
-        flat[name] = raw
+        destination[name] = raw
 
     if not allow_missing and set(defaults) - set(flat):
         raise ValueError("workbook is missing one or more schema value cells")
+    for name in defaults.keys() & members.keys():
+        if name not in addresses:
+            # Older JSON exports stored the pointee directly in the member cell.
+            if name in flat and name not in address_columns:
+                continue
+            if not allow_missing:
+                raise ValueError(f"workbook is missing a pointer address: {name!r}")
+            continue
+        storage = members[name][0]
+        address = addresses[name].strip()
+        if address == "NULL":
+            flat[name] = "NULL"
+        elif address != storage:
+            raise ValueError(f"workbook pointer {name!r} must be NULL or {storage}, got {address!r}")
+
     defaults.update(flat)
     return nest_values(defaults, variables, channel)
 

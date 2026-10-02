@@ -63,14 +63,14 @@ def expandSignFormat(fmt, length):
 
 def applyNullPointerRows(testCases, variableNames, variableValidRanges, testClassifications, variableDirections):
     for pointerIndex, _ in enumerate(variableNames):
-        if testClassifications[pointerIndex] != "pointer" or variableDirections[pointerIndex] != "in":
+        if testClassifications[pointerIndex] != "pointer":
             continue
         targetName = str(variableValidRanges[pointerIndex]).strip()
         if not targetName.startswith("tessy_"):
             continue
         targetIndexes = []
         for i, target in enumerate(variableNames):
-            if variableDirections[i] == "in" and (target == targetName or target.startswith(targetName + ".") or target.startswith(targetName + "[")):
+            if variableDirections[i] == variableDirections[pointerIndex] and (target == targetName or target.startswith(targetName + ".") or target.startswith(targetName + "[")):
                 targetIndexes.append(i)
         for row in testCases:
             if any(str(row[i]).strip().upper() == "NULL" for i in targetIndexes):
@@ -154,12 +154,19 @@ def Decode_Functions(inputFile, stubDir, outputDir, row_aligned=False,
         testClassification_list = []
         pointer_bases_seen = set()   # [zb] struct bases already emitted as a pointer (Error, Stat, ...)
         pointer_members_seen = set() # [zb] member-pointer tessy vars already emitted (StatePtr, ...)
-        # [zb] a struct base is a *whole-struct* pointer only if every member of it is a pointer;
-        # if only some members are pointers we emit a var for that specific member instead.
+        # New XML identifies member pointers explicitly; retain the old heuristic
+        # for XML without that metadata.
         whole_struct = {}
         for arg in func.findall('argument'):
             b = arg.attrib['name'].split('.')[0]
-            whole_struct[b] = whole_struct.get(b, True) and arg.attrib.get('pointer') == "true"
+            whole_struct[b] = (whole_struct.get(b, True) and arg.attrib.get('pointer') == "true"
+                               and arg.attrib.get('pointer_member') != "true")
+        roots = {arg.attrib['name'].split('.')[0].split('[')[0] for arg in func.findall('argument')}
+        member_storage = pointer_member_storage_names(
+            (arg.attrib['name'] for arg in func.findall('argument')
+             if arg.attrib.get('pointer') == "true" and not whole_struct[arg.attrib['name'].split('.')[0]]),
+            roots | {'tessy_' + base.split('[')[0] for base, pointer in whole_struct.items() if pointer},
+        )
         for arg in func.findall('argument'):
             a = arg.attrib
             if not all(k in a for k in ('name', 'len', 'format', 'direction', 'pointer')):
@@ -194,16 +201,12 @@ def Decode_Functions(inputFile, stubDir, outputDir, row_aligned=False,
                     variableOutputRange_list.append(expected[index])
                     testClassification_list.append(a.get('testmethod', 'decision'))
             elif a['pointer'] == "true":
-                # [zb] only this member of the struct is a pointer -> emit a var for the specific member,
-                # not the whole struct. the pointer target is a scalar sized by len (unsigned char/long/...),
-                # NOT the enclosing struct type. array base (lol[N].abc) -> tessy_abc_array[N], one element per member.
-                member = re.sub(r'\[\d+\]', '', a['name'].split('.')[-1])
-                target = expandSignFormat('unsigned', a['len'])
-                is_array = len(names) > 1
-                tessy_var = "tessy_" + member + ("_array" if is_array else "")
-                # [zb] one tessy element per struct member; expandArrayName gives tessy_abc_array[0..N-1]
-                # (the type [N] is shown only on [0], see convertDirectionToTessyFormat dedup).
-                tessy_cols = expandArrayName(tessy_var + "[%d]" % len(names)) if is_array else [tessy_var]
+                # Allocate one pointee per member, retaining nested array dimensions.
+                target = a.get('pointee_type') or expandSignFormat('unsigned', a['len'])
+                declaration = member_storage[a['name']]
+                tessy_var = declaration.split('[')[0]
+                shape = ''.join(re.findall(r'\[\d+\]', declaration))
+                tessy_cols = expandArrayName(declaration)
                 for n, tc in zip(names, tessy_cols):
                     variableName_list.append(n)
                     variableLength_list.append(a['len'])
@@ -213,17 +216,18 @@ def Decode_Functions(inputFile, stubDir, outputDir, row_aligned=False,
                         variableValidRange_list.append("NULL")
                     else:
                         variableValidRange_list.append(tc)
-                    variableOutputRange_list.append("0")
+                    variableOutputRange_list.append(tc)
                     testClassification_list.append("pointer")
                 if tessy_var not in pointer_members_seen:
                     pointer_members_seen.add(tessy_var)
-                    tessy_fmt = target + " [%d]" % len(names) if is_array else target
+                    tessy_fmt = target + (' ' + shape if shape else '')
+                    ranges = expandArrayRanges(_pointer_input_range(a, a.get('output', '0')), len(names))
                     for index, tc in enumerate(tessy_cols):
                         variableName_list.append(tc)
                         variableLength_list.append(a['len'])
                         variableFormat_list.append(tessy_fmt)
                         variableDirection_list.append("inout")
-                        variableValidRange_list.append(_pointer_input_range(a, expected[index]))
+                        variableValidRange_list.append(ranges[index])
                         variableOutputRange_list.append(expected[index])
                         testClassification_list.append(a.get('testmethod', 'decision'))
             else:
