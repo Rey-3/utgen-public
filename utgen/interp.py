@@ -137,14 +137,13 @@ class Interpreter:
                 # be preserved from the IR expression.
                 if not self._set_alias(path, statement.init):
                     self.env[path] = self._eval(statement.init)
-            elif isinstance(statement.init, CallE) and self._struct_stub(statement.init.name):
-                self.aliases[statement.name] = f"tessy_{statement.init.name}"
+            elif self._copy_aggregate(statement.name, statement.init):
+                pass
             else:
                 self.env[statement.name] = self._eval(statement.init)
         elif isinstance(statement, Assign):
             path = self._path(statement.lhs)
-            if isinstance(statement.value, CallE) and self._struct_stub(statement.value.name):
-                self.aliases[path] = f"tessy_{statement.value.name}"
+            if statement.op == "=" and path not in self.pointers and self._copy_aggregate(path, statement.value):
                 return None
             if path in self.pointers and self._set_alias(path, statement.value):
                 return None
@@ -216,12 +215,7 @@ class Interpreter:
         still refers to the source-level local name. This bridge makes both names
         refer to the same simulated storage.
         """
-        local = self._path(Ref(declaration.name, declaration.scope))
-        for variable in self.inventory.inputs():
-            name = variable.name
-            if name == declaration.static_name or name.startswith((declaration.static_name + ".", declaration.static_name + "[")):
-                path = self._normalized_path(local + name[len(declaration.static_name):])
-                self.env[path] = self._read(name)
+        self.aliases[declaration.name] = declaration.static_name
 
     def _eval(self, expression):
         """Evaluate an IR expression to a concrete value or ``_UNKNOWN``.
@@ -431,8 +425,24 @@ class Interpreter:
         if not source:
             return {}
         prefixes = source + ".", source + "["
-        return {name[len(source):]: value for name, value in self.env.items()
-                if name.startswith(prefixes)}
+        members = {name[len(source):]: value for name, value in self.env.items()
+                   if name.startswith(prefixes)}
+        for variable in self.inventory.variables:
+            if variable.name.startswith(prefixes):
+                for name in expand_array_names(variable.name) or (variable.name,):
+                    members[name[len(source):]] = self._read(name)
+        return members
+
+    def _copy_aggregate(self, target, expression):
+        source = self._path(expression)
+        if not source or self._normalized_path(source) in self._array_variables:
+            return False
+        members = self._aggregate(source)
+        if not members:
+            return False
+        for suffix, value in members.items():
+            self.env[target + suffix] = self._wrap(target + suffix, value)
+        return True
 
     @staticmethod
     def _decl_roots(statements):
@@ -626,6 +636,8 @@ class Interpreter:
         """Convert an lvalue-like IR expression into the environment key used for storage."""
         if isinstance(expression, Ref):
             return self.aliases.get(expression.path, expression.path)
+        if isinstance(expression, CallE) and self._struct_stub(expression.name):
+            return f"tessy_{expression.name}"
         if isinstance(expression, MemberE):
             return f"{self._path(expression.base)}.{expression.name}"
         if isinstance(expression, Index):
@@ -683,7 +695,7 @@ class Interpreter:
         Python integers do not overflow, so values are masked to the declared bit
         width and then converted back from two's-complement for signed C types.
         """
-        variable = self.inventory.find(path) or self._array_variables.get(self._normalized_path(path))
+        variable = self._array_variables.get(self._normalized_path(path))
         if variable is None or not isinstance(value, int):
             return value
         value &= (1 << variable.ctype.bits) - 1

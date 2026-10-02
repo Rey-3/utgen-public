@@ -196,6 +196,9 @@ class DecisionExtractor:
                 arms.append(_Arm(labels, statements))
             elif child.kind == CursorKind.DEFAULT_STMT:
                 arms.append(_Arm([], list(child.get_children()), True))
+            elif arms:
+                # Clang places subsequent unbraced case statements beside the label.
+                arms[-1].body.append(child)
         return arms
 
     def _case_chain(self, cursor: Cursor) -> tuple[list[Cursor], list[Cursor]]:

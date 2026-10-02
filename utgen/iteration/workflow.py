@@ -12,6 +12,7 @@ import tempfile
 
 import yaml
 
+from utgen import __version__
 from .adapters.analysis_db import AnalysisDbAdapter, AnalysisDbWriter
 from .adapters.tessy_workbook import TessyWorkbookAdapter
 from .merge import build_candidate, merge_tool, merge_user
@@ -285,6 +286,7 @@ def _module_input_hash(
         "project": project,
         "module": module_config,
         "generator_config": {
+            "version": __version__,
             "include_dirs": list(_include_dirs(config, base)),
         },
         "files": file_payload,

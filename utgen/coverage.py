@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import deque
+from fractions import Fraction
 import re
 import time
 import warnings
@@ -44,7 +45,8 @@ class CoverageGenerator:
         selected = ({decision.id for decision in function.decisions}
                     if decision_ids is None else set(decision_ids))
         targets = self._targets(function, selected)
-        index_values = self._index_values(function.body)
+        array_inputs = set()
+        index_values = self._index_values(function.body, array_inputs)
 
         # Existing rows are evidence, not automatically mutation seeds. Running them
         # once preserves any coverage they already provide while avoiding the old
@@ -90,6 +92,11 @@ class CoverageGenerator:
         controls = {}
         operands = set()
         relevant, combination_inputs = self._decision_inputs(function, inputs, selected, helpers, controls, operands)
+        for name in helpers:
+            self._index_values(function.local_functions[name].body, array_inputs)
+        individual_inputs = {leaf.name for leaf in inputs
+                             if any(re.sub(r"\[\d+\]", "[*]", leaf.name).startswith(path) for path in array_inputs)}
+        combination_inputs.update(relevant & individual_inputs)
         expanded = set(selected)
         direct = set(combination_inputs)
         for decision in function.decisions:
@@ -119,13 +126,13 @@ class CoverageGenerator:
                 # Freeze each input's representative domain to its seed.
                 # This prevents variable-to-variable probes from walking across the
                 # integer range as other inputs are mutated.
-                queue, deferred, focused_seeds = deque(), deque(), set()
+                queue, deferred, elements, focused_seeds = deque(), deque(), deque(), set()
                 for index, values in sorted(enumerate(seeds), key=lambda item: self._key(item[1]) not in preferred_seeds):
                     key = self._search_key(None, values, search_inputs)
                     if key not in focused_seeds:
                         focused_seeds.add(key)
                         frontier = queue if self._key(values) in preferred_seeds or search_inputs[0].name in operands else deferred
-                        frontier.append((index, values.copy(), 0))
+                        frontier.append((index, values.copy(), 0, False))
                 seen = {
                     self._search_key(index, values, search_inputs)
                     for index, values in enumerate(seeds)
@@ -133,31 +140,35 @@ class CoverageGenerator:
                 domains = {}
                 initial_pass = True
 
-                while queue or deferred:
+                while queue or deferred or elements:
                     if not queue:
-                        queue, deferred = deferred, queue
+                        if deferred:
+                            queue, deferred = deferred, queue
+                        else:
+                            queue, elements = elements, queue
                         initial_pass = False
-                    seed_index, base, leaf_index = queue.popleft()
+                    seed_index, base, leaf_index, individual = queue.popleft()
                     if seed_index not in helper_patterns:
                         helper_patterns[seed_index] = self._helper_patterns(
                             self._run(interpreter, function, seeds[seed_index]), helpers,
                         )
                     for leaf in search_inputs[leaf_index:]:
                         # Visit one input per seed before deeper combinations take over.
-                        if leaf_index + 1 < len(search_inputs):
+                        if not individual and leaf_index + 1 < len(search_inputs):
                             # Try direct operands in every seed before its indirect frontier.
                             frontier = queue if (not initial_pass or self._key(seeds[seed_index]) in preferred_seeds
                                                  or search_inputs[leaf_index + 1].name in operands) else deferred
-                            frontier.append((seed_index, base, leaf_index + 1))
+                            frontier.append((seed_index, base, leaf_index + 1, False))
+                        if not individual and leaf.name in individual_inputs:
+                            # Uniform controls get a complete pass before element combinations.
+                            elements.append((seed_index, base, leaf_index, True))
                         domain_key = seed_index, leaf.name
                         if domain_key not in domains:
                             domains[domain_key] = self._values(
                                 leaf, function, seeds[seed_index], index_values, expanded,
                             )
-                        for value in domains[domain_key]:
-                            if value == base.get(leaf.name):
-                                continue
-                            candidate = base | {leaf.name: value}
+                        for candidate in self._mutations(leaf, base, domains[domain_key],
+                                                         individual):
                             search_key = self._search_key(seed_index, candidate, search_inputs)
                             if search_key in seen:
                                 continue
@@ -224,13 +235,13 @@ class CoverageGenerator:
                                 next_leaf = 0 if gained or novel or control_progress else (leaf_index + 1) % len(search_inputs)
                                 # Helper-only progress must not starve the remaining inputs.
                                 if gained or novel or control_progress or not operand_outputs:
-                                    queue.appendleft((new_index, candidate, next_leaf))
+                                    queue.appendleft((new_index, candidate, next_leaf, False))
                                 else:
-                                    deferred.append((new_index, candidate, next_leaf))
+                                    deferred.append((new_index, candidate, next_leaf, False))
                                 if next_leaf:
-                                    deferred.append((new_index, candidate, 0))
-                            elif leaf.name in combination_inputs:
-                                deferred.append((seed_index, candidate, 0))
+                                    deferred.append((new_index, candidate, 0, False))
+                            elif leaf.name in combination_inputs and candidate.get(leaf.name) != base.get(leaf.name):
+                                deferred.append((seed_index, candidate, 0, False))
                         break
 
             observed_results = [result for _, _, result in evidence] + search_results
@@ -255,6 +266,7 @@ class CoverageGenerator:
             guard_inputs, guard_combinations = self._decision_inputs(function, inputs, (guard_id,), helpers, controls)
             relevant.update(guard_inputs)
             combination_inputs.update(guard_combinations)
+            combination_inputs.update(guard_inputs & individual_inputs)
 
     def _run(self, interpreter, function, values, key=None):
         """Execute one normalized input set, caching identical executions."""
@@ -297,6 +309,8 @@ class CoverageGenerator:
                 continue
             targets.add((decision.id, False))
             targets.add((decision.id, True))
+            if decision.kind == "case":
+                continue
             for index, atom in enumerate(atoms_of(decision.expr)):
                 targets.add((decision.id, atom_text(atom), False))
                 targets.add((decision.id, atom_text(atom), True))
@@ -341,7 +355,8 @@ class CoverageGenerator:
     @staticmethod
     def _values(leaf, function: FunctionIR, base=None, extra=(), decision_ids=None) -> tuple:
         """Build finite representative mutations for the active dependency set."""
-        values = {leaf.ctype.lo, leaf.ctype.hi, 0, 1, 2, 3, *extra}
+        values = {leaf.ctype.lo, leaf.ctype.hi, 0, 1, 2, 3, *extra,
+                  *(value for _, value in leaf.ctype.enum_values)}
         if base is not None and isinstance(base.get(leaf.name), int):
             values.add(base[leaf.name])
 
@@ -373,8 +388,12 @@ class CoverageGenerator:
                     left = CoverageGenerator._linear_value(expression.l, name, linear_values)
                     right = CoverageGenerator._linear_value(expression.r, name, linear_values)
                     if left is not None and right is not None and left[0] != right[0]:
-                        boundary = (right[1] - left[1]) // (left[0] - right[0])
-                        values.update((boundary - 1, boundary, boundary + 1))
+                        coefficient = left[0] - right[0]
+                        # Integer division crosses a comparison at the next whole quotient.
+                        offsets = (-1, 0, 1) if isinstance(coefficient, Fraction) and coefficient.denominator != 1 else (0,)
+                        for offset in offsets:
+                            boundary = (right[1] - left[1] + offset) // coefficient
+                            values.update((boundary - 1, boundary, boundary + 1))
                 if is_dataclass(expression):
                     for item in fields(expression):
                         probe(getattr(expression, item.name))
@@ -395,7 +414,7 @@ class CoverageGenerator:
 
     @staticmethod
     def _linear_value(expression, name, values):
-        """Resolve an additive expression as coefficient * input + offset."""
+        """Resolve additive expressions and constant division as coefficient * input + offset."""
         if isinstance(expression, Const) and isinstance(expression.value, int):
             return 0, expression.value
         if isinstance(expression, Cast):
@@ -408,13 +427,26 @@ class CoverageGenerator:
             value = values.get(path)
             if isinstance(value, int):
                 return 0, value
-        if isinstance(expression, Binop) and expression.op in ("+", "-"):
+        if isinstance(expression, Binop) and expression.op in ("+", "-", "/"):
             left = CoverageGenerator._linear_value(expression.l, name, values)
             right = CoverageGenerator._linear_value(expression.r, name, values)
             if left is not None and right is not None:
+                if expression.op == "/":
+                    if right[0] or not right[1]:
+                        return None
+                    return Fraction(left[0]) / right[1], Fraction(left[1]) / right[1]
                 sign = 1 if expression.op == "+" else -1
                 return left[0] + sign * right[0], left[1] + sign * right[1]
         return None
+
+    @staticmethod
+    def _mutations(leaf, base, values, individual=False):
+        # Keep uniform probes, then vary individual elements for mixed/counted states.
+        names = (leaf.name, *((expand_array_names(leaf.name) or ()) if individual else ()))
+        for name in names:
+            for value in values:
+                if value != base.get(name, base.get(leaf.name, 0)):
+                    yield base | {name: value}
 
     @staticmethod
     def _search_key(seed_index, values, search_inputs) -> tuple:
@@ -740,13 +772,15 @@ class CoverageGenerator:
         return ""
 
     @staticmethod
-    def _index_values(value) -> set[int]:
-        """Collect literal array indices used by the function body as useful probes."""
+    def _index_values(value, arrays=None) -> set[int]:
+        """Collect literal index probes and dynamically indexed array paths."""
         values = set()
 
         def visit(item):
             if isinstance(item, Index) and isinstance(item.idx, Const) and isinstance(item.idx.value, int):
                 values.add(item.idx.value)
+            elif isinstance(item, Index) and arrays is not None:
+                arrays.add(CoverageGenerator._expression_path(item))
             if is_dataclass(item):
                 for child in fields(item):
                     visit(getattr(item, child.name))
