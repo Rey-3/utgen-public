@@ -35,6 +35,12 @@ and run:
 python tests/runtime_mcdc_pdm.py
 ```
 
+This runs the 17 PDM targets in `tests/c_samples/pdm_mos_mcdc_targets.c`
+and the 9 PDC/PNG targets in `tests/c_samples/other_modules_mcdc_targets.c`.
+The examples include their real decision helpers; only external RTE calls are
+stubbed. Local static inputs are injected through temporary C copies under
+`generated/llvm_mcdc`, leaving the example bodies intact.
+
 The script requires **100% branch coverage and 100% MC/DC coverage** for each
 target function. A coverage failure after successful compilation means the
 generated test inputs leave coverage gaps; reinstalling build tools will not
