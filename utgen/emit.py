@@ -31,6 +31,8 @@ class ValueXmlWriter:
             attrs = {"name": leaf.name, "len": _validation_len(leaf), "format": leaf.fmt,
                      "direction": leaf.direction.value, "pointer": _bool(leaf.is_pointer)}
             address = _pointer_address(leaf.name, addresses)
+            if leaf.is_pointer and address is None and "." in leaf.name:
+                attrs.update(pointer_member="true", pointee_type=leaf.ctype.name)
             if leaf.direction != Direction.OUT:
                 attrs["range"] = default_range if default_range is not None else _array_range(leaf, rows) or _row_range(leaf, rows, address)
                 attrs["testmethod"] = "decision"
