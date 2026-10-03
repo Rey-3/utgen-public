@@ -4,12 +4,62 @@ import os
 
 from clang.cindex import Cursor, CursorKind, TypeKind
 
-from utgen.model import CType, Direction, StubInfo, Variable
+from utgen.model import (Assign, Binop, CallE, Const, CType, Decl, Direction,
+                         ExprStmt, If, Ref, StubInfo, Variable)
 from utgen.typegraph import LeafDeriver, TypeGraph, clean_name
 
 # Common library calls are intentionally left as real calls instead of being
 # exposed as controllable TESSY stubs.
 DEFAULT_NO_STUB = ("memcpy", "memset", "memcmp", "abs")
+
+
+def prepare_snapshot_callbacks(function):
+    """Expose existing event callbacks at a stub between a snapshot and its check."""
+    # ponytail: exact bit-snapshot/public-setter patterns; other event models need explicit hooks.
+    stubs = {stub.name: stub for stub in function.stubs}
+    inputs = {leaf.name for leaf in function.leaves}
+
+    def visit(body):
+        snapshots, hook, order = {}, None, -1
+        for index, statement in enumerate(body):
+            if isinstance(statement, Decl) and isinstance(statement.init, Ref):
+                snapshots[statement.name] = (statement.init.path, index)
+            elif (isinstance(statement, Assign) and statement.op == "="
+                  and isinstance(statement.lhs, Ref) and isinstance(statement.value, Ref)):
+                snapshots[statement.lhs.path] = (statement.value.path, index)
+            if (isinstance(statement, ExprStmt) and isinstance(statement.expr, CallE)
+                    and statement.expr.name in stubs):
+                hook, order = stubs[statement.expr.name], index
+            if not isinstance(statement, If):
+                continue
+            condition = statement.condition
+            if isinstance(condition, Binop) and condition.op == "==" and hook is not None:
+                left, right = condition.l, condition.r
+                if (isinstance(left, Binop) and left.op == "&" and isinstance(left.l, Ref)
+                        and isinstance(right, Binop) and right.op == "&" and isinstance(right.l, Ref)
+                        and isinstance(left.r, Const) and left.r == right.r):
+                    for snapshot, current in ((left.l.path, right.l.path), (right.l.path, left.l.path)):
+                        source, copied_at = snapshots.get(snapshot, (None, index))
+                        if source != current or order <= copied_at:
+                            continue
+                        callbacks = [callback for callback in function.local_functions.values()
+                                     if not callback.static and not callback.params and callback.return_type == "void"
+                                     and any(isinstance(write, Assign) and write.op == "|="
+                                             and write.lhs == Ref(current) and write.value == left.r
+                                             for write in callback.body)]
+                        if len(callbacks) != 1:
+                            continue
+                        callback = callbacks[0]
+                        control = f"tessy_{hook.name}__{callback.name}"
+                        hook.callbacks[control] = callback.name
+                        if control not in inputs:
+                            inputs.add(control)
+                            function.leaves.append(Variable(control, CType("unsigned char", 1, False),
+                                                            "unsigned char", "1", Direction.IN))
+            visit(statement.then)
+            visit(statement.els)
+
+    visit(function.body)
 
 
 class StubFinder:

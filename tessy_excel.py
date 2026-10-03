@@ -41,6 +41,16 @@ def writeGeneralSheet(ws, project_name, module_name, func_name, export_date=None
     ws.cell(row=13, column=2).value = export_date
 
 
+def value_sheet_names(sheetnames):
+    """Return Values pages in numeric order, regardless of workbook tab order."""
+    pages = []
+    for name in sheetnames:
+        match = re.fullmatch(r"Values(?: ([1-9][0-9]*))?", name)
+        if match:
+            pages.append((int(match.group(1) or 0), name))
+    return [name for _, name in sorted(pages)]
+
+
 def write_testlist_cells(workbook, rows, stubs, columns):
     """Write the shared TESSY Properties/Values/Stubs cell layout.
 
@@ -52,32 +62,45 @@ def write_testlist_cells(workbook, rows, stubs, columns):
     properties = workbook["Properties"]
     values = workbook["Values"]
     stubs_sheet = workbook["Stubs"]
+    for name in value_sheet_names(workbook.sheetnames):
+        if name != "Values":
+            workbook.remove(workbook[name])
+    # Keep ordinary exports intact; oversized exports use A for labels and B:CU for values.
+    page_width = 98 if len(columns) + 1 > 16384 else 16383
+    if page_width == 98:
+        workbook.move_sheet(values, offset=len(workbook.worksheets) - 1 - workbook.index(values))
     for row in range(5, properties.max_row + 1):
         for column in range(1, max(properties.max_column, 8) + 1):
             properties.cell(row, column).value = None
     for row in range(1, values.max_row + 1):
         for column in range(1, values.max_column + 1):
             values.cell(row, column).value = None
+    if values.max_column > page_width + 1:
+        values.delete_cols(page_width + 2, values.max_column - page_width - 1)
     for row in range(5, stubs_sheet.max_row + 1):
         for column in range(1, max(stubs_sheet.max_column, 4) + 1):
             stubs_sheet.cell(row, column).value = None
 
-    for column_index, column in enumerate(columns, 2):
-        name, channel = column[:2]
-        token = column[2] if len(column) > 2 else ("i" if channel == "input" else "o")
-        values.cell(1, column_index).value = name
-        values.cell(2, column_index).value = token
     for index, row in enumerate(rows, 1):
         properties.cell(index + 4, 1).value = str(index)
         properties.cell(index + 4, 2).value = "0"
         properties.cell(index + 4, 5).value = (
             f"Test Case ID: {row['id']}\nDescription: {row['description']}"
         )
-        values.cell(index + 2, 1).value = f"tc{index}.1"
-        for column_index, column in enumerate(columns, 2):
+    for page, start in enumerate(range(0, max(1, len(columns)), page_width)):
+        target = values if page == 0 else workbook.create_sheet(f"Values {page}")
+        page_columns = columns[start:start + page_width]
+        for column_index, column in enumerate(page_columns, 2):
             name, channel = column[:2]
-            source = row["input"] if channel == "input" else row["output"]
-            values.cell(index + 2, column_index).value = source[name]
+            token = column[2] if len(column) > 2 else ("i" if channel == "input" else "o")
+            target.cell(1, column_index).value = name
+            target.cell(2, column_index).value = token
+        for index, row in enumerate(rows, 1):
+            target.cell(index + 2, 1).value = f"tc{index}.1"
+            for column_index, column in enumerate(page_columns, 2):
+                name, channel = column[:2]
+                source = row["input"] if channel == "input" else row["output"]
+                target.cell(index + 2, column_index).value = source[name]
     for index, stub in enumerate(stubs, 5):
         stubs_sheet.cell(index, 1).value = "0"
         stubs_sheet.cell(index, 2).value = "0"

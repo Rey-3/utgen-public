@@ -61,19 +61,25 @@ def parse_leaf_path(path: str) -> tuple[str | int, ...]:
 
 def flatten_values(value: dict, metadata: Mapping[str, Any], channel: str | None = None) -> dict[str, str]:
     """Flatten nested JSON values to TESSY-style leaf paths."""
+    return next(flatten_values_many((value,), metadata, channel))
+
+
+def flatten_values_many(values, metadata: Mapping[str, Any], channel: str | None = None):
+    """Flatten rows against one validated schema, checking every row's values."""
 
     variables = metadata_variables(metadata)
     selected = _selected_variables(variables, channel)
     _schema_leaves(selected)
-    value = _mapping(value, "value")
-    result: dict[str, str] = {}
-    for name, spec in selected.items():
-        if name not in value:
-            _fail(f"value is missing variable {name!r}")
-        _flatten_node(value[name], spec, name, result)
-    if set(value) - set(selected):
-        _fail("value contains a variable outside metadata")
-    return result
+    for value in values:
+        value = _mapping(value, "value")
+        result: dict[str, str] = {}
+        for name, spec in selected.items():
+            if name not in value:
+                _fail(f"value is missing variable {name!r}")
+            _flatten_node(value[name], spec, name, result)
+        if set(value) - set(selected):
+            _fail("value contains a variable outside metadata")
+        yield result
 
 
 def nest_values(flat_values: Mapping[str, str], metadata: Mapping[str, Any], channel: str | None = None) -> dict:
@@ -121,12 +127,20 @@ def sync_row_schema(row: dict, old_variables: Mapping[str, Any], new_variables: 
 def project_generated_values(values, metadata, channel: str) -> dict:
     """Project generated flat values into the validated nested state shape."""
 
+    return next(project_generated_values_many((values,), metadata, channel))
+
+
+def project_generated_values_many(values, metadata, channel: str):
+    """Project rows using one validated schema for the function and channel."""
+
     variables = metadata_variables(metadata)
     selected = _selected_variables(variables, channel)
     if not selected:
-        return {}
-    flat = _generated_flat_values(values, metadata, selected, channel)
-    return nest_values(flat, variables, channel)
+        for _ in values:
+            yield {}
+        return
+    for flat in _generated_flat_values_many(values, metadata, selected, channel):
+        yield _nest_leaves(flat, selected)
 
 
 def metadata_variables(metadata: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -578,36 +592,39 @@ def _merge_leaf_metadata(
     node.update(leaf_spec)
 
 
-def _generated_flat_values(values, metadata, selected, channel):
-    if not isinstance(values, Mapping):
-        _fail("generated values must be a mapping")
+def _generated_flat_values_many(rows, metadata, selected, channel):
     leaves = {
         leaf.name: leaf
         for leaf in _metadata_leaves(metadata)
         if _direction(getattr(leaf, "direction", None)) == channel
         or _direction(getattr(leaf, "direction", None)) == "inout"
     }
-    schema_paths = list(_schema_leaves(selected))
+    schema_paths = _schema_leaves(selected)
+    paths_by_pattern = {}
+    for path in schema_paths:
+        paths_by_pattern.setdefault(_array_pattern(path), []).append(path)
     leaf_patterns = {
         _array_pattern(name): leaf for name, leaf in leaves.items()
     }
-    flat = {}
-    for name, spec in selected.items():
-        if name in values and name not in leaves:
-            _flatten_generated_nested(values[name], spec, name, flat, leaf_patterns)
-    for name, value in values.items():
-        if name in schema_paths:
-            flat[name] = _lexeme(value, leaf_patterns.get(_array_pattern(name)))
-    for name, leaf in leaves.items():
-        if name in values:
-            lexeme = _lexeme(values[name], leaf)
-            pattern = _array_pattern(name)
-            for path in schema_paths:
-                if _array_pattern(path) == pattern:
+    for values in rows:
+        if not isinstance(values, Mapping):
+            _fail("generated values must be a mapping")
+        flat = {}
+        for name, spec in selected.items():
+            if name in values and name not in leaves:
+                _flatten_generated_nested(values[name], spec, name, flat, leaf_patterns)
+        for name, value in values.items():
+            if name in schema_paths:
+                flat[name] = _lexeme(value, leaf_patterns.get(_array_pattern(name)))
+        for name, leaf in leaves.items():
+            if name in values:
+                lexeme = _lexeme(values[name], leaf)
+                pattern = _array_pattern(name)
+                for path in paths_by_pattern.get(pattern, ()):
                     flat.setdefault(path, lexeme)
-    for name in schema_paths:
-        flat.setdefault(name, "0")
-    return flat
+        for name in schema_paths:
+            flat.setdefault(name, "0")
+        yield flat
 
 
 def _metadata_leaves(metadata):
@@ -677,11 +694,13 @@ def _json_native(value: object) -> object:
 
 __all__ = [
     "flatten_values",
+    "flatten_values_many",
     "infer_variable_schema",
     "metadata_variables",
     "nest_values",
     "parse_leaf_path",
     "project_generated_values",
+    "project_generated_values_many",
     "project_variable_schema",
     "sync_row_schema",
 ]

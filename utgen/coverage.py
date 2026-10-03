@@ -9,9 +9,9 @@ import warnings
 from dataclasses import fields, is_dataclass
 
 from utgen.interp import Interpreter
-from utgen.model import (And, Atom, Binop, CallE, Cast, Const, Direction, FunctionIR, Index,
+from utgen.model import (And, Assign, Atom, Binop, CallE, Cast, Const, Decl, Direction, DoWhile, For, FunctionIR, Index,
                          Inventory, MemberE, Not, Or, Ref, TestRow, Unary,
-                         Ternary, Unknown, atom_text, atoms_of, expand_array_names)
+                         Ternary, Unknown, While, atom_text, atoms_of, expand_array_names)
 
 
 class CoverageGenerator:
@@ -35,6 +35,7 @@ class CoverageGenerator:
         observed at the selected decision become mutation seeds. Search begins with
         the selected decision's inputs and expands to enclosing guard inputs only
         when reachability still blocks the target.
+        An empty decision selection repairs only loop outcomes.
         """
         inputs = [leaf for leaf in function.leaves if leaf.direction in (Direction.IN, Direction.INOUT)]
         if not inputs or not function.body:
@@ -44,9 +45,11 @@ class CoverageGenerator:
         self._set_function(function)
         selected = ({decision.id for decision in function.decisions}
                     if decision_ids is None else set(decision_ids))
-        targets = self._targets(function, selected)
+        targets = self._targets(function, None if decision_ids is None else selected)
         array_inputs = set()
-        index_values = self._index_values(function.body, array_inputs)
+        index_inputs = set()
+        index_values = self._index_values(function.body, array_inputs, index_inputs)
+        indexed_guards = any(re.sub(r"\[\d+\]", "[*]", leaf.name) in index_inputs for leaf in inputs)
 
         # Existing rows are evidence, not automatically mutation seeds. Running them
         # once preserves any coverage they already provide while avoiding the old
@@ -67,16 +70,22 @@ class CoverageGenerator:
         if targets <= state.covered:
             return []
 
+        loop_ids = {target[1] for target in targets - state.covered if target[0] == "loop"}
+        focus_loops = loop_ids or {id(loop) for loop in self._loops(function.body)}
+        loops_only = bool(loop_ids) and all(target[0] == "loop" for target in targets - state.covered)
+
         initial_executions = len(self._results)
 
         # Prefer symbolic rows created for this target. Rows that reached the target
         # incidentally are also good seeds. Fall back to one neutral complete row.
-        guards = self._guard_requirements(function, selected)
+        guards = [] if loops_only else self._guard_requirements(function, selected)
         seed_decisions = selected | {decision_id for decision_id, _ in guards}
         seeds, seed_keys, preferred_seeds = [], set(), set()
         for row, values, result in evidence:
             guard_seed = bool(guards) and row.intent.get(guards[-1][0]) == (not guards[-1][1])
-            if not (selected.intersection(row.intent) or selected.intersection(result.observed) or guard_seed):
+            # Incidental guard seeds help lookup paths; ordinary paths retain their intent priority.
+            observed_guard = indexed_guards and bool(guards) and (not guards[-1][1]) in result.observed.get(guards[-1][0], ())
+            if not (loops_only or selected.intersection(row.intent) or selected.intersection(result.observed) or guard_seed or observed_guard):
                 continue
             key = self._key(values)
             if selected.intersection(row.intent) or guard_seed:
@@ -92,12 +101,13 @@ class CoverageGenerator:
         controls = {}
         operands = set()
         relevant, combination_inputs = self._decision_inputs(function, inputs, selected, helpers, controls, operands)
+        if loop_ids:
+            relevant.update(leaf.name for leaf in inputs)
         for name in helpers:
-            self._index_values(function.local_functions[name].body, array_inputs)
+            self._index_values(function.local_functions[name].body, array_inputs, index_inputs)
         individual_inputs = {leaf.name for leaf in inputs
                              if any(re.sub(r"\[\d+\]", "[*]", leaf.name).startswith(path) for path in array_inputs)}
-        combination_inputs.update(relevant & individual_inputs)
-        expanded = set(selected)
+        expanded = set() if loops_only else set(selected)
         direct = set(combination_inputs)
         for decision in function.decisions:
             if decision.id in seed_decisions:
@@ -105,18 +115,135 @@ class CoverageGenerator:
                     direct.update(variable.name for variable in (atom.var, atom.rhs_var) if variable is not None)
                     if decision.id in selected:
                         operands.update(variable.name for variable in (atom.var, atom.rhs_var) if variable is not None)
-        operand_outputs = {name for leaf in inputs if leaf.direction == Direction.INOUT and leaf.name in operands
+        index_inputs = {leaf.name for leaf in inputs
+                        if re.sub(r"\[\d+\]", "[*]", leaf.name) in index_inputs}
+        symbolic_paths = {re.sub(r"\[\d+\]", "[*]", name) for name in direct}
+        indirect_arrays = {name for name in individual_inputs
+                           if re.sub(r"\[\d+\]", "[*]", name) not in symbolic_paths}
+        combination_inputs.update(relevant & (indirect_arrays | index_inputs))
+        early_elements = combination_inputs | index_inputs
+        mixed_elements = set()
+        for decision in function.decisions:
+            if decision.id in selected:
+                indices = {}
+                for atom in atoms_of(decision.expr):
+                    if atom.var is not None:
+                        indices.setdefault(atom.var.name, set()).add(tuple(re.findall(r"\[\s*(.*?)\s*\]", atom.text)))
+                mixed_elements.update(name for name, paths in indices.items() if len(paths) > 1)
+        early_elements.update(mixed_elements)
+        individual_inputs.update(mixed_elements)
+        lookup_search = bool(index_inputs) or loops_only
+        if not lookup_search:
+            focus_loops = set()
+            combination_inputs.update(relevant & individual_inputs)
+        operand_outputs = {name for leaf in inputs if not loops_only and leaf.direction == Direction.INOUT and leaf.name in operands
                            for name in expand_array_names(leaf.name) or (leaf.name,)}
         prefer_controls = any(atom.var is not None for decision in function.decisions if decision.id in selected
                               for atom in atoms_of(decision.expr))
+        prefer_indices = not loops_only and bool(operands & index_inputs)
         generated = []
         emitted = {self._key(row.values) for row in existing}
 
+        if loops_only:
+            # ponytail: cyclic table probes; exact lookup constraints if sparse keys are required.
+            cyclic = {}
+            for offset, leaf in enumerate(leaf for leaf in inputs
+                                          if leaf.name in index_inputs & individual_inputs):
+                names = expand_array_names(leaf.name)
+                if names and len(names) - 1 <= leaf.ctype.hi:
+                    cyclic.update((name, (index + offset) % len(names)) for index, name in enumerate(names))
+            if cyclic:
+                for base in seeds:
+                    candidate = base | cyclic
+                    result = self._run(interpreter, function, candidate)
+                    if state.gained(result) & targets:
+                        state.add(result)
+                        generated.append(TestRow(candidate, "Coverage", "consistent indexed loop path"))
+                        emitted.add(self._key(candidate))
+                        if targets <= state.covered:
+                            return generated
+
         # ponytail: bound candidate search per decision; dependency setup is not search time.
         deadline = time.monotonic() + self.max_seconds
+        # Reuse proven controls on seeds that reach the target. Earlier input
+        # conditions can trigger helper side effects; derived controls open
+        # short-circuited operands without repeating their precondition search.
+        if function.dataflow is not None:
+            input_names = {leaf.name for leaf in inputs}
+            for decision in function.decisions:
+                upstream = bool(operand_outputs) and bool(selected) and decision.id < min(selected)
+                if not upstream and (decision.id not in selected or len(tuple(atoms_of(decision.expr))) < 2):
+                    continue
+                try:
+                    point = function.dataflow.point(decision.id)
+                except KeyError:
+                    continue
+                for index, atom in enumerate(atoms_of(decision.expr)):
+                    name = atom.var.name if atom.var is not None else atom.text
+                    if upstream:
+                        if name not in relevant or name in operands:
+                            continue
+                        paths = {name}
+                    else:
+                        if name in input_names or re.fullmatch(r"[A-Za-z_]\w*", name) is None:
+                            continue
+                        paths = set()
+                        for flow in point.states:
+                            self._dataflow_paths(function, Ref(name), paths, flow.values, memo={"return_inputs": True})
+                    paths = {re.sub(r"\[\d+\]", "[*]", path) for path in paths}
+                    for outcome in (True, False):
+                        donor = next((values for _, values, result in evidence
+                                      if any(pattern[index] is outcome for pattern in result.conditions.get(decision.id, ()))), None)
+                        if donor is None:
+                            continue
+                        donor_controls = {name: value for name, value in donor.items()
+                                          if any(re.sub(r"\[\d+\]", "[*]", name) == path
+                                                 or name.startswith(path + ".") for path in paths)}
+                        if not donor_controls:
+                            continue
+                        for _, base, base_result in evidence:
+                            if upstream and not selected.intersection(base_result.observed):
+                                continue
+                            candidate = base | donor_controls
+                            if self._key(candidate) in emitted:
+                                continue
+                            if time.monotonic() >= deadline:
+                                break
+                            result = self._run(interpreter, function, candidate)
+                            gained = state.gained(result) & targets
+                            if gained or state.novel(result, selected):
+                                state.add(result)
+                                generated.append(TestRow(candidate, "Coverage", self._description(gained)))
+                                emitted.add(self._key(candidate))
+                                seeds.append(candidate)
+                                if targets <= state.covered:
+                                    return generated
+        # ponytail: probe shared indirect inputs together before the bounded
+        # search; mixed values still use the normal frontier.
+        if len(combination_inputs) > 1:
+            enabled = {leaf.name: min(max(1, leaf.ctype.lo), leaf.ctype.hi)
+                       for leaf in inputs if leaf.name in combination_inputs}
+            for base in tuple(seeds):
+                candidate = base | enabled
+                key = self._key(candidate)
+                if key in emitted:
+                    continue
+                if time.monotonic() >= deadline:
+                    break
+                result = self._run(interpreter, function, candidate, key)
+                gained = state.gained(result) & targets
+                if gained or state.novel(result, selected):
+                    state.add(result)
+                    generated.append(TestRow(candidate, "Coverage", self._description(gained)))
+                    emitted.add(key)
+                    seeds.append(candidate)
+                    preferred_seeds.add(key)
+                    if targets <= state.covered:
+                        return generated
         while True:
             search_inputs = [leaf for leaf in inputs if leaf.name in relevant]
-            search_inputs.sort(key=lambda leaf: (leaf.name not in operands,
+            search_inputs.sort(key=lambda leaf: (prefer_indices and leaf.name not in index_inputs,
+                                                 leaf.name not in operands,
                                                  prefer_controls and leaf.name not in controls,
                                                  controls.get(leaf.name, float("inf")) if prefer_controls else 0,
                                                  leaf.name not in direct, not leaf.name.startswith("tessy_")))
@@ -127,7 +254,11 @@ class CoverageGenerator:
                 # This prevents variable-to-variable probes from walking across the
                 # integer range as other inputs are mutated.
                 queue, deferred, elements, focused_seeds = deque(), deque(), deque(), set()
-                for index, values in sorted(enumerate(seeds), key=lambda item: self._key(item[1]) not in preferred_seeds):
+                for index, values in sorted(enumerate(seeds), key=lambda item: (
+                    bool(focus_loops) and not bool(selected.intersection(self._run(interpreter, function, item[1]).observed)),
+                    -sum(self._run(interpreter, function, item[1]).loop_iterations.get(loop_id, 0) for loop_id in focus_loops),
+                    self._key(item[1]) not in preferred_seeds,
+                )):
                     key = self._search_key(None, values, search_inputs)
                     if key not in focused_seeds:
                         focused_seeds.add(key)
@@ -139,7 +270,6 @@ class CoverageGenerator:
                 }
                 domains = {}
                 initial_pass = True
-
                 while queue or deferred or elements:
                     if not queue:
                         if deferred:
@@ -150,25 +280,29 @@ class CoverageGenerator:
                     seed_index, base, leaf_index, individual = queue.popleft()
                     if seed_index not in helper_patterns:
                         helper_patterns[seed_index] = self._helper_patterns(
-                            self._run(interpreter, function, seeds[seed_index]), helpers,
+                            self._run(interpreter, function, seeds[seed_index]), helpers, loop_ids,
                         )
                     for leaf in search_inputs[leaf_index:]:
                         # Visit one input per seed before deeper combinations take over.
                         if not individual and leaf_index + 1 < len(search_inputs):
-                            # Try direct operands in every seed before its indirect frontier.
-                            frontier = queue if (not initial_pass or self._key(seeds[seed_index]) in preferred_seeds
+                            frontier = queue if (lookup_search or not initial_pass
+                                                 or self._key(seeds[seed_index]) in preferred_seeds
                                                  or search_inputs[leaf_index + 1].name in operands) else deferred
                             frontier.append((seed_index, base, leaf_index + 1, False))
                         if not individual and leaf.name in individual_inputs:
-                            # Uniform controls get a complete pass before element combinations.
-                            elements.append((seed_index, base, leaf_index, True))
+                            # Mixed/lookup arrays need early probes; uniform controls go first otherwise.
+                            frontier = (queue if leaf.name in mixed_elements
+                                        or lookup_search and leaf.name in early_elements else elements)
+                            frontier.append((seed_index, base, leaf_index, True))
                         domain_key = seed_index, leaf.name
                         if domain_key not in domains:
                             domains[domain_key] = self._values(
-                                leaf, function, seeds[seed_index], index_values, expanded,
+                                leaf, function, seeds[seed_index], index_values, expanded, helpers,
                             )
-                        for candidate in self._mutations(leaf, base, domains[domain_key],
-                                                         individual):
+                        mutations = self._mutations(leaf, base, domains[domain_key], individual)
+                        if not loops_only and leaf.name in index_inputs:
+                            mutations = self._linked_indices(mutations, base, leaf, index_inputs)
+                        for candidate in mutations:
                             search_key = self._search_key(seed_index, candidate, search_inputs)
                             if search_key in seen:
                                 continue
@@ -189,7 +323,7 @@ class CoverageGenerator:
                             search_results.append(result)
                             gained = state.gained(result) & targets
                             novel = state.novel(result, expanded)
-                            base_result = self._run(interpreter, function, base) if helpers or guards or operand_outputs else None
+                            base_result = self._run(interpreter, function, base) if helpers or guards or operand_outputs or loop_ids else None
                             control_progress = {
                                 ("guard", decision_id, required)
                                 for decision_id, required in guards
@@ -202,9 +336,15 @@ class CoverageGenerator:
                                 ("operand", name, result.outputs[name])
                                 for name in operand_outputs
                                 if leaf.name not in operands and name in result.outputs and name in base_result.outputs
+                                and (not selected.intersection(base_result.observed) or selected.intersection(result.observed))
                                 and result.outputs[name] != base_result.outputs[name]
                             } - helper_patterns[seed_index]
-                            helper_progress = self._helper_patterns(result, helpers) - helper_patterns[seed_index]
+                            control_progress |= {
+                                ("loop", loop_id, count)
+                                for loop_id, count in result.loop_iterations.items()
+                                if loop_id in loop_ids and count > base_result.loop_iterations.get(loop_id, 0)
+                            } - helper_patterns[seed_index]
+                            helper_progress = set() if loops_only else self._helper_patterns(result, helpers) - helper_patterns[seed_index]
                             if helper_progress and selected.intersection(base_result.observed) and not selected.intersection(result.observed):
                                 helper_progress = set()
                             useful = bool(gained or novel or control_progress or helper_progress)
@@ -240,8 +380,15 @@ class CoverageGenerator:
                                     deferred.append((new_index, candidate, next_leaf, False))
                                 if next_leaf:
                                     deferred.append((new_index, candidate, 0, False))
-                            elif leaf.name in combination_inputs and candidate.get(leaf.name) != base.get(leaf.name):
-                                deferred.append((seed_index, candidate, 0, False))
+                            elif leaf.name in combination_inputs:
+                                linked = sum(value != base.get(name) for name, value in candidate.items()) > 1
+                                if prefer_indices and linked and not result.invalid_accesses and selected.intersection(result.observed):
+                                    next_leaf = next((index for index, item in enumerate(search_inputs)
+                                                      if item.name not in index_inputs), 0)
+                                    queue.appendleft((seed_index, candidate, next_leaf, False))
+                                else:
+                                    next_leaf = (leaf_index + 1) % len(search_inputs) if lookup_search else 0
+                                    deferred.append((seed_index, candidate, next_leaf, False))
                         break
 
             observed_results = [result for _, _, result in evidence] + search_results
@@ -266,7 +413,7 @@ class CoverageGenerator:
             guard_inputs, guard_combinations = self._decision_inputs(function, inputs, (guard_id,), helpers, controls)
             relevant.update(guard_inputs)
             combination_inputs.update(guard_combinations)
-            combination_inputs.update(guard_inputs & individual_inputs)
+            combination_inputs.update(guard_inputs & (indirect_arrays | index_inputs))
 
     def _run(self, interpreter, function, values, key=None):
         """Execute one normalized input set, caching identical executions."""
@@ -277,8 +424,8 @@ class CoverageGenerator:
         return self._results[key]
 
     @staticmethod
-    def _helper_patterns(result, helpers=None):
-        out = set()
+    def _helper_patterns(result, helpers=None, loop_ids=()):
+        out = {("loop", loop_id, count) for loop_id, count in result.loop_iterations.items() if loop_id in loop_ids}
         for key, patterns in getattr(result, "helper_conditions", {}).items():
             if helpers is not None and key[0] not in helpers:
                 continue
@@ -304,6 +451,9 @@ class CoverageGenerator:
         """
         targets = set()
         decision_ids = None if decision_ids is None else set(decision_ids)
+        if not decision_ids:
+            for loop in CoverageGenerator._loops(function.body):
+                targets.update((("loop", id(loop), False), ("loop", id(loop), True)))
         for decision in function.decisions:
             if decision_ids is not None and decision.id not in decision_ids:
                 continue
@@ -317,6 +467,17 @@ class CoverageGenerator:
                 if atom.var is not None:
                     targets.add((decision.id, "mcdc", index))
         return targets
+
+    @staticmethod
+    def _loops(value):
+        if isinstance(value, (For, While, DoWhile)):
+            yield value
+        if is_dataclass(value):
+            for item in fields(value):
+                yield from CoverageGenerator._loops(getattr(value, item.name))
+        elif isinstance(value, (tuple, list)):
+            for item in value:
+                yield from CoverageGenerator._loops(item)
 
     @staticmethod
     def _outcome(expr, pattern, positions):
@@ -353,7 +514,7 @@ class CoverageGenerator:
         return values
 
     @staticmethod
-    def _values(leaf, function: FunctionIR, base=None, extra=(), decision_ids=None) -> tuple:
+    def _values(leaf, function: FunctionIR, base=None, extra=(), decision_ids=None, helpers=()) -> tuple:
         """Build finite representative mutations for the active dependency set."""
         values = {leaf.ctype.lo, leaf.ctype.hi, 0, 1, 2, 3, *extra,
                   *(value for _, value in leaf.ctype.enum_values)}
@@ -361,9 +522,12 @@ class CoverageGenerator:
             values.add(base[leaf.name])
 
         selected = None if decision_ids is None else set(decision_ids)
-        for decision in function.decisions:
-            if selected is not None and decision.id not in selected:
-                continue
+        decisions = [decision for decision in function.decisions if selected is None or decision.id in selected]
+        # A caller's branch can depend on a counter updated inside a local helper.
+        # Include its real boundary; the type maximum may wrap when incremented.
+        decisions.extend(decision for name in sorted(helpers) if name in function.local_functions
+                         for decision in function.local_functions[name].decisions)
+        for decision in decisions:
             for atom in atoms_of(decision.expr):
                 left_matches = atom.var is not None and atom.var.name == leaf.name
                 right_matches = atom.rhs_var is not None and atom.rhs_var.name == leaf.name
@@ -410,7 +574,11 @@ class CoverageGenerator:
                     continue
                 for state in point.states:
                     probe(state.condition)
-        return tuple(value for value in sorted(values) if leaf.ctype.lo <= value <= leaf.ctype.hi)
+        domain = tuple(value for value in sorted(values) if leaf.ctype.lo <= value <= leaf.ctype.hi)
+        member_pointer = (leaf.is_pointer and "." in leaf.name
+                          and not any(variable.address_of == leaf.name.split(".", 1)[0].split("[", 1)[0]
+                                      for variable in function.leaves))
+        return ("NULL",) + domain if member_pointer else domain
 
     @staticmethod
     def _linear_value(expression, name, values):
@@ -449,6 +617,24 @@ class CoverageGenerator:
                     yield base | {name: value}
 
     @staticmethod
+    def _linked_indices(mutations, base, leaf, index_inputs):
+        # Lookup keys and their stored IDs often need the same new value together.
+        for candidate in mutations:
+            yield candidate
+            changed = next(name for name in candidate if candidate[name] != base.get(name))
+            old_value = base.get(changed, base.get(leaf.name, 0))
+            # ponytail: equal-valued selectors; trace lookup relations if unrelated indices dominate.
+            linked = {element: candidate[changed]
+                      for name in sorted(index_inputs - {leaf.name})
+                      for element in expand_array_names(name) or (name,)
+                      if base.get(element, base.get(name, 0)) == old_value}
+            if linked:
+                yield candidate | linked
+            if changed != leaf.name:
+                for name in sorted(index_inputs - {leaf.name}):
+                    yield candidate | {name: candidate[changed]}
+
+    @staticmethod
     def _search_key(seed_index, values, search_inputs) -> tuple:
         """Key effective inputs, including concrete array overrides, by seed."""
         key = []
@@ -456,7 +642,9 @@ class CoverageGenerator:
             default = values.get(leaf.name, 1 if leaf.address_of else 0)
             for name in expand_array_names(leaf.name) or (leaf.name,):
                 value = values.get(name, default)
-                key.append((name, 0 if value == "NULL" else value))
+                member_pointer = (leaf.is_pointer and "." in leaf.name
+                                  and f"@{leaf.name.split('.', 1)[0].split('[', 1)[0]}" not in values)
+                key.append((name, 0 if value == "NULL" and not member_pointer else value))
         return seed_index, tuple(key)
 
     @staticmethod
@@ -589,6 +777,12 @@ class CoverageGenerator:
                 controls[leaf.name] = min(distance, controls.get(leaf.name, float("inf")))
             if operands is not None and matches(leaf_name, operand_normalized):
                 operands.add(leaf.name)
+        for stub in function.stubs:
+            for control, callback in stub.callbacks.items():
+                if any(leaf.name in names and leaf.direction != Direction.IN
+                       for leaf in function.local_functions[callback].leaves):
+                    names.add(control)
+                    combination_inputs.add(control)
         return names, combination_inputs
 
     @staticmethod
@@ -607,6 +801,13 @@ class CoverageGenerator:
     @staticmethod
     def _collect_dataflow_paths(function, value, paths, bindings, seen, resolved, memo) -> None:
         """Collect input paths while preserving already-substituted value snapshots."""
+        base = value
+        while isinstance(base, (MemberE, Index, Unary)):
+            if isinstance(base, Index):
+                CoverageGenerator._dataflow_paths(
+                    function, base.idx, paths, bindings, seen, resolved=resolved, memo=memo,
+                )
+            base = base.x if isinstance(base, Unary) else base.base
         if isinstance(value, CallE):
             helper = function.local_functions.get(value.name)
             if helper is not None and ("call", helper.name) not in seen:
@@ -736,9 +937,16 @@ class CoverageGenerator:
     def _expression_paths(value, paths) -> None:
         # Keep only the complete lvalue. Recording parent paths would make every
         # sibling field under the same struct look like a decision dependency.
+        if isinstance(value, CallE):
+            CoverageGenerator._expression_paths(value.args, paths)
         path = CoverageGenerator._expression_path(value)
         if path:
             paths.add(path)
+            base = value
+            while isinstance(base, (MemberE, Index, Unary)):
+                if isinstance(base, Index):
+                    CoverageGenerator._expression_paths(base.idx, paths)
+                base = base.x if isinstance(base, Unary) else base.base
             return
         if is_dataclass(value):
             for item in fields(value):
@@ -772,15 +980,26 @@ class CoverageGenerator:
         return ""
 
     @staticmethod
-    def _index_values(value, arrays=None) -> set[int]:
+    def _index_values(value, arrays=None, inputs=None) -> set[int]:
         """Collect literal index probes and dynamically indexed array paths."""
         values = set()
+        assignments = []
 
         def visit(item):
-            if isinstance(item, Index) and isinstance(item.idx, Const) and isinstance(item.idx.value, int):
-                values.add(item.idx.value)
-            elif isinstance(item, Index) and arrays is not None:
-                arrays.add(CoverageGenerator._expression_path(item))
+            if isinstance(item, Decl):
+                assignments.append((item.name, item.init))
+            elif isinstance(item, Assign):
+                assignments.append((CoverageGenerator._expression_path(item.lhs), item.value))
+            if isinstance(item, Index):
+                if inputs is not None:
+                    CoverageGenerator._expression_paths(item.idx, inputs)
+                index = item.idx
+                while isinstance(index, Cast):
+                    index = index.x
+                if isinstance(index, Const) and isinstance(index.value, int):
+                    values.add(index.value)
+                elif arrays is not None:
+                    arrays.add(CoverageGenerator._expression_path(item))
             if is_dataclass(item):
                 for child in fields(item):
                     visit(getattr(item, child.name))
@@ -789,12 +1008,16 @@ class CoverageGenerator:
                     visit(child)
 
         visit(value)
+        if inputs is not None:
+            for name, expression in reversed(assignments):
+                if name in inputs:
+                    CoverageGenerator._expression_paths(expression, inputs)
         return values
 
     def _key(self, values: dict) -> tuple:
         # Normalize only actual function inputs into a stable tuple. This makes cache
         # and duplicate detection insensitive to dictionary order or unrelated values.
-        # NULL is normalized to 0 because the interpreter uses the same representation.
+        # Member pointers distinguish NULL from a valid pointer to zero.
         return self._search_key(None, values, self._inputs)[1]
 
     @staticmethod
@@ -829,6 +1052,8 @@ class _CoverageState:
         A novel pattern is worth retaining even without immediate target coverage,
         because it can later pair with another pattern to establish MC/DC independence.
         """
+        if result.invalid_accesses:
+            return False
         selected = None if decision_ids is None else set(decision_ids)
         for decision_id, patterns in result.conditions.items():
             if decision_id in self.pattern_sets and (selected is None or decision_id in selected):
@@ -843,7 +1068,12 @@ class _CoverageState:
         to detect MC/DC pairs. Keeping calculation and commit separate lets the search
         score candidates without corrupting its baseline state.
         """
+        if result.invalid_accesses:
+            return set()
         gained, additions = set(), {}
+        for loop_id, outcomes in result.loops.items():
+            gained.update(("loop", loop_id, outcome) for outcome in outcomes
+                          if ("loop", loop_id, outcome) not in self.covered)
         for decision_id, outcomes in result.observed.items():
             for outcome in outcomes:
                 if (decision_id, outcome) not in self.covered:

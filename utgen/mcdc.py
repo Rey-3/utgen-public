@@ -116,7 +116,10 @@ class MaskingRecipes:
             if not children:
                 return {}
             if outcome:
-                return cls.masked(children[0], True)
+                # Reach the last OR branch so later conditions share a fully
+                # evaluated context, including mutually exclusive enum states.
+                return cls._combine(cls.masked(child, index == len(children) - 1)
+                                    for index, child in enumerate(children))
             return cls._combine(cls.masked(child, False) for child in children)
         return None
 

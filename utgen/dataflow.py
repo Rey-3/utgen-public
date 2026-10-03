@@ -319,8 +319,7 @@ class DataflowEngine:
         # folded when possible. A successful write also makes this path known again.
         value = expression
         if operator != "=":
-            old = state.values.get(path, Ref(path))
-            value = Binop(operator[:-1], self._substitute(old, state), expression)
+            value = Binop(operator[:-1], self._substitute(Ref(path), state), expression)
         value = self._fold(value)
         values, unknown = dict(state.values), set(state.unknown)
         values[path], unknown = value, unknown - {path}
@@ -430,9 +429,8 @@ class DataflowEngine:
         return self._substitute(Ref(targets[0]), state, seen)
 
     def _substitute(self, expression, state, seen=()):
-        # Resolve references without recursive Python calls. The explicit work stack
-        # handles deeply nested generated expressions safely, while `seen` stops a
-        # self/cyclic binding from expanding forever.
+        # State values are already substituted snapshots. Read them as stored;
+        # expanding them again would apply later writes to earlier reads.
         stack = [("eval", expression, seen)]
         values = []
         while stack:
@@ -481,10 +479,7 @@ class DataflowEngine:
                     values.append(Unknown(key))
                     continue
                 value = state.values.get(key)
-                if value is None or key in current_seen:
-                    values.append(current)
-                else:
-                    stack.append(("eval", value, current_seen + (key,)))
+                values.append(current if value is None else value)
                 continue
             if isinstance(current, Unary) and current.op == "*":
                 values.append(self._load_targets(self._pointer_targets(current.x, state, current_seen), state, current_seen))

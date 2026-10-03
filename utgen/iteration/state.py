@@ -68,16 +68,19 @@ def write_module(path: str | os.PathLike[str], state: dict) -> None:
     previous = path.read_bytes() if path.exists() else None
     temporary = path.with_name(f".{path.name}.tmp")
     try:
-        payload = json.dumps(state, ensure_ascii=False, indent=2, allow_nan=False)
-        with temporary.open("w", encoding="utf-8", newline="\n") as stream:
+        payload = (json.dumps(state, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode("utf-8")
+        with temporary.open("wb") as stream:
             stream.write(payload)
-            stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
-        load_module(temporary)
+        # The state is already validated. Check the serialized bytes instead of
+        # decoding and validating the same document again at each publication step.
+        if temporary.read_bytes() != payload:
+            raise StateValidationError(f"temporary module JSON does not match rendered bytes: {temporary}")
         os.replace(temporary, path)
         try:
-            load_module(path)
+            if path.read_bytes() != payload:
+                raise StateValidationError(f"published module JSON does not match rendered bytes: {path}")
         except Exception:
             if previous is None:
                 try:

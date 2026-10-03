@@ -235,6 +235,10 @@ def canonical_payload_bytes(value: Path | bytes | bytearray) -> bytes:
 
     root = _parse_root(_read_input(value))
     _metadata(root, require_metadata=False)
+    return _canonical_payload(root)
+
+
+def _canonical_payload(root: ET.Element) -> bytes:
     root = deepcopy(root)
     for name in _METADATA_ATTRIBUTES:
         root.attrib.pop(name, None)
@@ -265,22 +269,26 @@ def enrich_with_metadata(
     root = _parse_root(_read_input(value))
     _metadata(root, require_metadata=False)
     _validate_analysis_id(analysis_id)
-    content_hash = analysis_content_hash(value)
+    content_hash = hashlib.sha256(_canonical_payload(root)).hexdigest()
     if analysis_id != f"analysis_v1_{content_hash}":
         raise AnalysisDbValidationError(
             "analysis_id must be derived from the metadata-free source-analysis payload"
         )
+    return _enrich_root(root, content_hash, generated_at)
+
+
+def _enrich_root(root: ET.Element, content_hash: str, generated_at: str) -> bytes:
     try:
         generated_at = _canonicalize_timestamp(generated_at)
     except ValueError as exc:
         raise AnalysisDbValidationError("generated_at is not a canonical timestamp") from exc
-    root = deepcopy(root)
     root.set("db_schema_version", str(DB_SCHEMA_VERSION))
-    root.set("analysis_id", analysis_id)
+    root.set("analysis_id", f"analysis_v1_{content_hash}")
     root.set("generated_at", generated_at)
     result = _serialize_root(root)
-    _metadata(_parse_root(result), require_metadata=True)
-    if analysis_content_hash(result) != content_hash:
+    rendered_root = _parse_root(result)
+    _metadata(rendered_root, require_metadata=True)
+    if hashlib.sha256(_canonical_payload(rendered_root)).hexdigest() != content_hash:
         raise AnalysisDbValidationError("metadata enrichment changed source-analysis payload")
     return result
 
@@ -350,14 +358,10 @@ class AnalysisDbWriter:
     ) -> bytes:
         """Return canonical DB bytes with content-derived ID and schema metadata."""
 
-        raw = _read_input(value)
-        content_hash = analysis_content_hash(raw)
-        analysis_id = f"analysis_v1_{content_hash}"
-        try:
-            timestamp = _canonicalize_timestamp(generated_at)
-        except ValueError as exc:
-            raise AnalysisDbValidationError("generated_at is not a canonical timestamp") from exc
-        return enrich_with_metadata(raw, analysis_id, timestamp)
+        root = _parse_root(_read_input(value))
+        _metadata(root, require_metadata=False)
+        content_hash = hashlib.sha256(_canonical_payload(root)).hexdigest()
+        return _enrich_root(root, content_hash, generated_at)
 
     def write(
         self,
@@ -522,6 +526,10 @@ class AnalysisDbWriter:
                 stream.write(rendered)
                 stream.flush()
                 os.fsync(stream.fileno())
+            if temporary.read_bytes() != rendered:
+                raise AnalysisDbValidationError(
+                    f"temporary Analysis DB does not match rendered bytes: {temporary}"
+                )
             AnalysisDbAdapter().read_module(temporary, require_metadata=True)
             try:
                 os.replace(temporary, path)
@@ -530,7 +538,12 @@ class AnalysisDbWriter:
                 raise AnalysisDbValidationError(f"cannot publish Analysis DB: {path}") from exc
             temporary = None
             try:
-                AnalysisDbAdapter().read_module(path, require_metadata=True)
+                # Atomic replacement publishes the already-validated model. Only
+                # byte integrity needs checking here; rebuilding dataflow is redundant.
+                if path.read_bytes() != rendered:
+                    raise AnalysisDbValidationError(
+                        f"published Analysis DB does not match rendered bytes: {path}"
+                    )
             except Exception as exc:
                 restore_previous(exc)
                 raise

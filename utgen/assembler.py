@@ -43,6 +43,9 @@ class RowAssembler:
     def _assemble(self, function: FunctionIR, *, collect_provenance=False):
         """Build rows once, optionally collecting logical-to-concrete mappings."""
 
+        from utgen.stubs import prepare_snapshot_callbacks
+
+        prepare_snapshot_callbacks(function)
         inputs = self._inputs(function)
         # Every generated row starts from a complete, valid input set. The solver only
         # replaces variables that are needed to satisfy the current decision constraints.
@@ -64,7 +67,7 @@ class RowAssembler:
 
         concrete = CoverageGenerator()
         deferred_cases = []
-        repair_lengths = {}
+        repair_decisions = []
         for decision_index, decision in enumerate(function.decisions):
             # A nested decision is only reachable when all of its enclosing guards have
             # the required outcomes. _guards() expands those guards into compatible atom recipes.
@@ -130,7 +133,7 @@ class RowAssembler:
                     by_values[key] = coverage
                     row_indices[key] = len(rows)
                     rows.append(coverage)
-            repair_lengths[decision.id] = len(rows)
+            repair_decisions.append(decision.id)
 
         if deferred_cases:
             for coverage in concrete.rows(function, rows, deferred_cases):
@@ -140,10 +143,17 @@ class RowAssembler:
                     row_indices[key] = len(rows)
                     rows.append(coverage)
 
-        # Later decisions can supply seeds that an earlier repair did not have.
-        for decision_id, repaired_length in repair_lengths.items():
-            if len(rows) <= repaired_length:
-                continue
+        # A normal loop exit supplies valid later-iteration seeds for body repair.
+        for coverage in concrete.rows(function, rows, ()):
+            key = tuple(coverage.values.items())
+            if key not in by_values:
+                by_values[key] = coverage
+                row_indices[key] = len(rows)
+                rows.append(coverage)
+
+        # Retry unfinished searches with cached executions and later seeds, even
+        # when the first pass exhausted its budget without emitting a new row.
+        for decision_id in repair_decisions:
             for coverage in concrete.rows(function, rows, (decision_id,)):
                 key = tuple(coverage.values.items())
                 if key not in by_values:

@@ -18,7 +18,7 @@ from .state import (
     ordered_active_rows,
 )
 from .validation import validate_module
-from .values import metadata_variables, project_generated_values, sync_row_schema
+from .values import metadata_variables, project_generated_values_many, sync_row_schema
 from .workbook_merge import extend_workbook_variables as _extend_workbook_variables, snapshot_values as _snapshot_values
 from ..mcdc import eval_expr
 from ..model import And, AssemblyResult, Atom, GeneratedRowProvenance, Not, Or, RecipeProvenance, atom_text, atoms_of
@@ -179,6 +179,8 @@ def _merge_user_stubs(function: dict, snapshot, catalog: Mapping) -> tuple[int, 
             raise ValueError(f"workbook references an unavailable stub: {key!r}")
         item = current.get(key)
         if item is None:
+            if body == _default_stub_body(catalog[key], key in function["used_stub_keys"]):
+                continue
             current[key] = {"owner": "user", "status": "active", "body": body}
             changed += 1
         elif item["body"] != body or item["status"] != "active":
@@ -300,8 +302,9 @@ def _merge_function(state: dict, current: dict, candidate: dict, counters: dict)
     if "parameters" in candidate:
         function["parameters"] = deepcopy(candidate["parameters"])
     function["variables"] = deepcopy(candidate["variables"])
-    for row in function["rows"].values():
-        sync_row_schema(row, current["variables"], candidate["variables"])
+    if current["variables"] != candidate["variables"]:
+        for row in function["rows"].values():
+            sync_row_schema(row, current["variables"], candidate["variables"])
     matches = match_decisions(current, candidate)
     preferred = _preferred_tool_rows(current, candidate, matches)
     context = {
@@ -411,6 +414,8 @@ def _merge_stubs(current: dict, candidate: dict, catalog: dict) -> dict:
                 item["status"] = "orphaned"
                 merged[key] = item
             continue
+        if key not in used and key not in candidate_stubs and (old is None or old["owner"] == "tool"):
+            continue
         incoming = candidate_stubs.get(key) or {
             "owner": "tool",
             "status": "active",
@@ -418,7 +423,7 @@ def _merge_stubs(current: dict, candidate: dict, catalog: dict) -> dict:
         }
         merged[key] = deepcopy(old) if old is not None and old["owner"] == "user" else _tool(incoming)
     for key, old in current_stubs.items():
-        if key not in merged:
+        if key not in catalog:
             item = deepcopy(old)
             item["status"] = "orphaned"
             merged[key] = item
@@ -468,9 +473,14 @@ def build_candidate(analysis, generated_functions, project, module, input_hash) 
         }
         state["functions"][name] = function_state
         row_ids = []
-        for index in range(len(generated.rows)):
+        inputs = project_generated_values_many((row.values for row in generated.rows), function, "input")
+        outputs = project_generated_values_many((row.expected for row in generated.rows), function, "output")
+        for row, input_values, output_values in zip(generated.rows, inputs, outputs, strict=True):
             row_ids.append(_allocate_row_id(state))
-            function_state["rows"][row_ids[-1]] = _assembly_row(generated, index, function)
+            function_state["rows"][row_ids[-1]] = {
+                "owner": "tool", "status": "active", "description": str(row.description),
+                "test_method": "", "input": input_values, "output": output_values,
+            }
         for decision_index, decision in enumerate(getattr(function, "decisions", ())):
             decision_key = _allocate_decision_key(function_state)
             atoms = tuple(atoms_of(decision.expr))
@@ -498,11 +508,16 @@ def build_candidate(analysis, generated_functions, project, module, input_hash) 
                 })
         for generated_row in generated_rows:
             function_state["generated_rows"].append({"row_id": row_ids[generated_row.concrete_row_index], "kind": str(generated_row.kind)})
-        for key, entry in state["stub_catalog"].items():
+        for stub in function.stubs:
+            key = _stub_name(stub)
+            entry = state["stub_catalog"][key]
+            callbacks = stub.callbacks
+            events = "".join(f"if ({control}) {{ {callback}(); }}\n"
+                             for control, callback in callbacks.items())
             function_state["stubs"][key] = {
                 "owner": "tool",
                 "status": "active",
-                "body": _default_stub_body(entry, key in function_state["used_stub_keys"]),
+                "body": events + _default_stub_body(entry, key in function_state["used_stub_keys"]),
             }
     validate_module(state)
     return state
@@ -530,21 +545,6 @@ def build_stub_catalog(analysis) -> dict:
                 "parameters": parameters,
             }
     return catalog
-
-
-def _assembly_row(result: AssemblyResult, index: int, function) -> dict:
-    try:
-        row = result.rows[index]
-    except (IndexError, TypeError) as exc:
-        raise ValueError(f"assembly provenance points to missing row {index}") from exc
-    return {
-        "owner": "tool",
-        "status": "active",
-        "description": str(row.description),
-        "test_method": "",
-        "input": project_generated_values(row.values, function, "input"),
-        "output": project_generated_values(row.expected, function, "output"),
-    }
 
 
 def _validated_provenance(function, result):

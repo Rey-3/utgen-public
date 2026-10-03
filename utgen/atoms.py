@@ -260,6 +260,7 @@ class AtomBuilder:
             self._macro_values[macro.name] = macro.value if macro.value is not None else macro.raw
         self.constants: dict[str, bool] = {}
         self.uncontrollable: list[str] = []
+        self._active_values: list[Cursor] = []
 
     def build(self, cond_cursor: Cursor):
 
@@ -424,6 +425,15 @@ class AtomBuilder:
         if isinstance(resolved, Cursor) and resolved is not cursor:
             cursor = resolved
         cursor = _unwrap(cursor)
+        if cursor in self._active_values:
+            return _Value()  # A copied expression may refer to its own destination.
+        self._active_values.append(cursor)
+        try:
+            return self._resolved_value(cursor, original)
+        finally:
+            self._active_values.pop()
+
+    def _resolved_value(self, cursor: Cursor, original: Cursor) -> _Value:
         constant = _constant(cursor)
         if constant is None:
             constant = _macro_constant(cursor, self._macro_values)
@@ -452,8 +462,6 @@ class AtomBuilder:
             variable = self._find_variable(f"tessy_{name}") if name else None
             if variable is not None:
                 return _Value(variable=variable)
-        if original is not cursor:
-            return self._value(cursor)
         return _Value()
 
     def _linear(self, cursor: Cursor):

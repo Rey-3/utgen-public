@@ -172,8 +172,8 @@ def _submit_function(pool, function):
 
 
 def _print_function_progress(current, total, name, elapsed, status=None):
-    suffix = f"{elapsed:.2f}s" if status is None else f"{status}  {elapsed:.2f}s"
-    print(f"[{current}/{total}] {name:<60} {suffix}")
+    suffix = f"{elapsed:.3f}s" if status is None else f"{status}  {elapsed:.3f}s"
+    print(f"[{current}/{total}] {name:<60} {suffix}", flush=True)
 
 
 def generate_module(project, module, include_dirs=(), profile_dir=None):
@@ -210,12 +210,14 @@ def generate_module(project, module, include_dirs=(), profile_dir=None):
     database_elapsed = time.monotonic() - database_started
     print(f"\n{module_name}: database generation completed")
     print(f"Functions: {len(analysis.functions)}")
-    print(f"Database time: {database_elapsed:.2f}s")
+    print(f"Database time: {database_elapsed:.3f}s", flush=True)
 
     context = mp.get_context("spawn")
     with tempfile.TemporaryDirectory(prefix="utgen-analysis-") as temporary_dir:
         database = Path(temporary_dir) / f"db_{module['module_name']}.xml"
+        xml_started = time.monotonic()
         XmlDbWriter().write(analysis, database)
+        print(f"{module_name}: Temporary XML write time: {time.monotonic() - xml_started:.3f}s", flush=True)
         generated = {}
         worker_pools = []
         active = {}
@@ -228,11 +230,13 @@ def generate_module(project, module, include_dirs=(), profile_dir=None):
                 completed = 0
                 print(
                     f"\n{module_name}: Generating test cases with "
-                    f"{process_count} workers..."
+                    f"{process_count} workers (function times overlap)..."
                 )
+                worker_started = time.monotonic()
                 worker_pools = start_worker(
                     context, analysis, worker_profile_dir, process_count
                 )
+                print(f"{module_name}: Worker startup time: {time.monotonic() - worker_started:.3f}s", flush=True)
                 remaining = iter(functions)
                 for pool in worker_pools:
                     function = next(remaining)
@@ -294,19 +298,23 @@ def generate_module(project, module, include_dirs=(), profile_dir=None):
                     if not progressed:
                         time.sleep(0.01)
 
-                generation_elapsed = time.monotonic() - generation_started
-                print(f"\n{module_name}: test generation completed")
-                print(f"Functions: {len(functions)}")
-                print(f"Workers: {process_count}")
-                print(f"Wall time: {generation_elapsed:.2f}s")
         except Exception:
             for pool in tuple(worker_pools):
                 stop_worker(pool, terminate=True)
             worker_pools.clear()
             raise
         finally:
+            cleanup_started = time.monotonic()
             for pool in tuple(worker_pools):
                 stop_worker(pool)
+            if worker_pools:
+                print(f"{module_name}: Worker cleanup time: {time.monotonic() - cleanup_started:.3f}s", flush=True)
+        if functions:
+            generation_elapsed = time.monotonic() - generation_started
+            print(f"\n{module_name}: test generation completed")
+            print(f"Functions: {len(functions)}")
+            print(f"Workers: {process_count}")
+            print(f"Wall time (including startup and cleanup): {generation_elapsed:.3f}s", flush=True)
         raw_database = database.read_bytes()
     return analysis, generated, raw_database
 
@@ -405,6 +413,7 @@ def main(argv=None):
         mode = input("Select option: ").strip()
         if mode not in {"1", "2", "3", "4"}:
             parser.error("mode must be 1, 2, 3, or 4")
+    total_started = time.monotonic()
     config = _load_cli_config(config_path)
     if mode == "1":
         if args.profile_dir is None:
@@ -425,6 +434,7 @@ def main(argv=None):
     else:
         result = run_user_merge(config_path)
     _print_summaries(result)
+    print(f"\nTotal runtime (after mode selection): {time.monotonic() - total_started:.3f}s", flush=True)
     return result
 
 

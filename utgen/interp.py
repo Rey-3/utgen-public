@@ -31,6 +31,8 @@ class ExecResult:
     observed: dict[int, set[bool]] = field(default_factory=dict)
     conditions: dict[int, set[tuple[bool | None, ...]]] = field(default_factory=dict)
     loops: dict[int, set[bool]] = field(default_factory=dict)
+    loop_iterations: dict[int, int] = field(default_factory=dict)
+    invalid_accesses: set[str] = field(default_factory=set)
     outputs: dict[str, int] = field(default_factory=dict)
     unknown: set[str] = field(default_factory=set)
     helper_conditions: dict[tuple[str, int], set[tuple]] = field(default_factory=dict)
@@ -49,8 +51,13 @@ class Interpreter:
         self.execute_static_helpers = execute_static_helpers
         self._variable_names, self._normalized_names, self._address_names = set(), {}, {}
         self._array_variables = {}
+        self._member_pointers = set()
+        self._stub_callbacks = {stub.name: stub.callbacks for stub in inventory.stubs if stub.callbacks}
+        # ponytail: inventory bounds only; local-array bounds need IR dimensions.
+        self._array_bounds = {}
         self._path_cache = {}
         self._local_roots = {}
+        pointer_roots = {variable.address_of for variable in inventory.variables if variable.address_of}
 
         # Pre-compute alternate lookup forms. Concrete array indices can later be
         # matched against inventory entries such as data[0] / data[1] through a
@@ -59,8 +66,17 @@ class Interpreter:
             self._variable_names.add(variable.name)
             self._normalized_names[variable.name] = _INDEX_PATH.sub("[*]", variable.name)
             self._array_variables[self._normalized_names[variable.name]] = variable
+            for dimension in _ARRAY_INDEX.finditer(variable.name):
+                prefix = _INDEX_PATH.sub("[*]", variable.name[:dimension.start()])
+                self._array_bounds.setdefault(prefix, set()).add(int(dimension.group(1)))
             if variable.address_of:
                 self._address_names.setdefault(variable.address_of, []).append(variable.name)
+            elif (variable.is_pointer and "." in variable.name
+                  and variable.name.split(".", 1)[0].split("[", 1)[0] not in pointer_roots):
+                self._member_pointers.add(self._normalized_names[variable.name])
+        # Legacy inventories list concrete elements; current inventories store extents.
+        self._array_bounds = {prefix: max(sizes) + int(0 in sizes)
+                              for prefix, sizes in self._array_bounds.items()}
 
     def run(self, function, values: dict) -> ExecResult:
         """Execute one FunctionIR with a concrete input mapping.
@@ -71,6 +87,7 @@ class Interpreter:
         """
 
         self.env = {}
+        self._member_addresses = {}
         self.aliases = {}
         self.pointers = set()
         self.constants = getattr(function, "constants", {}) or {}
@@ -91,8 +108,13 @@ class Interpreter:
         for variable in self.inventory.inputs():
             value = values.get(variable.name, 1 if variable.address_of else 0)
             self.env[variable.name] = 0 if value == "NULL" else value
+            pattern = self._normalized_names[variable.name]
+            if pattern in self._member_pointers:
+                self._member_addresses[pattern] = int(value != "NULL")
         for name, value in values.items():
             self.env[name] = 0 if value == "NULL" else value
+            if self._normalized_path(name) in self._member_pointers:
+                self._member_addresses[name] = int(value != "NULL")
         signal = self._block(function.body)
         if signal and signal[0] == "return":
             output = f"{function.name}()"
@@ -105,7 +127,7 @@ class Interpreter:
                 if variable.name in self.unknown or name in self.unknown:
                     self.unknown.add(name)
                 elif name in self.env:
-                    self.result.outputs[name] = self._wrap(variable.name, self.env[name])
+                    self.result.outputs[name] = self._wrap(variable.name, self._read(name, False))
         self.result.outcomes = self.outcomes
         self.result.observed = self.observed
         self.result.conditions = self.conditions
@@ -143,6 +165,10 @@ class Interpreter:
                 self.env[statement.name] = self._eval(statement.init)
         elif isinstance(statement, Assign):
             path = self._path(statement.lhs)
+            if (statement.op == "=" and not isinstance(statement.lhs, Unary)
+                    and self._normalized_path(path) in self._member_pointers):
+                self._copy_member_pointer(path, statement.value)
+                return None
             if statement.op == "=" and path not in self.pointers and self._copy_aggregate(path, statement.value):
                 return None
             if path in self.pointers and self._set_alias(path, statement.value):
@@ -186,6 +212,32 @@ class Interpreter:
         elif isinstance(statement, Return):
             return "return", self._eval(statement.value)
         return None
+
+    def _copy_member_pointer(self, path, expression):
+        # Member leaves store pointee values separately from pointer validity.
+        # Copying a pointer changes both; writing *pointer only changes its target.
+        while isinstance(expression, Cast):
+            expression = expression.x
+        source = self._path(expression)
+        if source == path:
+            return
+        if isinstance(expression, Unary) and expression.op == "&":
+            source, value = self._path(expression.x), 1
+        else:
+            value = self._eval(expression)
+        self.aliases.pop(path, None)
+        if value is _UNKNOWN:
+            self.unknown.add(path)
+            return
+        self.unknown.discard(path)
+        self._member_addresses[path] = int(bool(value))
+        if source and value:
+            target = self.aliases.get(source, source)
+            if target != path:
+                self.aliases[path] = target
+            self.env[path] = self._read(source, False)
+        else:
+            self.env[path] = 0
 
     def _set_alias(self, path, expression):
         """Update the symbolic target of a pointer assignment when possible.
@@ -247,6 +299,9 @@ class Interpreter:
                 # Same-module helpers can be interpreted directly. External calls
                 # are represented by TESSY stub variables instead of being invoked.
                 return self._call_local(expression, helper)
+            for control, callback in self._stub_callbacks.get(expression.name, {}).items():
+                if self.env.get(control, 0):
+                    self._call_local(CallE(callback), self.local_functions[callback])
             return self.env.get(f"tessy_{expression.name}", 0)
         if isinstance(expression, Ternary):
             condition, leaves = self._trace(expression.c)
@@ -275,7 +330,11 @@ class Interpreter:
             return int(not self._eval(expression.child))
         if isinstance(expression, Unary):
             if expression.op == "*":
-                return self._read(self._path(expression.x), False)
+                path = self._path(expression.x)
+                if self._normalized_path(path) in self._member_pointers and not self._read(path):
+                    self.result.invalid_accesses.add(path)
+                    return _UNKNOWN
+                return self._read(path, False)
             value = self._eval(expression.x)
             if value is _UNKNOWN:
                 return _UNKNOWN
@@ -356,9 +415,7 @@ class Interpreter:
             value, leaves = self._trace(expression.child)
             return int(not value), leaves
         value = self._eval(expression)
-        if isinstance(expression, (Atom, Ref)) or (isinstance(expression, Binop) and expression.op in ("==", "!=", "<", "<=", ">", ">=")):
-            return value, (bool(value),)
-        return value, ()
+        return value, (bool(value),)
 
     def _call_local(self, expression, helper):
         """Execute a local helper in an isolated simulated stack frame.
@@ -491,13 +548,15 @@ class Interpreter:
         """
         ran = False
         outcomes = self.loops.setdefault(loop_id, set())
-        for _ in range(1024):
+        self.result.loop_iterations.setdefault(loop_id, 0)
+        for iteration in range(1024):
             if not do_first or ran:
                 outcome = bool(self._eval(condition))
                 outcomes.add(outcome)
                 if not outcome:
                     return None
             ran = True
+            self.result.loop_iterations[loop_id] = max(self.result.loop_iterations[loop_id], iteration + 1)
             signal = self._block(body)
             if signal is _BREAK:
                 return None
@@ -586,7 +645,12 @@ class Interpreter:
         """
         if path in self.unknown:
             return _UNKNOWN
+        if not address and path in self.aliases:
+            return self._read(self.aliases[path], False)
         if address:
+            pattern = self._normalized_path(path)
+            if pattern in self._member_pointers:
+                return self._member_addresses.get(path, self._member_addresses.get(pattern, 1))
             for name in self._address_names.get(path, ()):
                 if name in self.env:
                     return self.env[name]
@@ -641,9 +705,15 @@ class Interpreter:
         if isinstance(expression, MemberE):
             return f"{self._path(expression.base)}.{expression.name}"
         if isinstance(expression, Index):
-            return f"{self._path(expression.base)}[{self._eval(expression.idx)}]"
+            base, index = self._path(expression.base), self._eval(expression.idx)
+            path = f"{base}[{index}]"
+            bound = self._array_bounds.get(self._normalized_path(base))
+            if bound is not None and isinstance(index, int) and not 0 <= index < bound:
+                self.result.invalid_accesses.add(path)
+            return path
         if isinstance(expression, Unary) and expression.op == "*":
-            return self._path(expression.x)
+            path = self._path(expression.x)
+            return self.aliases.get(path, path)
         return ""
 
     def _switch(self, statement):
@@ -786,6 +856,8 @@ class Verifier:
             observed={key: set(value) for key, value in result.observed.items()},
             conditions={key: set(value) for key, value in result.conditions.items()},
             loops={key: set(value) for key, value in result.loops.items()},
+            loop_iterations=dict(result.loop_iterations),
+            invalid_accesses=set(result.invalid_accesses),
             outputs=dict(result.outputs),
             unknown=set(result.unknown),
         )

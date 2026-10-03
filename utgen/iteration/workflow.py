@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import time
 
 import yaml
 
@@ -16,7 +17,7 @@ from utgen import __version__
 from .adapters.analysis_db import AnalysisDbAdapter, AnalysisDbWriter
 from .adapters.tessy_workbook import TessyWorkbookAdapter
 from .merge import build_candidate, merge_tool, merge_user
-from .state import load_module, module_paths, write_module
+from .state import load_module, module_paths, ordered_active_rows, write_module
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,8 @@ def run_generation(config, generator) -> list[ModuleSummary]:
     summaries = []
     for project, module in _configured_modules(config):
         name = _module_name(module)
+        module_started = time.monotonic()
+        print(f"\n{project}/{name}: Starting module...", flush=True)
         try:
             summaries.append(
                 _run_generation_module(
@@ -59,6 +62,8 @@ def run_generation(config, generator) -> list[ModuleSummary]:
             )
         except Exception as exc:
             summaries.append(_summary(project, name, "error", {"error": str(exc)}, str(exc)))
+        finally:
+            print(f"{project}/{name}: Module runtime: {time.monotonic() - module_started:.3f}s", flush=True)
     return summaries
 
 
@@ -73,6 +78,10 @@ def run_excel_export(config) -> list[ModuleSummary]:
         try:
             paths = module_paths(state_root, project, name)
             state = load_module(paths.state)
+            if paths.database.exists() and not _database_matches(
+                AnalysisDbAdapter().inspect(paths.database), module, base
+            ):
+                raise ValueError("saved analysis does not match current source; run mode 1 before exporting Excel")
             written = _write_active_workbooks(state, module, base)
             summaries.append(
                 _summary(
@@ -103,6 +112,8 @@ def _run_generation_module(
 ) -> ModuleSummary:
     name = _module_name(module)
     paths = module_paths(state_root, project, name)
+    load_started = time.monotonic()
+    print(f"{name}: Loading saved JSON/XML...", flush=True)
     current = None
     if paths.state.exists():
         current = load_module(paths.state)
@@ -116,7 +127,9 @@ def _run_generation_module(
             )
         except Exception:
             database_analysis = None
+    print(f"{name}: Saved state load time: {time.monotonic() - load_started:.3f}s", flush=True)
 
+    cache_started = time.monotonic()
     if current is not None and database_analysis is not None and _database_matches(
         database_analysis, module, base
     ):
@@ -132,7 +145,9 @@ def _run_generation_module(
         except Exception:
             input_hash = None
         if input_hash == current.get("module_input_hash"):
-            if _workbooks_valid(current, module, base):
+            workbooks_valid = _workbooks_valid(current, module, base)
+            print(f"{name}: Cache check time: {time.monotonic() - cache_started:.3f}s", flush=True)
+            if workbooks_valid:
                 return _summary(
                     project,
                     name,
@@ -157,6 +172,7 @@ def _run_generation_module(
                 },
             )
 
+    print(f"{name}: Cache check time: {time.monotonic() - cache_started:.3f}s", flush=True)
     generation_project, generation_module = _generation_config(
         config, base, project, module
     )
@@ -170,6 +186,8 @@ def _run_generation_module(
         analysis, generated, raw_database = generation
     else:
         raise ValueError("generator must return (analysis, generated[, raw_database])")
+    prepare_started = time.monotonic()
+    print(f"{name}: Preparing/merging JSON state...", flush=True)
     candidate = build_candidate(analysis, generated, project, name, "pending")
     if current is None:
         state = candidate
@@ -185,9 +203,13 @@ def _run_generation_module(
             "stubs": merged.summary["stubs"],
             "decisions": merged.summary["decisions"],
         }
+    print(f"{name}: JSON preparation time: {time.monotonic() - prepare_started:.3f}s", flush=True)
+    xml_started = time.monotonic()
     database_metadata = _write_current_database(
         analysis, paths.database, raw_database=raw_database
     )
+    print(f"{name}: Database XML write time: {time.monotonic() - xml_started:.3f}s", flush=True)
+    hash_started = time.monotonic()
     state["module_input_hash"] = _module_input_hash(
         config,
         project,
@@ -196,7 +218,10 @@ def _run_generation_module(
         analysis,
         database_identity=database_metadata.analysis_id,
     )
+    print(f"{name}: Input hash time: {time.monotonic() - hash_started:.3f}s", flush=True)
+    json_started = time.monotonic()
     write_module(paths.state, state)
+    print(f"{name}: JSON write time: {time.monotonic() - json_started:.3f}s", flush=True)
     written = _write_active_workbooks(state, module, base)
     summary.update(json="updated", excel_written=written)
     return _summary(project, name, "updated", summary)
@@ -228,12 +253,12 @@ def _database_matches(analysis, module: Mapping, base: Path) -> bool:
     expected = Path(os.fspath(module["source_file"]))
     if not expected.is_absolute():
         expected = base / expected
-    actual = Path(os.fspath(getattr(analysis, "file", "")))
+    actual = Path(os.fspath(getattr(analysis, "file", getattr(analysis, "source_file", ""))))
     try:
         if actual.resolve() != expected.resolve():
             return False
         return hashlib.sha256(expected.read_bytes()).hexdigest() == getattr(
-            analysis, "sha256", None
+            analysis, "sha256", getattr(analysis, "source_sha256", None)
         )
     except OSError:
         return False
@@ -328,7 +353,8 @@ def _excel_directory(module: Mapping, base: Path) -> Path:
 
 def _workbook_paths(state: Mapping, module: Mapping, base: Path) -> dict[str, Path]:
     directory = _excel_directory(module, base)
-    return {name: directory / f"{name}.xlsx" for name in state["functions"]}
+    return {name: directory / f"{name}.xlsx" for name, function in state["functions"].items()
+            if ordered_active_rows(function)}
 
 
 def _workbooks_valid(state: Mapping, module: Mapping, base: Path) -> bool:
@@ -351,8 +377,14 @@ def _workbooks_valid(state: Mapping, module: Mapping, base: Path) -> bool:
 def _write_active_workbooks(state: Mapping, module: Mapping, base: Path) -> int:
     adapter = TessyWorkbookAdapter()
     paths = _workbook_paths(state, module, base)
-    for function_name, path in paths.items():
-        adapter.write_function(path, state, function_name)
+    started = time.monotonic()
+    print(f"{state['module']}: Exporting {len(paths)} Excel files...", flush=True)
+    adapter.write_functions(paths.items(), state)
+    for name in state["functions"].keys() - paths.keys():
+        obsolete = _excel_directory(module, base) / f"{name}.xlsx"
+        if obsolete.is_file():
+            obsolete.rename(obsolete.with_name(f"{obsolete.name}.{time.time_ns()}.orphaned"))
+    print(f"{state['module']}: Excel export time: {time.monotonic() - started:.3f}s", flush=True)
     return len(paths)
 
 
@@ -443,7 +475,6 @@ def run_user_merge(config) -> list[ModuleSummary]:
             rewrite_paths = {}
             function_summaries = {}
             allocated = []
-            written_count = 0
             for function_name, items in grouped.items():
                 if len(items) > 1:
                     first = snapshot_semantics(items[0][1])
@@ -481,13 +512,13 @@ def run_user_merge(config) -> list[ModuleSummary]:
             if changed_paths:
                 write_module(paths.state, candidate)
             adapter = TessyWorkbookAdapter()
-            for function_name in grouped:
-                paths_to_write = rewrite_paths.get(function_name) or changed_paths.get(function_name)
-                if paths_to_write is None:
-                    continue
-                for path in paths_to_write:
-                    adapter.write_function(path, candidate, function_name)
-                    written_count += 1
+            workbook_paths = [
+                (function_name, path)
+                for function_name in grouped
+                for path in (rewrite_paths.get(function_name) or changed_paths.get(function_name) or ())
+            ]
+            adapter.write_functions(workbook_paths, candidate)
+            written_count = len(workbook_paths)
             status = "updated" if changed_paths else "skipped"
             summaries.append(
                 _summary(

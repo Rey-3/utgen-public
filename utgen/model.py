@@ -393,6 +393,7 @@ class StubInfo:
     ret_ctype: CType | None
     ret_struct: str | None
     params: list
+    callbacks: dict[str, str] = field(default_factory=dict, compare=False)
 
 
 @dataclass

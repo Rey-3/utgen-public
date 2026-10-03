@@ -9,17 +9,19 @@ import os
 from pathlib import Path
 import re
 import tempfile
+import time
 from typing import Any, Iterable, Mapping
 
 from openpyxl import Workbook
 
 from tessy_excel import (
     convertDirectionToTessyFormat,
+    value_sheet_names,
     writeGeneralSheet,
     write_testlist_cells,
 )
 from ..state import ordered_active_rows
-from ..values import flatten_values, pointer_member_storage, project_generated_values
+from ..values import flatten_values_many, pointer_member_storage, project_generated_values
 from ._tessy_workbook_io import (
     CellValue,
     DirectionToken,
@@ -368,7 +370,7 @@ class TessyWorkbookAdapter:
             self._require_sheets(physical)
             meta = self._parse_general(physical["General"], expected_module, expected_testobject, expected_project)
             properties = self._parse_properties(physical["Properties"])
-            columns, value_rows = self._parse_values(physical["Values"])
+            columns, value_rows = self._parse_values_sheets(physical)
             stubs = self._parse_stubs(physical["Stubs"])
             self._validate_cross_sheet(properties, value_rows, stubs)
             cases = self._join_cases(properties, value_rows)
@@ -457,8 +459,34 @@ class TessyWorkbookAdapter:
             )
         return records
 
+    def _parse_values_sheets(self, workbook):
+        names = value_sheet_names(workbook.sheetnames)
+        expected = ["Values", *(f"Values {i}" for i in range(1, len(names)))]
+        if names != expected:
+            _error("MISSING_VALUES_SHEET", "Values pages must be numbered consecutively", sheet="Values")
+        columns, rows, seen = [], {}, set()
+        for name in names:
+            page_columns, page_rows = self._parse_values(workbook[name])
+            for column in page_columns:
+                key = (column.base_name, column.channel, column.element_path)
+                if key in seen:
+                    _error("DUPLICATE_ARGUMENT_COLUMN", f"duplicate Values column {column.name!r}", sheet=name)
+                seen.add(key)
+            columns.extend(page_columns)
+            page_rows = {row[2]: row for row in page_rows}
+            if name == "Values":
+                rows = page_rows
+            else:
+                if page_rows.keys() != rows.keys():
+                    _error("MISSING_VALUES_RECORD", "all Values pages must contain the same testcase/step labels", sheet=name)
+                for label, row in page_rows.items():
+                    rows[label][3].update(row[3])
+                    rows[label][4].update(row[4])
+        self._validate_array_structure(columns)
+        return columns, list(rows.values())
+
     def _parse_values(self, ws):
-        _active_formula_check(ws, sheet="Values", min_row=1)
+        _active_formula_check(ws, sheet=ws.title, min_row=1)
         cells = _cell_map(ws)
         columns = []
         seen = set()
@@ -467,21 +495,20 @@ class TessyWorkbookAdapter:
             name_cell, direction_cell = cells.get((1, column)), cells.get((2, column))
             name, raw_direction = _text_value(name_cell), _text_value(direction_cell)
             if name is None or not name.strip():
-                _error("MISSING_COLUMN_NAME", f"active Values column {column} has no variable name", sheet="Values")
+                _error("MISSING_COLUMN_NAME", f"active Values column {column} has no variable name", sheet=ws.title)
             if raw_direction is None or not raw_direction.strip():
-                _error("INVALID_DIRECTION", f"Values column {name!r} has no direction token", sheet="Values")
+                _error("INVALID_DIRECTION", f"Values column {name!r} has no direction token", sheet=ws.title)
             try:
                 token = parse_direction_token(raw_direction)
             except WorkbookAdapterError as exc:
-                raise WorkbookValidationError(exc.code, str(exc), sheet="Values", coordinate=direction_cell.coordinate if direction_cell else None) from exc
+                raise WorkbookValidationError(exc.code, str(exc), sheet=ws.title, coordinate=direction_cell.coordinate if direction_cell else None) from exc
             base_name, element_path = split_array_column_name(name)
             key_tuple = (base_name, token.channel, element_path)
             if key_tuple in seen:
-                _error("DUPLICATE_ARGUMENT_COLUMN", f"same-name same-channel Values column {name!r} occurs more than once", sheet="Values")
+                _error("DUPLICATE_ARGUMENT_COLUMN", f"same-name same-channel Values column {name!r} occurs more than once", sheet=ws.title)
             seen.add(key_tuple)
             key = ExcelColumnKey(name, token.channel, element_path, 0)
             columns.append(ExportColumn(key, name, token.direction, token.channel, token.raw, token.raw_type_hint, element_path, base_name, column))
-        self._validate_array_structure(columns)
         rows = []
         labels = set()
         candidate_rows = sorted({row for (row, _column), cell in cells.items() if row >= 3 and getattr(cell, "value", None) is not None})
@@ -494,11 +521,11 @@ class TessyWorkbookAdapter:
                 _error(
                     "INVALID_VALUES_ROW_LABEL",
                     f"invalid Values row label {label!r}",
-                    sheet="Values",
+                    sheet=ws.title,
                     coordinate=label_cell.coordinate if label_cell else None,
                 )
             if label in labels:
-                _error("DUPLICATE_VALUES_ROW", f"duplicate Values row label {label!r}", sheet="Values")
+                _error("DUPLICATE_VALUES_ROW", f"duplicate Values row label {label!r}", sheet=ws.title)
             labels.add(label)
             match = _CASE_LABEL_RE.fullmatch(label)
             case_number, step = int(match.group(1)), int(match.group(2))
@@ -582,9 +609,20 @@ class TessyWorkbookAdapter:
 
     def write_function(self, path, module_state: dict, function_name: str, template_path=None) -> None:
         """Atomically project one JSON function into a complete TESSY workbook."""
+        self.write_functions(((function_name, path),), module_state, template_path)
+
+    def write_functions(self, paths, module_state: dict, template_path=None) -> None:
+        """Validate a module once and atomically publish its requested workbooks."""
         from ..validation import validate_module
 
         validate_module(module_state)
+        paths = tuple(paths)
+        for index, (function_name, path) in enumerate(paths, 1):
+            started = time.monotonic()
+            self._write_function(path, module_state, function_name, template_path)
+            print(f"[Excel {index}/{len(paths)}] {function_name:<60} {time.monotonic() - started:.3f}s", flush=True)
+
+    def _write_function(self, path, module_state: dict, function_name: str, template_path=None) -> None:
         if function_name not in module_state["functions"]:
             raise WorkbookValidationError("UNKNOWN_FUNCTION", f"function {function_name!r} is not present in module state")
         path = Path(path)
@@ -601,7 +639,8 @@ class TessyWorkbookAdapter:
         os.close(fd)
         temporary = Path(temporary_name)
         try:
-            workbook.save(temporary)
+            with temporary.open("wb") as stream:
+                workbook.save(stream)
             workbook.close()
             snapshot = self.read_complete_export(
                 temporary,
@@ -653,10 +692,7 @@ def _is_null_pointer_address(value: str) -> bool:
     return token == "NULL" or re.fullmatch(r"0[uUlL]*", token) is not None
 
 
-def _flatten_channel(function: Mapping[str, Any], row: Mapping[str, Any] | None, channel: str, members) -> dict[str, str]:
-    variables = function["variables"]
-    values = row[channel] if row is not None else project_generated_values({}, variables, channel)
-    flat = flatten_values(values, variables, channel=channel)
+def _flatten_channel(function: Mapping[str, Any], flat: Mapping[str, str], channel: str, members) -> dict[str, str]:
     pointer_roots = _pointer_roots(function)
     projected: dict[str, str] = {}
     for name, value in flat.items():
@@ -688,12 +724,15 @@ def _flatten_channel(function: Mapping[str, Any], row: Mapping[str, Any] | None,
 def _project_rows(function: Mapping[str, Any], rows: list[tuple[str, dict]]):
     members = pointer_member_storage(function["variables"])
     storage_types = dict(members.values())
-    if rows:
-        input_flat = _flatten_channel(function, rows[0][1], "input", members)
-        output_flat = _flatten_channel(function, rows[0][1], "output", members)
-    else:
-        input_flat = _flatten_channel(function, None, "input", members)
-        output_flat = _flatten_channel(function, None, "output", members)
+    source_rows = [row for _, row in rows] or [
+        {channel: project_generated_values({}, function["variables"], channel) for channel in ("input", "output")}
+    ]
+    flattened = {
+        channel: [_flatten_channel(function, flat, channel, members)
+                  for flat in flatten_values_many((row[channel] for row in source_rows), function["variables"], channel)]
+        for channel in ("input", "output")
+    }
+    input_flat, output_flat = flattened["input"][0], flattened["output"][0]
     columns = []
     typed_roots: set[str] = set()
     pointer_roots = _pointer_roots(function)
@@ -715,13 +754,13 @@ def _project_rows(function: Mapping[str, Any], rows: list[tuple[str, dict]]):
     for name in output_flat:
         columns.append((name, "output", _column_direction_token(function, name, "output", typed_roots, members, storage_types)))
     projected = []
-    for row_id, row in rows:
+    for index, (row_id, row) in enumerate(rows):
         projected.append(
             {
                 "id": row_id,
                 "description": row["description"],
-                "input": _flatten_channel(function, row, "input", members),
-                "output": _flatten_channel(function, row, "output", members),
+                "input": flattened["input"][index],
+                "output": flattened["output"][index],
             }
         )
     return columns, projected
@@ -736,8 +775,10 @@ def _column_direction_token(
     storage_types,
 ) -> str:
     direction = "in" if channel == "input" else "out"
-    if channel == "output" and name.endswith("()"):
-        return "o"
+    # A type token declares synthetic storage in TESSY. Existing C interfaces
+    # already have their type and array shape; redeclaring them causes conflicts.
+    if not name.startswith("tessy_"):
+        return convertDirectionToTessyFormat(direction, name, show_type=False)
     if name in members:
         return convertDirectionToTessyFormat(direction, name, show_type=False)
     if name in storage_types:
@@ -764,7 +805,7 @@ def _column_direction_token(
     spec = function.get("variables", {}).get(root, {})
     if spec.get("pointer") or spec.get("is_pointer"):
         return convertDirectionToTessyFormat(direction, name, show_type=False)
-    type_hint = spec.get("format") or spec.get("fmt") or spec.get("type") or ""
+    type_hint = spec.get("type") or spec.get("format") or spec.get("fmt") or ""
     if not type_hint or root in typed_roots:
         return convertDirectionToTessyFormat(direction, name, show_type=False)
     typed_roots.add(root)

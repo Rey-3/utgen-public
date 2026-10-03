@@ -18,7 +18,7 @@ from utgen.includes import IncludeScanner
 from utgen.inventory import InventoryBuilder
 from utgen.irbuild import BodyIrBuilder
 from utgen.parsing import ClangParser, function_definitions
-from utgen.stubs import DEFAULT_NO_STUB
+from utgen.stubs import DEFAULT_NO_STUB, prepare_snapshot_callbacks
 from utgen.model import (And, Atom, Binop, Break, CallE, Cast, Const, CType,
                          DataflowPoint, DataflowResult, DataflowState, Decl,
                          Decision, Direction, DoWhile, EnumDef, ExprStmt, For,
@@ -410,7 +410,9 @@ def _link_local_call_stubs(analysis: ModuleAnalysis) -> None:
     # global inputs/outputs and external stubs into the caller so it has everything needed
     # to generate values for that transitive dependency after loading from XML.
     for function in analysis.functions:
+        prepare_snapshot_callbacks(function)
         names = list(_called_names(function.body))
+        names.extend(callback for stub in function.stubs for callback in stub.callbacks.values())
         seen = {function.name}
         while names:
             name = names.pop()
