@@ -1,5 +1,6 @@
 from datetime import date
 from collections import Counter
+from copy import copy
 import os
 import re
 
@@ -84,9 +85,13 @@ def write_testlist_cells(workbook, rows, stubs, columns):
     for index, row in enumerate(rows, 1):
         properties.cell(index + 4, 1).value = str(index)
         properties.cell(index + 4, 2).value = "0"
-        properties.cell(index + 4, 5).value = (
+        description_cell = properties.cell(index + 4, 5)
+        description_cell.value = (
             f"Test Case ID: {row['id']}\nDescription: {row['description']}"
         )
+        alignment = copy(description_cell.alignment)
+        alignment.wrap_text = True
+        description_cell.alignment = alignment
     for page, start in enumerate(range(0, max(1, len(columns)), page_width)):
         target = values if page == 0 else workbook.create_sheet(f"Values {page}")
         page_columns = columns[start:start + page_width]

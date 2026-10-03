@@ -112,7 +112,8 @@ class RowAssembler:
                         break
 
                     kind = "Switch" if decision.kind == "case" else "MC/DC"
-                    row = TestRow(values, kind, f"decision {decision.id} = {outcome}", intent)
+                    row = TestRow(values, kind, f"decision {decision.id} = {outcome}", intent,
+                                  target_decision_id=decision.id)
                     by_values[key] = row
                     row_indices[key] = len(rows)
                     rows.append(row)

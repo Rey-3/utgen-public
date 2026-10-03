@@ -156,9 +156,11 @@ class CoverageGenerator:
                 for base in seeds:
                     candidate = base | cyclic
                     result = self._run(interpreter, function, candidate)
-                    if state.gained(result) & targets:
+                    gained = state.gained(result) & targets
+                    if gained:
+                        row = self._row(candidate, gained, selected)
                         state.add(result)
-                        generated.append(TestRow(candidate, "Coverage", "consistent indexed loop path"))
+                        generated.append(row)
                         emitted.add(self._key(candidate))
                         if targets <= state.covered:
                             return generated
@@ -213,7 +215,7 @@ class CoverageGenerator:
                             gained = state.gained(result) & targets
                             if gained or state.novel(result, selected):
                                 state.add(result)
-                                generated.append(TestRow(candidate, "Coverage", self._description(gained)))
+                                generated.append(self._row(candidate, gained, selected))
                                 emitted.add(self._key(candidate))
                                 seeds.append(candidate)
                                 if targets <= state.covered:
@@ -234,7 +236,7 @@ class CoverageGenerator:
                 gained = state.gained(result) & targets
                 if gained or state.novel(result, selected):
                     state.add(result)
-                    generated.append(TestRow(candidate, "Coverage", self._description(gained)))
+                    generated.append(self._row(candidate, gained, selected))
                     emitted.add(key)
                     seeds.append(candidate)
                     preferred_seeds.add(key)
@@ -354,11 +356,7 @@ class CoverageGenerator:
                                 state.add(result)
                                 if (gained or novel) and key not in emitted:
                                     emitted.add(key)
-                                    generated.append(TestRow(
-                                        candidate,
-                                        "Coverage",
-                                        self._description(gained),
-                                    ))
+                                    generated.append(self._row(candidate, gained, selected))
                                 if targets <= state.covered:
                                     return generated
 
@@ -1021,9 +1019,12 @@ class CoverageGenerator:
         return self._search_key(None, values, self._inputs)[1]
 
     @staticmethod
-    def _description(gained: set[tuple]) -> str:
+    def _row(values, gained, selected):
         decision = next((item for item in gained if len(item) == 2), None)
-        return "concrete condition combination" if decision is None else f"concrete decision {decision[0]} = {decision[1]}"
+        description = "concrete condition combination" if decision is None else f"concrete decision {decision[0]} = {decision[1]}"
+        target = min((item[0] for item in gained if isinstance(item[0], int)), default=min(selected, default=None))
+        loop = min((item[1] for item in gained if item[0] == "loop"), default=None) if target is None else None
+        return TestRow(values, "Coverage", description, target_decision_id=target, target_loop_id=loop)
 
 class _CoverageState:
     """Incrementally track observed coverage and MC/DC-relevant condition patterns."""

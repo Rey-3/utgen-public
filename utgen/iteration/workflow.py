@@ -237,6 +237,7 @@ def _generation_config(config, base: Path, project_name: str, module: Mapping):
         and item.get("name", item.get("project_name")) == project_name
     )
     result_project = dict(project)
+    result_project["description"] = config.get("settings", {}).get("description")
     root = Path(os.fspath(project.get("root_path", base)))
     if not root.is_absolute():
         root = base / root
@@ -313,6 +314,7 @@ def _module_input_hash(
         "generator_config": {
             "version": __version__,
             "include_dirs": list(_include_dirs(config, base)),
+            "description": config.get("settings", {}).get("description"),
         },
         "files": file_payload,
     }

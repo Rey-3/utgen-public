@@ -49,15 +49,16 @@ def fallback_rows(function):
     ]
 
 
-def _verified_result(function, rows, recipes=(), generated_rows=()):
+def _verified_result(function, rows, recipes=(), generated_rows=(), description=None):
     rows = list(rows)
     Verifier(
-        Interpreter(Inventory(function.leaves, function.stubs), execute_static_helpers=True)
+        Interpreter(Inventory(function.leaves, function.stubs), execute_static_helpers=True),
+        description=description,
     ).check(function, rows)
     return AssemblyResult(tuple(rows), tuple(recipes), tuple(generated_rows))
 
 
-def write_timeout_outputs(function):
+def write_timeout_outputs(function, description=None):
     """Return verified timeout rows without emitting legacy XML files."""
 
     rows = fallback_rows(function)
@@ -69,19 +70,22 @@ def write_timeout_outputs(function):
             GeneratedRowProvenance("Timeout", 0, 0),
             GeneratedRowProvenance("Timeout", 1, 1),
         ),
+        description=description,
     )
 
 
 _WORKER_ANALYSIS = None
 _WORKER_PROFILE_DIR = None
+_WORKER_DESCRIPTION = None
 
 
-def initialize_worker(analysis, profile_dir=None):
+def initialize_worker(analysis, profile_dir=None, description=None):
     """Reuse the indexed graph; spawn preserves its shared objects."""
 
-    global _WORKER_ANALYSIS, _WORKER_PROFILE_DIR
+    global _WORKER_ANALYSIS, _WORKER_PROFILE_DIR, _WORKER_DESCRIPTION
     _WORKER_ANALYSIS = analysis
     _WORKER_PROFILE_DIR = None if profile_dir is None else Path(profile_dir)
+    _WORKER_DESCRIPTION = description
 
 
 def worker_ready():
@@ -112,18 +116,19 @@ def _generate_function(function_name):
             Solver(), McdcGenerator(), include_boundary=False, include_fault=False
         ).assemble_with_provenance(function)
         return _verified_result(
-            function, result.rows, result.recipes, result.generated_rows
+            function, result.rows, result.recipes, result.generated_rows,
+            description=_WORKER_DESCRIPTION,
         )
     except Exception as error:
         return "error", f"{type(error).__name__}: {error}"
 
 
-def start_worker(context, analysis, profile_dir=None, processes=8):
+def start_worker(context, analysis, profile_dir=None, processes=8, description=None):
     pools = [
         context.Pool(
             processes=1,
             initializer=initialize_worker,
-            initargs=(analysis, profile_dir),
+            initargs=(analysis, profile_dir, description),
         )
         for _ in range(processes)
     ]
@@ -183,6 +188,10 @@ def generate_module(project, module, include_dirs=(), profile_dir=None):
     export is separate from worker transport, which preserves object sharing.
     """
 
+    from utgen.descriptions import DescriptionFormatter
+
+    description = project.get("description")
+    DescriptionFormatter(description)
     root = Path(project.get("root_path", "."))
     source = Path(module["source_file"])
     if not source.is_absolute():
@@ -234,7 +243,7 @@ def generate_module(project, module, include_dirs=(), profile_dir=None):
                 )
                 worker_started = time.monotonic()
                 worker_pools = start_worker(
-                    context, analysis, worker_profile_dir, process_count
+                    context, analysis, worker_profile_dir, process_count, description
                 )
                 print(f"{module_name}: Worker startup time: {time.monotonic() - worker_started:.3f}s", flush=True)
                 remaining = iter(functions)
@@ -278,7 +287,7 @@ def generate_module(project, module, include_dirs=(), profile_dir=None):
                         del active[pool]
                         elapsed = time.monotonic() - started_at
                         generated[function.name] = _GeneratedFunction(
-                            write_timeout_outputs(function)
+                            write_timeout_outputs(function, description)
                         )
                         completed += 1
                         _print_function_progress(
@@ -287,7 +296,7 @@ def generate_module(project, module, include_dirs=(), profile_dir=None):
                         next_function = next(remaining, None)
                         if next_function is not None:
                             replacement = start_worker(
-                                context, analysis, worker_profile_dir, 1
+                                context, analysis, worker_profile_dir, 1, description
                             )[0]
                             worker_pools.append(replacement)
                             active[replacement] = _submit_function(

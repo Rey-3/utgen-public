@@ -42,6 +42,7 @@ class BoundaryGenerator:
                             "Boundary",
                             self._description(atom, point),
                             self._guard_intent(function, decision),
+                            target_decision_id=decision.id,
                         )
                         self._append(rows, by_values, row)
                         break

@@ -505,6 +505,9 @@ class TestRow:
     # positional constructor remains source-compatible.  Iteration state may later
     # copy this tuple into RowMeta once a persistent row identity has been allocated.
     obligation_keys: tuple[str, ...] = ()
+    # Keep the row's primary goal separate from enclosing guards and merged goals.
+    target_decision_id: int | None = None
+    target_loop_id: int | None = None
 
 
 @dataclass(frozen=True)

@@ -411,8 +411,10 @@ class Interpreter:
                 if value:
                     return 1, leaves
             return 0, leaves
-        if isinstance(expression, Not):
-            value, leaves = self._trace(expression.child)
+        if isinstance(expression, Not) or isinstance(expression, Unary) and expression.op == "!":
+            value, leaves = self._trace(expression.child if isinstance(expression, Not) else expression.x)
+            if isinstance(expression, Unary) and value is _UNKNOWN:
+                return _UNKNOWN, leaves
             return int(not value), leaves
         value = self._eval(expression)
         return value, (bool(value),)
@@ -818,10 +820,13 @@ class Interpreter:
         return left - Interpreter._divide(left, right) * right if right else 0
 
 class Verifier:
-    """Populate generated test rows with outputs predicted by the interpreter."""
+    """Populate generated rows with predicted outputs and observed-path descriptions."""
 
-    def __init__(self, interpreter: Interpreter) -> None:
+    def __init__(self, interpreter: Interpreter, description=None) -> None:
+        from utgen.descriptions import DescriptionFormatter
+
         self.interpreter = interpreter
+        self.descriptions = DescriptionFormatter(description)
 
     def predict(self, function, row_or_values):
         """Predict outputs without changing the supplied row.
@@ -863,7 +868,8 @@ class Verifier:
         )
 
     def check(self, function, rows: list[TestRow]) -> None:
-
+        layout = self.descriptions.layout(function)
         for row in rows:
             result = self.interpreter.run(function, row.values)
             row.expected = result.outputs
+            row.description = self.descriptions.describe(function, row, result, layout)
