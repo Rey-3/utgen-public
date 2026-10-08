@@ -16,6 +16,7 @@ from openpyxl import Workbook
 
 from tessy_excel import (
     convertDirectionToTessyFormat,
+    save_test_workbook,
     value_sheet_names,
     writeGeneralSheet,
     write_testlist_cells,
@@ -52,6 +53,7 @@ from ._tessy_workbook_io import (
     split_array_column_name,
     _text_value,
     load_workbook,
+    load_xls_workbook,
     physicalize_workbook,
     physicalize_worksheet,
     read_xlsx_bytes,
@@ -328,13 +330,17 @@ class TessyWorkbookAdapter:
         expected_testobject = self.expected_testobject if expected_testobject is None else expected_testobject
         expected_project = self.expected_project if expected_project is None else expected_project
         raw = read_xlsx_bytes(path)
-        validate_xlsx_container(raw)
+        is_xls = raw.startswith(bytes.fromhex("D0CF11E0A1B11AE1"))
+        if is_xls:
+            workbook = load_xls_workbook(raw)
+        else:
+            validate_xlsx_container(raw)
+            try:
+                workbook = load_workbook(BytesIO(raw), read_only=False, data_only=False, keep_links=False)
+            except Exception as exc:
+                raise WorkbookValidationError("INVALID_XLSX", "cannot decode XLSX workbook") from exc
         try:
-            workbook = load_workbook(BytesIO(raw), read_only=False, data_only=False, keep_links=False)
-        except Exception as exc:
-            raise WorkbookValidationError("INVALID_XLSX", "cannot decode XLSX workbook") from exc
-        try:
-            physical = physicalize_workbook(workbook, raw=raw)
+            physical = physicalize_workbook(workbook, raw=None if is_xls else raw)
             self._require_sheets(physical)
             meta = self._parse_general(physical["General"], expected_module, expected_testobject, expected_project)
             properties = self._parse_properties(physical["Properties"])
@@ -599,12 +605,12 @@ class TessyWorkbookAdapter:
         _ensure_sheets(workbook)
         writeGeneralSheet(workbook["General"], module_state["project"], module_state["source_file"], function_name)
         write_testlist_cells(workbook, projected, stubs, columns)
-        fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp.xlsx", dir=path.parent)
+        path = path.with_suffix(".xls" if len(columns) + 1 > 16384 else ".xlsx")
+        fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=f".tmp{path.suffix}", dir=path.parent)
         os.close(fd)
         temporary = Path(temporary_name)
         try:
-            with temporary.open("wb") as stream:
-                workbook.save(stream)
+            save_test_workbook(workbook, temporary)
             workbook.close()
             snapshot = self.read_complete_export(
                 temporary,
@@ -614,6 +620,9 @@ class TessyWorkbookAdapter:
             )
             _validate_projection(snapshot, projected, stubs, columns)
             os.replace(temporary, path)
+            alternate = path.with_suffix(".xlsx" if path.suffix == ".xls" else ".xls")
+            if alternate.is_file():
+                alternate.rename(alternate.with_name(f"{alternate.name}.{time.time_ns()}.orphaned"))
         finally:
             try:
                 workbook.close()

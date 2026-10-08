@@ -125,10 +125,10 @@ class Tessy_Compilation():
         self.tessy_command.close_running_tessy()
 
     def find_excel_file(self, directory, func_name):
-        target = f"{func_name}.xlsx".lower()
+        targets = {f"{func_name}.xlsx".lower(), f"{func_name}.xls".lower()}
         if os.path.exists(directory):
             for f in os.listdir(directory):
-                if f.lower() == target:
+                if f.lower() in targets:
                     return os.path.join(directory, f)
 
     def generate_tbs(self, file_path, collection_name):

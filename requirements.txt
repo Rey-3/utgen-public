@@ -3,3 +3,5 @@ PyYAML
 chardet
 pytest
 openpyxl
+xlrd==2.0.2
+xlwt==1.3.0

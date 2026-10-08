@@ -3,6 +3,7 @@ from collections import Counter
 from copy import copy
 import os
 import re
+from pathlib import Path
 
 from openpyxl import load_workbook
 
@@ -113,6 +114,53 @@ def write_testlist_cells(workbook, rows, stubs, columns):
         stubs_sheet.cell(index, 4).value = stub["body"]
 
 
+def save_test_workbook(workbook, path):
+    """Use real XLS only for pages split above the XLSX column limit."""
+    oversized = len(value_sheet_names(workbook.sheetnames)) > 1
+    path = Path(path).with_suffix(".xls" if oversized else ".xlsx")
+    if not oversized:
+        with path.open("wb") as stream:
+            workbook.save(stream)
+        return path
+    import xlwt
+    from openpyxl.utils.cell import column_index_from_string
+
+    output = xlwt.Workbook()
+    styles = {}
+    for sheet in workbook:
+        if sheet.max_row > 65536 or sheet.max_column > 256:
+            raise ValueError(f"XLS worksheet limit exceeded in {sheet.title}: 65536 rows / 256 columns")
+        target = output.add_sheet(sheet.title, cell_overwrite_ok=True)
+        # ponytail: preserve basic text formatting; map palettes/borders if XLS styling needs them.
+        for (row, column), cell in sheet._cells.items():
+            if cell.style_id not in styles:
+                style = xlwt.XFStyle()
+                style.num_format_str = cell.number_format
+                style.font.name = cell.font.name or "Arial"
+                style.font.height = int((cell.font.sz or 11) * 20)
+                style.font.bold = bool(cell.font.bold)
+                style.font.italic = bool(cell.font.italic)
+                style.alignment.wrap = bool(cell.alignment.wrap_text)
+                style.alignment.horz = {"left": 1, "center": 2, "right": 3}.get(cell.alignment.horizontal, 0)
+                style.alignment.vert = {"top": 0, "center": 1, "bottom": 2}.get(cell.alignment.vertical, 2)
+                styles[cell.style_id] = style
+            value = xlwt.Formula(cell.value[1:]) if cell.data_type == "f" else cell.value
+            target.write(row - 1, column - 1, value, styles[cell.style_id])
+        for name, dimension in sheet.column_dimensions.items():
+            first = dimension.min or column_index_from_string(name)
+            last = dimension.max or first
+            for column in range(first, min(last, 256) + 1):
+                target.col(column - 1).width = min(65535, int(dimension.width * 256))
+        for row, dimension in sheet.row_dimensions.items():
+            if row <= 65536 and dimension.height is not None:
+                target.row(row - 1).height = int(dimension.height * 20)
+        for merged in sheet.merged_cells.ranges:
+            target.merge(merged.min_row - 1, merged.max_row - 1, merged.min_col - 1, merged.max_col - 1)
+    with path.open("wb") as stream:
+        output.save(stream)
+    return path
+
+
 def updateTestlistToExcel(func , templateFile , saveFileName , testList , testMethodlist , stubList , arg_name , arg_direction , arg_format,
                           project_name=None, module_name=None, export_date=None):
     wb = load_workbook(templateFile)
@@ -148,7 +196,7 @@ def updateTestlistToExcel(func , templateFile , saveFileName , testList , testMe
             body = f"{ret_type} temp = {{0}};\rreturn temp;\r"
         stubs.append({"name": name, "body": body})
     write_testlist_cells(wb, rows, stubs, columns)
-    wb.save( saveFileName ) ##newFileName )
+    save_test_workbook(wb, saveFileName)
 
 def convertDirectionToTessyFormat(direction , name='' , fmt='', show_type=True):
     newDir = 'i' if direction == "in" else 'o'

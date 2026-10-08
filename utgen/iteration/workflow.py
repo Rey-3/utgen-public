@@ -361,6 +361,8 @@ def _workbooks_valid(state: Mapping, module: Mapping, base: Path) -> bool:
     adapter = TessyWorkbookAdapter()
     for function_name, path in _workbook_paths(state, module, base).items():
         if not path.is_file():
+            path = path.with_suffix(".xls")
+        if not path.is_file():
             return False
         try:
             adapter.read_complete_export(
@@ -381,9 +383,10 @@ def _write_active_workbooks(state: Mapping, module: Mapping, base: Path) -> int:
     print(f"{state['module']}: Exporting {len(paths)} Excel files...", flush=True)
     adapter.write_functions(paths.items(), state)
     for name in state["functions"].keys() - paths.keys():
-        obsolete = _excel_directory(module, base) / f"{name}.xlsx"
-        if obsolete.is_file():
-            obsolete.rename(obsolete.with_name(f"{obsolete.name}.{time.time_ns()}.orphaned"))
+        for suffix in (".xlsx", ".xls"):
+            obsolete = _excel_directory(module, base) / f"{name}{suffix}"
+            if obsolete.is_file():
+                obsolete.rename(obsolete.with_name(f"{obsolete.name}.{time.time_ns()}.orphaned"))
     print(f"{state['module']}: Excel export time: {time.monotonic() - started:.3f}s", flush=True)
     return len(paths)
 
@@ -607,8 +610,8 @@ def _scan_entries(config, base):
             continue
         scanned.add(identity)
         adapter = TessyWorkbookAdapter()
-        for path in sorted(directory.glob("*.xlsx")):
-            if path.name.startswith("~$") or not path.is_file():
+        for path in sorted(directory.iterdir()):
+            if path.suffix.lower() not in {".xlsx", ".xls"} or path.name.startswith("~$") or not path.is_file():
                 continue
             snapshot = adapter.read_complete_export(path)
             entries.append((_snapshot_identity(snapshot), path, snapshot))

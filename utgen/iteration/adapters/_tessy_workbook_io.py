@@ -474,6 +474,57 @@ def split_array_column_name(name: str) -> tuple[str, tuple[int, ...]]:
     return base, paths
 
 
+def load_xls_workbook(raw):
+    """Read XLS into the existing physical-cell parser without executing formulas."""
+    import struct
+    import xlrd
+    from openpyxl import Workbook
+
+    if len(raw) > MAX_ARCHIVE_TOTAL_BYTES:
+        raise WorkbookSecurityError("XLS input is too large")
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    try:
+        with xlrd.open_workbook(file_contents=raw, formatting_info=True, on_demand=True) as book:
+            for index, sheet in enumerate(book.sheets()):
+                target = workbook.create_sheet(sheet.name)
+                for row in range(sheet.nrows):
+                    for column in range(sheet.ncols):
+                        cell = sheet.cell(row, column)
+                        if cell.ctype == xlrd.XL_CELL_EMPTY:
+                            continue
+                        value = cell.value
+                        if cell.ctype == xlrd.XL_CELL_BLANK:
+                            value = None
+                        elif cell.ctype == xlrd.XL_CELL_BOOLEAN:
+                            value = bool(value)
+                        elif cell.ctype == xlrd.XL_CELL_DATE:
+                            value = xlrd.xldate_as_datetime(value, book.datemode)
+                        elif cell.ctype == xlrd.XL_CELL_ERROR:
+                            value = xlrd.error_text_from_code[value]
+                        elif cell.ctype == xlrd.XL_CELL_NUMBER and value.is_integer():
+                            value = int(value)
+                        decoded = target.cell(row + 1, column + 1, value)
+                        if cell.ctype == xlrd.XL_CELL_TEXT:
+                            decoded.data_type = "s"
+                        elif cell.ctype == xlrd.XL_CELL_ERROR:
+                            decoded.data_type = "e"
+                # xlrd exposes cached formula results; retain formula locations for rejection.
+                book._position = book._sh_abs_posn[index]
+                while True:
+                    opcode, _, data = book.get_record_parts()
+                    if opcode == 0x000A:  # BIFF end of sheet.
+                        break
+                    if opcode in (0x0006, 0x0206, 0x0406):
+                        row, column = struct.unpack_from("<HH", data)
+                        target.cell(row + 1, column + 1, "=XLS_FORMULA")
+    except WorkbookAdapterError:
+        raise
+    except Exception as exc:
+        raise WorkbookValidationError("INVALID_XLS", "cannot decode XLS workbook") from exc
+    return workbook
+
+
 def read_xlsx_bytes(value: str | os.PathLike[str] | Path | bytes | bytearray) -> bytes:
     if isinstance(value, (bytes, bytearray)):
         data = bytes(value)
