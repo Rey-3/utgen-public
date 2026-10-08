@@ -227,8 +227,6 @@ class XmlDbWriter:
                  "len": str(member.len_bits), "signed": str(member.signed).lower(),
                  "dims": _dims(member.dims), "bitfield": str(member.bitfield).lower(),
                  "const": str(member.const).lower()}
-        if member.native_type:
-            attrs["native_type"] = member.native_type
         ET.SubElement(parent, "Member", **attrs)
 
     def _global(self, parent, variable):
@@ -627,8 +625,7 @@ def _read_member(element):
     return MemberDef(element.get("name", ""), element.get("type", ""),
                      element.get("kind", "unsupported"), int(element.get("len", "0")),
                      _read_dims(element.get("dims", "")), _bool(element.get("signed", "false")),
-                     _bool(element.get("bitfield", "false")), _bool(element.get("const", "false")),
-                     element.get("native_type", ""))
+                     _bool(element.get("bitfield", "false")), _bool(element.get("const", "false")))
 
 
 def _read_struct(element):

@@ -620,7 +620,6 @@ class MemberDef:
     signed: bool = False
     bitfield: bool = False
     const: bool = False
-    native_type: str = "" # Built-in type used for synthetic storage declarations.
 
 
 @dataclass(frozen=True)

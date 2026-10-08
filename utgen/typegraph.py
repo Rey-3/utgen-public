@@ -65,15 +65,13 @@ class TypeGraph:
             elem = canon.element_type
             canon = elem.get_canonical()
         const = ctype.is_const_qualified() or elem.is_const_qualified()
-        # Keep typedef names for analysis; resolve integer chains for Excel storage.
-        native_type = clean_name(canon.spelling) if canon.kind in (_SIGNED | _UNSIGNED) - {TypeKind.BOOL} else ""
 
         # A bit-field's usable width is the declared bit width, not the size of
         # its underlying integer storage type. Leaf bounds must therefore use it.
         if bitfield_width is not None:
             return MemberDef(name, clean_name(elem.spelling), "scalar",
                              bitfield_width, tuple(dims),
-                             self._is_signed(canon), True, const, native_type)
+                             self._is_signed(canon), True, const)
         if canon.kind == TypeKind.POINTER:
             pointee = canon.get_pointee()
             pointee_canon = pointee.get_canonical()
@@ -103,7 +101,7 @@ class TypeGraph:
         if canon.kind in _INTS:
             return MemberDef(name, clean_name(elem.spelling), "scalar",
                              canon.get_size() * 8, tuple(dims),
-                             self._is_signed(canon), False, const, native_type)
+                             self._is_signed(canon), False, const)
         # Unsupported types remain visible in the graph instead of being guessed
         # as integers; LeafDeriver will deliberately skip them later.
         return MemberDef(name, clean_name(elem.spelling), "unsupported", 0, tuple(dims))
@@ -243,7 +241,7 @@ class LeafDeriver:
         ctype = CType(member.type_name, bits, member.signed)
         # Standalone scalars use signedness as their format. If this leaf came
         # from a composite, `fmt` keeps the owning struct/union format instead.
-        sign_word = member.native_type or ("signed" if member.signed else "unsigned")
+        sign_word = "signed" if member.signed else "unsigned"
         out.append(Variable(name, ctype, fmt or sign_word, str(bits), direction, pointer))
 
     def _join(self, prefix: str, name: str) -> str:
