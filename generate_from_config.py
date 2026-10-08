@@ -22,6 +22,7 @@ from utgen.interp import Interpreter, Verifier
 from utgen.mcdc import McdcGenerator
 from utgen.model import AssemblyResult, Direction, GeneratedRowProvenance, Inventory, TestRow
 from utgen.solver import Solver
+from utgen.tessy_command import TessyCommand
 
 
 CONFIG_PATH = (
@@ -382,6 +383,61 @@ def run_tessy_import(config, config_path=None):
     return []
 
 
+def run_tessy_export(config, project, config_path=None):
+    """Export actual TESSY results for every test object in the selected project."""
+    tessy = config.get("Tessy", {})
+    config_dir = Path(config_path or CONFIG_PATH).resolve().parent
+    exports = []
+    for module in project.get("modules", ()):
+        name = module.get("module_name") or module.get("name")
+        directory = module.get("excel_output_dir") or module.get("excel_input_dir")
+        if not name or not directory:
+            raise ValueError("Each export module needs a name and excel_output_dir or excel_input_dir")
+        exports.append((name, config_dir / directory))
+    if not exports:
+        raise ValueError(f"Project {project['name']} has no modules to export")
+
+    # Match option 3: relative workspace/source paths start at the working directory.
+    workspace = Path(project.get("workspace") or tessy["default_workspace"]).resolve()
+    root = project.get("root_path")
+    bin_dir = tessy.get("tessy_bin_dir")
+    project_path = project.get("tessy_project_path")
+    cmd = TessyCommand(
+        workspace, project["name"],
+        source_root=str(Path(root).resolve()) if root else None,
+        tessy_bin_dir=config_dir / bin_dir if bin_dir else None,
+        project_path=config_dir / project_path if project_path else None,
+    )
+
+    def require(result, operation):
+        success, output = result
+        if not success:
+            raise RuntimeError(f"{project['name']}: {operation} failed: {output}")
+        return output
+
+    try:
+        require(cmd.ensure_project_open(), "open project")
+        require(cmd.select_project(project["name"]), "select project")
+        require(cmd.select_test_collection(project["collection_name"]), "select test collection")
+        for name, directory in exports:
+            require(cmd.select_module(name), f"select module {name}")
+            raw_list = require(cmd.list_test_objects(), f"list test objects in {name}")
+            directory.mkdir(parents=True, exist_ok=True)
+            exported = 0
+            for line in raw_list.splitlines():
+                test_object = line.strip()
+                if not test_object:
+                    continue
+                require(cmd.select_test_object(test_object), f"select test object {test_object}")
+                # Match the reference workflow: one XLSX with actual values per test object.
+                require(cmd.export(directory, format="xlsx", actual=True, file=test_object), f"export {test_object}")
+                exported += 1
+            print(f"{project['name']}/{name}: {exported} Excel files exported to {directory}")
+    finally:
+        require(cmd.close_running_tessy(), "close TESSY")
+    return []
+
+
 def _load_cli_config(path: Path):
     value = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(value, Mapping):
@@ -405,14 +461,10 @@ def _print_summaries(summaries):
 
 
 def main(argv=None):
-    """Dispatch the three supported CLI modes.
-
-    Mode 1 performs normal/next-tool generation, mode 2 rebuilds Excel from
-    current JSON, and mode 3 merges user-edited Excel into current JSON.
-    """
+    """Dispatch generation, JSON Excel export, TESSY import/export, and user merge."""
 
     parser = argparse.ArgumentParser(description="UTGen iteration workflow")
-    parser.add_argument("mode", nargs="?", choices=("1", "2", "3", "4"))
+    parser.add_argument("mode", nargs="?", choices=("1", "2", "3", "4", "5","6"))
     parser.add_argument("--config", type=Path, default=None)
     parser.add_argument("--profile-dir", type=Path)
     args = parser.parse_args(argv)
@@ -423,9 +475,11 @@ def main(argv=None):
         print("2. Rebuild Excel from current JSON")
         print("3. import excel")
         print("4. Merge user Excel into current JSON")
+        print("5. Export Excel from TESSY")
+        print("6. 1+3")
         mode = input("Select option: ").strip()
-        if mode not in {"1", "2", "3", "4"}:
-            parser.error("mode must be 1, 2, 3, or 4")
+        if mode not in {"1", "2", "3", "4", "5","6"}:
+            parser.error("mode must be 1, 2, 3, 4, 5 or 6")
     total_started = time.monotonic()
     config = _load_cli_config(config_path)
     if mode == "1":
@@ -444,8 +498,35 @@ def main(argv=None):
         result = run_excel_export(config_path)
     elif mode == "3":
         result = run_tessy_import(config, config_path)
-    else:
+    elif mode == "4":
         result = run_user_merge(config_path)
+    elif mode == "5":
+        projects = config.get("projects", ())
+        if not projects:
+            parser.error("no projects configured for TESSY export")
+        for number, project in enumerate(projects, 1):
+            print(f"{number}.{project['name']}")
+        try:
+            selected = int(input("Select project: ").strip())
+        except ValueError:
+            parser.error("project selection must be a number")
+        if not 1 <= selected <= len(projects):
+            parser.error(f"project selection must be between 1 and {len(projects)}")
+        result = run_tessy_export(config, projects[selected - 1], config_path)
+    else:
+        if args.profile_dir is None:
+            result = run_generation(config_path)
+        else:
+            profiler = cProfile.Profile()
+            profiler.enable()
+            try:
+                result = run_generation(config_path, args.profile_dir)
+            finally:
+                profiler.disable()
+                print("\nTotal profile:")
+                pstats.Stats(profiler).sort_stats("cumulative").print_stats(100)
+
+        result = run_tessy_import(config, config_path)
     _print_summaries(result)
     print(f"\nTotal runtime (after mode selection): {time.monotonic() - total_started:.3f}s", flush=True)
     return result
