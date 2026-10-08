@@ -65,8 +65,8 @@ class TypeGraph:
             elem = canon.element_type
             canon = elem.get_canonical()
         const = ctype.is_const_qualified() or elem.is_const_qualified()
-        # Keep typedef names for analysis; resolve uint8 chains for Excel storage.
-        native_type = "unsigned char" if canon.kind == TypeKind.UCHAR else ""
+        # Keep typedef names for analysis; resolve integer chains for Excel storage.
+        native_type = clean_name(canon.spelling) if canon.kind in (_SIGNED | _UNSIGNED) - {TypeKind.BOOL} else ""
 
         # A bit-field's usable width is the declared bit width, not the size of
         # its underlying integer storage type. Leaf bounds must therefore use it.

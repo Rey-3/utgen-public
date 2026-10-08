@@ -770,9 +770,10 @@ def _column_direction_token(
     if spec.get("pointer") or spec.get("is_pointer"):
         return convertDirectionToTessyFormat(direction, name, show_type=False)
     type_hint = spec.get("type") or spec.get("format") or spec.get("fmt") or ""
-    # Export uint8 typedefs, e.g. DiagApp_DTCEnableFlag_Type, as i(unsigned char).
-    if spec.get("format") == "unsigned char":
-        type_hint = "unsigned char"
+    # Declare integer aliases (including uint32/uint64) using their resolved C type.
+    native_type = spec.get("format") or ""
+    if native_type.startswith(("unsigned ", "signed ")) or native_type in {"short", "int", "long", "long long"}:
+        type_hint = native_type
     if not type_hint or root in typed_roots:
         return convertDirectionToTessyFormat(direction, name, show_type=False)
     typed_roots.add(root)
