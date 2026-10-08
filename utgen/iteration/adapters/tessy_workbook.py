@@ -60,7 +60,6 @@ from ._tessy_workbook_io import (
 
 
 _CASE_LABEL_RE = re.compile(r"^tc([1-9][0-9]*)\.([0-9]+)$")
-_DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 _TESSY_51_RE = re.compile(r"^5\.1(?:\.[0-9]+)?$")
 _FORMAL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*_[0-9]{3,}$")
 
@@ -149,8 +148,6 @@ class ExportCase:
     properties_test_step: int | None = None
     properties_row: int | None = None
     values_row: int | None = None
-    description_type: str | None = None
-    overview: str | None = None
     description_text: str | None = None
 
     @property
@@ -237,8 +234,6 @@ class _PropertyRecord:
     case_name: str | None
     description_raw: str
     external_test_case_id: str | None
-    description_type: str | None
-    overview: str | None
     description_text: str | None
     source_row: int
 
@@ -259,8 +254,8 @@ def _is_formal_description(description: str) -> bool:
     )
 
 
-def _description_parts(description: str) -> tuple[str | None, str | None, str | None, str | None]:
-    lines = description.splitlines()
+def _description_parts(description: str) -> tuple[str | None, str | None]:
+    lines = description.split("\n")
     if _is_formal_description(description):
         if len(lines) < 2:
             _error(
@@ -298,39 +293,12 @@ def _description_parts(description: str) -> tuple[str | None, str | None, str | 
                 )
         first_description = second[1][1:] if second[1].startswith(" ") else second[1]
         description_text = "\n".join([first_description, *lines[2:]])
-        return external_id, None, None, description_text
+        return external_id, description_text
 
-    external_id = None
-    description_type = None
-    overview = None
-    description_text = None
-    id_lines = []
-    for index, line in enumerate(lines):
+    for line in lines:
         if _normalize_label(line).startswith("test case id") and ":" not in line:
             _error("MALFORMED_ROW_ID", "Properties Test Case ID line must use 'Test Case ID: <id>'", sheet="Properties")
-        if ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        normalized = _normalize_label(key)
-        value = value.strip()
-        if normalized == "test case id":
-            id_lines.append(value)
-        elif normalized == "test case type":
-            description_type = value or None
-        elif normalized == "overview":
-            overview = value or None
-        elif normalized == "description":
-            description_text = "\n".join([value, *lines[index + 1:]])
-            break
-    if len(id_lines) > 1:
-        _error("DUPLICATE_ROW_ID", "Properties Description contains duplicate Test Case ID lines", sheet="Properties")
-    if id_lines:
-        external_id = id_lines[0] or None
-        if external_id is None:
-            _error("MALFORMED_ROW_ID", "Properties Test Case ID must be non-empty", sheet="Properties")
-        if _is_formal_description(description) and not _FORMAL_ID_RE.fullmatch(external_id):
-            _error("MALFORMED_ROW_ID", f"invalid Properties Test Case ID {external_id!r}", sheet="Properties")
-    return external_id, description_type, overview, description_text
+    return None, None
 
 
 class TessyWorkbookAdapter:
@@ -413,8 +381,6 @@ class TessyWorkbookAdapter:
         export_date = _text_value(_cell_at(ws, labels["export date"], 2)) if "export date" in labels else None
         if export_date == "":
             export_date = None
-        if export_date is not None and not _DATE_RE.fullmatch(export_date):
-            _error("INVALID_EXPORT_DATE", f"Export Date must be YYYY-MM-DD, got {export_date!r}", sheet="General")
         pdb_file = _text_value(_cell_at(ws, labels["pdb file"], 2)) if "pdb file" in labels else None
         meta = WorkbookMeta(values["project"], module, values["testobject"], values["tessy_version"], export_date, pdb_file, self.dialect)
         if expected_module is not None and meta.module != _module_basename(os.fspath(expected_module)):
@@ -447,7 +413,7 @@ class TessyWorkbookAdapter:
                 _error("DUPLICATE_PROPERTY_CASE", f"duplicate Properties Test Case {case_number}", sheet="Properties")
             name = _text_value(cells.get((row, headers[_normalize_label("Name")])))
             description = _text_value(cells.get((row, headers[_normalize_label("Description")]))) or ""
-            external_id, description_type, overview, description_text = _description_parts(description)
+            external_id, description_text = _description_parts(description)
             if external_id is not None and external_id in ids:
                 _error("DUPLICATE_ROW_ID", f"duplicate Properties row ID {external_id!r}", sheet="Properties")
             if external_id is not None:
@@ -455,7 +421,7 @@ class TessyWorkbookAdapter:
             records[case_number] = _PropertyRecord(
                 case_number, test_step,
                 name if name and name.strip() else None, description,
-                external_id, description_type, overview, description_text, row,
+                external_id, description_text, row,
             )
         return records
 
@@ -600,8 +566,6 @@ class TessyWorkbookAdapter:
                     property_record.test_step,
                     property_record.source_row,
                     values_row,
-                    property_record.description_type,
-                    property_record.overview,
                     property_record.description_text,
                 )
             )
@@ -806,6 +770,9 @@ def _column_direction_token(
     if spec.get("pointer") or spec.get("is_pointer"):
         return convertDirectionToTessyFormat(direction, name, show_type=False)
     type_hint = spec.get("type") or spec.get("format") or spec.get("fmt") or ""
+    # Export uint8 typedefs, e.g. DiagApp_DTCEnableFlag_Type, as i(unsigned char).
+    if spec.get("format") == "unsigned char":
+        type_hint = "unsigned char"
     if not type_hint or root in typed_roots:
         return convertDirectionToTessyFormat(direction, name, show_type=False)
     typed_roots.add(root)

@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
-import warnings
 
 from .values import (
     flatten_values,
-    infer_variable_schema,
     nest_values,
     pointer_member_storage,
     project_generated_values,
@@ -73,8 +71,7 @@ def extend_workbook_variables(functions: Mapping, function: dict, cases, columns
             name = _workbook_state_name(function, name, channel, storage_members)
         root = _state_value_root(name) if name else None
         if name and root:
-            grouped.setdefault(root, [set(), []])[0].add(name)
-            grouped[root][1].append(column)
+            grouped.setdefault(root, set()).add(name)
     for case in cases:
         for channel in ("input", "output"):
             cells = _get(case, f"{channel}_cells")
@@ -87,44 +84,22 @@ def extend_workbook_variables(functions: Mapping, function: dict, cases, columns
                 if isinstance(name, str) and name:
                     name = _workbook_state_name(function, name, channel, storage_members)
                     root = _state_value_root(name)
-                    grouped.setdefault(root, [set(), []])[0].add(name)
+                    grouped.setdefault(root, set()).add(name)
 
     imported = {}
-    for root, (paths, columns_for_root) in grouped.items():
+    for root, paths in grouped.items():
         if root in function["variables"]:
             continue
-        known, candidates = False, []
+        candidates = []
         for other in functions.values():
             if root not in other["variables"]:
                 continue
-            known = True
             projected = project_variable_schema(other["variables"][root], root, paths)
             if projected is not None and projected not in candidates:
                 candidates.append(projected)
-        if known:
-            if len(candidates) == 1:
-                imported[root] = candidates[0]
-            continue
-        if not columns_for_root:
-            continue
-        hints = {
-            str(getattr(column, "raw_type_hint", "")).strip()
-            for column in columns_for_root
-            if getattr(column, "raw_type_hint", None)
-            and str(getattr(column, "raw_type_hint")).strip()
-        }
-        channels = {getattr(column, "channel", None) for column in columns_for_root}
-        if len(hints) > 1:
-            raise ValueError(f"new workbook variable {root!r} has conflicting types")
-        if len(channels) != 1:
-            raise ValueError(f"new workbook variable {root!r} has conflicting direction")
-        type_hint, direction = next(iter(hints), ""), next(iter(channels))
-        imported[root] = infer_variable_schema(root, paths, type_hint, direction)
-        warnings.warn(
-            f"imported new workbook variable {root!r} as {direction}({type_hint}); verify it against C metadata",
-            UserWarning,
-            stacklevel=2,
-        )
+        if len(candidates) != 1:
+            raise ValueError(f"workbook variable {root!r} requires unambiguous C metadata")
+        imported[root] = candidates[0]
 
     if not imported:
         return False

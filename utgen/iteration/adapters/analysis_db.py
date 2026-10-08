@@ -86,7 +86,7 @@ class AnalysisDbValidationError(AnalysisDbError):
 
 @dataclass(frozen=True)
 class AnalysisDbMetadata:
-    """Validated root metadata; absent fields represent an upgradeable legacy DB."""
+    """Validated root metadata; raw analysis input may omit generated metadata."""
 
     source_file: str
     source_sha256: str
@@ -294,13 +294,13 @@ def _enrich_root(root: ET.Element, content_hash: str, generated_at: str) -> byte
 
 
 class AnalysisDbAdapter:
-    """Facade for strict DB metadata, content hashing, and legacy upgrades."""
+    """Read published DB metadata and inspect raw source-analysis payloads."""
 
     def inspect(
         self,
         value: Path | bytes | bytearray,
         *,
-        require_metadata: bool = False,
+        require_metadata: bool = True,
     ) -> AnalysisDbMetadata:
         root = _parse_root(_read_input(value))
         return _metadata(root, require_metadata=require_metadata)
@@ -309,7 +309,7 @@ class AnalysisDbAdapter:
         self,
         value: Path | bytes | bytearray,
         *,
-        require_metadata: bool = False,
+        require_metadata: bool = True,
     ) -> AnalysisDbMetadata:
         """Validate a DB and return its normalized root metadata."""
 
@@ -334,11 +334,11 @@ class AnalysisDbAdapter:
             )
         return stem
 
-    def read_module(self, path: Path, *, require_metadata: bool = True):
+    def read_module(self, path: Path):
         """Validate a DB and return metadata plus the legacy parsed model."""
 
         path = Path(path)
-        metadata = self.inspect(path, require_metadata=require_metadata)
+        metadata = self.inspect(path)
         try:
             from utgen.db import XmlDbReader
 
@@ -363,47 +363,6 @@ class AnalysisDbWriter:
         content_hash = hashlib.sha256(_canonical_payload(root)).hexdigest()
         return _enrich_root(root, content_hash, generated_at)
 
-    def write(
-        self,
-        value: Path | bytes | bytearray,
-        path: Path,
-        *,
-        generated_at: str,
-    ) -> AnalysisDbMetadata:
-        """Write a validated DB file and return its normalized metadata.
-
-        Publication uses exclusive creation so a writer cannot overwrite an
-        existing fixture or accepted DB.  The input path is checked explicitly
-        as well, producing a clear error before any filesystem mutation.
-        """
-
-        path = Path(path)
-        if isinstance(value, Path):
-            try:
-                same_file = path.resolve() == value.resolve()
-            except OSError as exc:
-                raise AnalysisDbValidationError("cannot resolve Analysis DB paths") from exc
-            if same_file:
-                raise AnalysisDbValidationError("refusing to overwrite the Analysis DB input")
-        rendered = self.render(value, generated_at=generated_at)
-        metadata = _metadata(_parse_root(rendered), require_metadata=True)
-        if metadata.analysis_id is None or metadata.generated_at is None:
-            raise AnalysisDbValidationError("rendered Analysis DB is missing complete metadata")
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            raise AnalysisDbValidationError(
-                f"cannot create Analysis DB output directory: {path.parent}"
-            ) from exc
-        try:
-            with path.open("xb") as stream:
-                stream.write(rendered)
-        except FileExistsError as exc:
-            raise AnalysisDbValidationError(f"refusing to overwrite existing Analysis DB: {path}") from exc
-        except OSError as exc:
-            raise AnalysisDbValidationError(f"cannot publish Analysis DB: {path}") from exc
-        return metadata
-
     def write_atomic(
         self,
         value: Path | bytes | bytearray,
@@ -411,14 +370,7 @@ class AnalysisDbWriter:
         *,
         generated_at: str | None = None,
     ) -> AnalysisDbMetadata:
-        """Validate and atomically replace the current DB publication.
-
-        ``write`` intentionally retains its exclusive-create behaviour for
-        fixtures and callers that accept a once-only publication.  Iteration
-        needs a different primitive: the current project DB is replaced only
-        after the complete metadata-enriched document has been rendered and
-        validated in a sibling temporary file.
-        """
+        """Render and validate a complete DB before replacing its current publication."""
 
         path = Path(path)
         if isinstance(value, Path):
@@ -530,7 +482,7 @@ class AnalysisDbWriter:
                 raise AnalysisDbValidationError(
                     f"temporary Analysis DB does not match rendered bytes: {temporary}"
                 )
-            AnalysisDbAdapter().read_module(temporary, require_metadata=True)
+            AnalysisDbAdapter().read_module(temporary)
             try:
                 os.replace(temporary, path)
             except OSError as exc:

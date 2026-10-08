@@ -16,21 +16,6 @@ _SAFE_COMPONENT = re.compile(r"[^/\\:\x00]+\Z")
 _ROW_NUMBER = re.compile(r"(?P<prefix>.+)_(?P<number>[0-9]{3,})\Z")
 _DECISION_KEY = re.compile(r"D(?P<number>[1-9][0-9]*)\Z")
 _ATOM_KEY = re.compile(r"A(?P<number>[1-9][0-9]*)\Z")
-_FORBIDDEN_KEYS = frozenset({
-    "decision_hash",
-    "recipe_hash",
-    "generated_row_hash",
-    "anchor_hash",
-    "BASE",
-    "WORKING",
-    "NEW",
-    "revision",
-    "revisions",
-    "tombstone",
-    "tombstones",
-    "conflict",
-    "conflicts",
-})
 _TOP_LEVEL_KEYS = frozenset({
     "schema_version",
     "project",
@@ -51,7 +36,7 @@ _FUNCTION_REQUIRED_KEYS = frozenset({
     "stubs",
 })
 _FUNCTION_KEYS = _FUNCTION_REQUIRED_KEYS | frozenset({"parameters"})
-_ROW_KEYS = frozenset({"owner", "status", "description", "test_method", "input", "output"})
+_ROW_KEYS = frozenset({"owner", "status", "description", "input", "output"})
 _DECISION_REQUIRED_KEYS = frozenset({"status", "expression", "atoms", "recipes"})
 _DECISION_OPTIONAL_KEYS = frozenset({"kind", "location"})
 _RECIPE_KEYS = frozenset({"row_id", "result", "values"})
@@ -221,8 +206,6 @@ def _validate_function_links(
             if decision["status"] == "orphaned":
                 if row["status"] != "orphaned" and row_id not in active_recipe_rows:
                     _fail("orphaned Decision recipes must reference orphaned rows")
-            elif row["status"] not in {"active", "orphaned"}:
-                _fail("active Decision recipes must reference active or orphaned rows")
 
     for generated_index, item in enumerate(function["generated_rows"]):
         row_id = item["row_id"]
@@ -245,9 +228,6 @@ def _validate_return_storage(
             _fail(f"stub {key!r} return storage {storage!r} is not a function variable")
         if variables[storage].get("direction") not in {"input", "inout"}:
             _fail(f"stub {key!r} return storage must be an input variable")
-        for row in function["rows"].values():
-            if storage not in row["input"]:
-                _fail(f"row is missing stub return storage {storage!r}")
 
 
 def _validate_stub_catalog(catalog: Mapping[str, Any]) -> None:
@@ -305,14 +285,10 @@ def _validate_decision(decision: object, path: str) -> None:
     if not _string(decision["expression"]):
         _fail(f"{path}.expression must be a non-empty string")
     atoms = _mapping(decision["atoms"], f"{path}.atoms")
-    atom_numbers: list[int] = []
     for key, text in atoms.items():
         match = _ATOM_KEY.fullmatch(key) if isinstance(key, str) else None
         if match is None or not _string(text):
             _fail(f"{path}.atoms contains an invalid atom")
-        atom_numbers.append(int(match.group("number")))
-    if sorted(atom_numbers) != list(range(1, len(atom_numbers) + 1)):
-        _fail(f"{path}.atoms must be numbered consecutively")
     recipes = decision["recipes"]
     if not isinstance(recipes, list):
         _fail(f"{path}.recipes must be a list")
@@ -332,15 +308,13 @@ def _validate_decision(decision: object, path: str) -> None:
 
 def _validate_row(row: object, variables: Mapping[str, Any], path: str) -> None:
     row = _mapping(row, path)
-    _keys(row, _ROW_KEYS, path)
+    _keys(row, _ROW_KEYS | {"test_method"}, path, _ROW_KEYS)
     if not isinstance(row["owner"], str) or row["owner"] not in {"tool", "user"}:
         _fail(f"{path}.owner is invalid")
     if not isinstance(row["status"], str) or row["status"] not in {"active", "orphaned"}:
         _fail(f"{path}.status is invalid")
     if not isinstance(row["description"], str):
         _fail(f"{path}.description must be a string")
-    if row["test_method"] != "":
-        _fail(f"{path}.test_method must be empty")
     for channel in _CHANNELS:
         values = _mapping(row[channel], f"{path}.{channel}")
         selected = _selected_variables(variables, channel)
@@ -505,8 +479,6 @@ def _check_json_tree(value: object, path: str) -> None:
         for key, child in value.items():
             if not isinstance(key, str):
                 _fail(f"{path} has a non-string key")
-            if key in _FORBIDDEN_KEYS:
-                _fail(f"{path} contains forbidden state field {key!r}")
             _check_json_tree(child, f"{path}.{key}")
     elif isinstance(value, list):
         for index, child in enumerate(value):

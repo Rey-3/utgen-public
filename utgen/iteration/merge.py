@@ -15,9 +15,8 @@ from .state import (
     _recipe_structure,
     _resolve_row,
     _tool,
-    ordered_active_rows,
 )
-from .validation import validate_module
+from .validation import _row_prefix, _validate_row_id, validate_module
 from .values import metadata_variables, project_generated_values_many, sync_row_schema
 from .workbook_merge import extend_workbook_variables as _extend_workbook_variables, snapshot_values as _snapshot_values
 from ..mcdc import eval_expr
@@ -62,37 +61,36 @@ def merge_user(state: dict, function_name: str, workbook_snapshot) -> UserMergeR
         raise ValueError("workbook snapshot cases must be a sequence")
 
     current = state["functions"][function_name]
+    if cases and current["rows"] and all(_case_row_id(case) is None for case in cases):
+        raise ValueError("existing workbook rows require row IDs; export current JSON before importing")
     result = deepcopy(state)
+    prefix = _row_prefix(result)
+    for case in cases:
+        row_id = _case_row_id(case)
+        if row_id is not None:
+            result["max_row_number"] = max(result["max_row_number"], _validate_row_id(row_id, prefix))
     function = result["functions"][function_name]
     variables_extended = _extend_workbook_variables(result["functions"], function, cases, _get(workbook_snapshot, "columns", default=()))
     rows = function["rows"]
-    active_ids = [row_id for row_id, _ in ordered_active_rows(current)]
-    legacy = all(_case_row_id(case) is None for case in cases)
     rewrite_required = bool(cases) and any(_case_row_id(case) is None for case in cases)
     seen: set[str] = set()
     allocated: list[str] = []
     row_changed = added = orphaned = 0
-    for index, case in enumerate(cases):
+    for case in cases:
         row_id = _case_row_id(case)
-        new_row = False
         if row_id is None:
-            if legacy and index < len(active_ids):
-                row_id = active_ids[index]
-            else:
-                row_id = _allocate_row_id(result)
-                allocated.append(row_id)
-                added += 1
-                new_row = True
+            row_id = _allocate_row_id(result)
+            allocated.append(row_id)
         if not isinstance(row_id, str) or not row_id:
             raise ValueError("workbook row ID must be a non-empty string or omitted")
         if row_id in seen:
             raise ValueError(f"duplicate workbook row ID: {row_id!r}")
         seen.add(row_id)
-        if row_id not in rows and not new_row:
-            raise ValueError(f"workbook references unknown row ID: {row_id!r}")
+        new_row = row_id not in rows
         incoming = _snapshot_row(case, function, allow_missing=new_row)
         if new_row:
             rows[row_id] = incoming
+            added += 1
             continue
         old = rows[row_id]
         if old["status"] != "active" or _row_content(old) != _row_content(incoming):
@@ -152,7 +150,6 @@ def _snapshot_row(case, function: dict, *, allow_missing: bool = False) -> dict:
         "owner": "user",
         "status": "active",
         "description": _case_description(case),
-        "test_method": "",
         "input": _snapshot_values(case, function, "input", allow_missing),
         "output": _snapshot_values(case, function, "output", allow_missing),
     }
@@ -479,7 +476,7 @@ def build_candidate(analysis, generated_functions, project, module, input_hash) 
             row_ids.append(_allocate_row_id(state))
             function_state["rows"][row_ids[-1]] = {
                 "owner": "tool", "status": "active", "description": str(row.description),
-                "test_method": "", "input": input_values, "output": output_values,
+                "input": input_values, "output": output_values,
             }
         for decision_index, decision in enumerate(getattr(function, "decisions", ())):
             decision_key = _allocate_decision_key(function_state)

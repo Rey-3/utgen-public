@@ -6,9 +6,8 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-# Resource template ships beside this file, or is unpacked into sys._MEIPASS
-# when running as a PyInstaller onefile exe.
-RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", None) or Path(__file__).resolve().parent)
+# External templates live beside the executable when frozen.
+RESOURCE_DIR = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
 TEMPLATE_DIR = RESOURCE_DIR / "template2"
 TEMPLATE_CONFIG_XML = TEMPLATE_DIR / "config" / "configuration.xml"
 
@@ -35,14 +34,11 @@ class TessyProjectCloner:
     ]
 
     def __init__(self, workspace, template=None):
-        # template ships beside this file -> resolve fresh from RESOURCE_DIR every run.
         self.template = self._resolve_template(template)
         self.workspace = Path(workspace)
 
     @staticmethod
     def _resolve_template(template):
-        if getattr(sys, "_MEIPASS", None):
-            return TEMPLATE_DIR
         if not template:
             return TEMPLATE_DIR
         path = Path(template)

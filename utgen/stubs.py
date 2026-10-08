@@ -102,6 +102,9 @@ class StubFinder:
     def _record(self, cur: Cursor, self_name: str, source_file: str,
                 seen: set, stubs: list, variables: list) -> None:
         callee = cur.referenced
+        # Callback variables are indirect call targets, not external functions.
+        if callee is not None and callee.kind != CursorKind.FUNCTION_DECL:
+            return
 
         # ``referenced`` gives the declaration when Clang can resolve the call.
         # Falling back to the call spelling still lets UTGen record an unresolved

@@ -353,8 +353,12 @@ def run_user_merge(config=None):
     return workflow_run_user_merge(CONFIG_PATH if config is None else config)
 
 
-def run_tessy_import(config):
+def run_tessy_import(config, config_path=None):
     tessy = config["Tessy"]
+    config_dir = Path(config_path or CONFIG_PATH).resolve().parent
+    template = Path(tessy.get("template_path") or "template2")
+    if not template.is_absolute():
+        template = config_dir / template
     for project in config.get("projects", ()):
         workspace = Path(project.get("workspace") or tessy["default_workspace"])
         project_name = project["name"]
@@ -362,7 +366,7 @@ def run_tessy_import(config):
         if not (workspace / project_name).exists():
             failed = TessyProjectCloner(
                 workspace=workspace,
-                template=tessy.get("template_path") or None,
+                template=template,
             ).run(project_name, root_path)
             if failed:
                 raise RuntimeError(f"Failed to clone TESSY project {project_name}")
@@ -439,7 +443,7 @@ def main(argv=None):
     elif mode == "2":
         result = run_excel_export(config_path)
     elif mode == "3":
-        result = run_tessy_import(config)
+        result = run_tessy_import(config, config_path)
     else:
         result = run_user_merge(config_path)
     _print_summaries(result)

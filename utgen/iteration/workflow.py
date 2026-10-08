@@ -122,9 +122,7 @@ def _run_generation_module(
     database_metadata = None
     if paths.database.exists():
         try:
-            database_metadata, database_analysis = AnalysisDbAdapter().read_module(
-                paths.database, require_metadata=True
-            )
+            database_metadata, database_analysis = AnalysisDbAdapter().read_module(paths.database)
         except Exception:
             database_analysis = None
     print(f"{name}: Saved state load time: {time.monotonic() - load_started:.3f}s", flush=True)
@@ -433,13 +431,10 @@ def scan_workbooks(project_config) -> dict[tuple[str, str, str], Path]:
 
     config, base = _config_and_base(project_config)
     result = {}
-    seen = {}
-    for key, path, snapshot in _scan_entries(config, base):
-        if key in seen and snapshot_semantics(snapshot) != seen[key][0]:
-            raise ValueError(f"conflicting workbooks for {key!r}")
-        if key not in result:
-            result[key] = path
-            seen[key] = (snapshot_semantics(snapshot), path)
+    for key, path, _snapshot in _scan_entries(config, base):
+        if key in result:
+            raise ValueError(f"duplicate workbooks for {key!r}")
+        result[key] = path
     return result
 
 
@@ -479,11 +474,7 @@ def run_user_merge(config) -> list[ModuleSummary]:
             allocated = []
             for function_name, items in grouped.items():
                 if len(items) > 1:
-                    first = snapshot_semantics(items[0][1])
-                    if any(snapshot_semantics(item[1]) != first for item in items[1:]):
-                        raise ValueError(
-                            f"conflicting workbooks for {project}/{_module_name(module)}/{function_name}"
-                        )
+                    raise ValueError(f"duplicate workbooks for {project}/{_module_name(module)}/{function_name}")
                 path, snapshot = items[0]
                 merged = merge_user(candidate, function_name, snapshot)
                 candidate = merged.state
@@ -603,7 +594,7 @@ def _module_identities(module: Mapping) -> set[str]:
 
 
 def _scan_entries(config, base):
-    entries = []
+    entries, scanned = [], set()
     for _project, module in _configured_modules(config):
         directory = module.get("excel_input_dir")
         if not directory:
@@ -611,8 +602,10 @@ def _scan_entries(config, base):
         directory = Path(os.fspath(directory))
         if not directory.is_absolute():
             directory = base / directory
-        if not directory.is_dir():
+        identity = directory.resolve()
+        if identity in scanned or not directory.is_dir():
             continue
+        scanned.add(identity)
         adapter = TessyWorkbookAdapter()
         for path in sorted(directory.glob("*.xlsx")):
             if path.name.startswith("~$") or not path.is_file():
@@ -633,50 +626,6 @@ def _snapshot_identity(snapshot):
     if module.lower().endswith(".c"):
         module = module[:-2]
     return _normal(project), _normal(module), function
-
-
-def snapshot_semantics(snapshot) -> tuple:
-    """Return workbook content that can conflict; ignore layout metadata."""
-    cases = []
-    for case in _items(snapshot, "cases"):
-        values = []
-        for channel in ("input", "output"):
-            cells = _value(case, f"{channel}_cells", _value(case, channel, {})) or {}
-            values.append(tuple(sorted((_cell_semantics(key, cell) for key, cell in cells.items()), key=repr)))
-        cases.append(
-            (
-                _value(case, "external_test_case_id", _value(case, "row_id")),
-                _value(case, "state_description", _value(case, "description", "")),
-                *values,
-            )
-        )
-    stubs = tuple(sorted(
-        (
-            (
-                _value(item, "name", _value(item, "stub_name")),
-                _value(item, "body_raw", _value(item, "body")),
-            )
-            for item in _items(snapshot, "stubs")
-        ),
-        key=repr,
-    ))
-    ordered_cases = tuple(cases) if any(item[0] is None for item in cases) else tuple(sorted(cases, key=repr))
-    return ordered_cases, stubs
-
-
-def _value(item, name, default=None):
-    if isinstance(item, Mapping):
-        return item.get(name, default)
-    return getattr(item, name, default)
-
-
-def _items(item, name):
-    return _value(item, name, ()) or ()
-
-
-def _cell_semantics(key, cell) -> tuple:
-    name = key if isinstance(key, str) else _value(key, "canonical_name")
-    return name, _value(cell, "kind", "value"), _value(cell, "raw_text", cell)
 
 
 def _meta(meta, *names):
