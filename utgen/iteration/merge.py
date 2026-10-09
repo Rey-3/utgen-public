@@ -14,10 +14,12 @@ from .state import (
     _preferred_tool_rows,
     _recipe_structure,
     _resolve_row,
+    _row_matches_schema,
+    _stub_matches_catalog,
     _tool,
 )
 from .validation import _row_prefix, _validate_row_id, validate_module
-from .values import metadata_variables, project_generated_values_many, sync_row_schema
+from .values import metadata_variables, preserve_user_variables, project_generated_values_many, sync_row_schema
 from .workbook_merge import extend_workbook_variables as _extend_workbook_variables, snapshot_values as _snapshot_values
 from ..mcdc import eval_expr
 from ..model import And, AssemblyResult, Atom, GeneratedRowProvenance, Not, Or, RecipeProvenance, atom_text, atoms_of
@@ -93,13 +95,14 @@ def merge_user(state: dict, function_name: str, workbook_snapshot) -> UserMergeR
             added += 1
             continue
         old = rows[row_id]
-        if old["status"] != "active" or _row_content(old) != _row_content(incoming):
+        if old["status"] != "active" or _row_content(old) != _row_content(incoming) or not _row_matches_schema(function, row_id):
             old.clear()
             old.update(incoming)
+            function.get("row_variables", {}).pop(row_id, None)
             row_changed += 1
 
     for row_id, row in rows.items():
-        if row["status"] == "active" and row_id not in seen:
+        if row["status"] == "active" and row_id not in seen and _row_matches_schema(function, row_id):
             row.update(owner="user", status="orphaned")
             orphaned += 1
     stub_changed, stub_orphaned = _merge_user_stubs(function, workbook_snapshot, result["stub_catalog"])
@@ -110,7 +113,7 @@ def merge_user(state: dict, function_name: str, workbook_snapshot) -> UserMergeR
         "rows": {"changed": row_changed, "added": added, "orphaned": orphaned},
         "stubs": {"changed": stub_changed, "orphaned": stub_orphaned},
     }
-    return UserMergeResult(result, summary, tuple(allocated), rewrite_required)
+    return UserMergeResult(result if updated else deepcopy(state), summary, tuple(allocated), rewrite_required)
 
 def _validate_workbook_identity(state, function_name: str, snapshot) -> None:
     meta = _get(snapshot, "meta")
@@ -180,11 +183,14 @@ def _merge_user_stubs(function: dict, snapshot, catalog: Mapping) -> tuple[int, 
                 continue
             current[key] = {"owner": "user", "status": "active", "body": body}
             changed += 1
-        elif item["body"] != body or item["status"] != "active":
+        elif item["body"] != body or item["status"] != "active" or not _stub_matches_catalog(function, key, catalog[key]):
             item.update(owner="user", status="active", body=body)
+            function.get("stub_signatures", {}).pop(key, None)
             changed += 1
     for key, item in current.items():
         if key not in seen and item["status"] == "active":
+            if catalog[key]["status"] != "active" or not _stub_matches_catalog(function, key, catalog[key]):
+                continue
             item.update(owner="user", status="orphaned")
             orphaned += 1
     return changed, orphaned
@@ -213,6 +219,11 @@ def merge_tool(current: dict, candidate: dict) -> MergeResult:
     if tuple(current[key] for key in identity) != tuple(candidate[key] for key in identity):
         raise ValueError("current and candidate module identities do not match")
     state = deepcopy(current)
+    for function in state["functions"].values():
+        for key, stub in function["stubs"].items():
+            if stub["owner"] == "user" and current["stub_catalog"][key] != candidate["stub_catalog"].get(key):
+                if key not in function.get("stub_signatures", {}):
+                    function.setdefault("stub_signatures", {})[key] = deepcopy(current["stub_catalog"][key])
     state.update({key: candidate[key] for key in (*identity, "module_input_hash")})
     state["stub_catalog"] = _merge_stub_catalog(current["stub_catalog"], candidate["stub_catalog"])
     counter_names = (
@@ -228,7 +239,7 @@ def merge_tool(current: dict, candidate: dict) -> MergeResult:
         state["functions"][name] = (
             _new_function(state, candidate_function, counters)
             if name not in current_functions
-            else _merge_function(state, current_functions[name], candidate_function, counters)
+            else _merge_function(state, state["functions"][name], candidate_function, counters)
         )
     validate_module(state)
     summary = {
@@ -296,12 +307,14 @@ def _new_function(state: dict, candidate: dict, counters: dict) -> dict:
 
 def _merge_function(state: dict, current: dict, candidate: dict, counters: dict) -> dict:
     function = deepcopy(current)
+    function.pop("status", None)
     if "parameters" in candidate:
         function["parameters"] = deepcopy(candidate["parameters"])
-    function["variables"] = deepcopy(candidate["variables"])
     if current["variables"] != candidate["variables"]:
+        preserve_user_variables(function)
         for row in function["rows"].values():
             sync_row_schema(row, current["variables"], candidate["variables"])
+    function["variables"] = deepcopy(candidate["variables"])
     matches = match_decisions(current, candidate)
     preferred = _preferred_tool_rows(current, candidate, matches)
     context = {
@@ -363,6 +376,8 @@ def _merge_function(state: dict, current: dict, candidate: dict, counters: dict)
         if row_id in function["rows"]:
             ordered[row_id] = function["rows"][row_id]
     for row_id, row in function["rows"].items():
+        if row_id not in context["retained"]:
+            _mark_orphan(row, counters)
         ordered.setdefault(row_id, row)
     function["rows"] = ordered
     function["used_stub_keys"] = deepcopy(candidate["used_stub_keys"])
@@ -405,6 +420,9 @@ def _merge_stubs(current: dict, candidate: dict, catalog: dict) -> dict:
     merged = {}
     for key, entry in catalog.items():
         old = current_stubs.get(key)
+        if old is not None and old["owner"] == "user":
+            merged[key] = deepcopy(old)
+            continue
         if entry["status"] == "orphaned":
             if old is not None:
                 item = deepcopy(old)
@@ -418,7 +436,7 @@ def _merge_stubs(current: dict, candidate: dict, catalog: dict) -> dict:
             "status": "active",
             "body": _default_stub_body(entry, key in used),
         }
-        merged[key] = deepcopy(old) if old is not None and old["owner"] == "user" else _tool(incoming)
+        merged[key] = _tool(incoming)
     for key, old in current_stubs.items():
         if key not in catalog:
             item = deepcopy(old)
@@ -427,6 +445,7 @@ def _merge_stubs(current: dict, candidate: dict, catalog: dict) -> dict:
     return merged
 
 def _orphan_function(function: dict, counters: dict) -> None:
+    function["status"] = "orphaned"
     for decision in function["decisions"].values():
         if decision["status"] != "orphaned":
             counters["decisions_orphaned"] += 1
@@ -438,7 +457,8 @@ def _orphan_function(function: dict, counters: dict) -> None:
     for row in function["rows"].values():
         _mark_orphan(row, counters)
     for stub in function["stubs"].values():
-        stub["status"] = "orphaned"
+        if stub["owner"] == "tool":
+            stub["status"] = "orphaned"
     function["used_stub_keys"] = []
 
 def build_candidate(analysis, generated_functions, project, module, input_hash) -> dict:

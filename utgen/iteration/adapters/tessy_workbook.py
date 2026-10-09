@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import tempfile
 import time
+import warnings
 from typing import Any, Iterable, Mapping
 
 from openpyxl import Workbook
@@ -21,7 +22,7 @@ from tessy_excel import (
     writeGeneralSheet,
     write_testlist_cells,
 )
-from ..state import ordered_active_rows
+from ..state import _stub_matches_catalog, ordered_active_rows
 from ..values import flatten_values_many, pointer_member_storage, project_generated_values
 from ._tessy_workbook_io import (
     CellValue,
@@ -601,7 +602,16 @@ class TessyWorkbookAdapter:
         rows = ordered_active_rows(function)
         columns, projected = _project_rows(function, rows)
         stubs = _project_stubs(module_state, function)
-        workbook = _load_template(template_path)
+        existing = path if path.is_file() else path.with_suffix(".xls" if path.suffix == ".xlsx" else ".xlsx")
+        if existing.is_file():
+            raw = read_xlsx_bytes(existing)
+            if raw.startswith(bytes.fromhex("D0CF11E0A1B11AE1")):
+                workbook = load_xls_workbook(raw)
+            else:
+                validate_xlsx_container(raw)
+                workbook = load_workbook(BytesIO(raw), keep_links=False)
+        else:
+            workbook = _load_template(template_path)
         _ensure_sheets(workbook)
         writeGeneralSheet(workbook["General"], module_state["project"], module_state["source_file"], function_name)
         write_testlist_cells(workbook, projected, stubs, columns)
@@ -798,6 +808,9 @@ def _project_stubs(state: Mapping[str, Any], function: Mapping[str, Any]) -> lis
         if local is not None and local["status"] == "orphaned":
             continue
         if local is not None and local["status"] == "active":
+            if not _stub_matches_catalog(function, key, entry):
+                warnings.warn(f"user stub {key!r} has a changed C signature; kept unchanged in JSON, excluded from Excel", stacklevel=2)
+                continue
             body = local["body"]
         else:
             body = default_stub_body(

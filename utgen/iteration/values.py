@@ -101,10 +101,19 @@ def nest_values(flat_values: Mapping[str, str], metadata: Mapping[str, Any], cha
     return result
 
 
+def preserve_user_variables(function: dict) -> None:
+    """Save the original schema before replacing a function's generated metadata."""
+    for row_id, row in function["rows"].items():
+        if row["owner"] == "user" and row_id not in function.get("row_variables", {}):
+            function.setdefault("row_variables", {})[row_id] = deepcopy(function["variables"])
+
+
 def sync_row_schema(row: dict, old_variables: Mapping[str, Any], new_variables: Mapping[str, Any]) -> None:
     """Project one row onto a changed variable schema without changing old lexemes."""
 
     row = _mapping(row, "row")
+    if row.get("owner") == "user":
+        return
     old = metadata_variables(old_variables)
     new = metadata_variables(new_variables)
     for channel in _CHANNELS:
@@ -644,4 +653,5 @@ __all__ = [
     "project_generated_values_many",
     "project_variable_schema",
     "sync_row_schema",
+    "preserve_user_variables",
 ]

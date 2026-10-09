@@ -11,6 +11,7 @@ from .values import (
     pointer_member_storage,
     project_generated_values,
     project_variable_schema,
+    preserve_user_variables,
     sync_row_schema,
 )
 
@@ -104,6 +105,7 @@ def extend_workbook_variables(functions: Mapping, function: dict, cases, columns
     if not imported:
         return False
     old = deepcopy(function["variables"])
+    preserve_user_variables(function)
     function["variables"].update(deepcopy(imported))
     for row in function["rows"].values():
         sync_row_schema(row, old, function["variables"])

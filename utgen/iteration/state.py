@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import threading
+import warnings
 
 from .validation import (
     StateValidationError,
@@ -172,8 +173,27 @@ def _allocate_decision_key(function_state: dict) -> str:
 
 
 def ordered_active_rows(function: Mapping) -> list[tuple[str, dict]]:
-    """Return active physical rows in their persisted mapping order."""
-    return [(row_id, row) for row_id, row in function["rows"].items() if row["status"] == "active"]
+    """Return active rows compatible with the current C schema, in persisted order."""
+    if function.get("status") == "orphaned":
+        return []
+    rows = []
+    for row_id, row in function["rows"].items():
+        if row["status"] != "active":
+            continue
+        if not _row_matches_schema(function, row_id):
+            warnings.warn(f"user row {row_id!r} has a changed C schema; kept unchanged in JSON, excluded from Excel", stacklevel=2)
+            continue
+        rows.append((row_id, row))
+    return rows
+
+
+def _row_matches_schema(function: Mapping, row_id: str) -> bool:
+    return function.get("row_variables", {}).get(row_id, function["variables"]) == function["variables"]
+
+
+def _stub_matches_catalog(function: Mapping, key: str, entry: Mapping) -> bool:
+    original = function.get("stub_signatures", {}).get(key, entry)
+    return all(original[field] == entry[field] for field in ("return_type", "return_storage", "parameters"))
 
 
 def _recipe_structure(decision: dict, recipe: dict) -> tuple:
@@ -224,7 +244,15 @@ def _resolve_row(state, function, candidate, candidate_id, old_id, counters, con
     rows = function["rows"]
     candidate_row = candidate["rows"][candidate_id]
     if old_id is not None and rows[old_id]["owner"] == "user":
-        if old_id in context["users"]:
+        if rows[old_id]["status"] == "orphaned":
+            canonical = context["canonical"].get(candidate_id)
+            if canonical != old_id:
+                _mark_orphan(rows.get(canonical), counters)
+            context["canonical"][candidate_id] = old_id
+            context["retained"].add(old_id)
+            context["order"].setdefault(candidate_id, old_id)
+            return old_id
+        if old_id in context["users"] or (rows[old_id]["status"] == "active" and not _row_matches_schema(function, old_id)):
             old_id = None
         else:
             context["users"].add(old_id)
@@ -266,7 +294,7 @@ def _tool(item: dict) -> dict:
 
 
 def _mark_orphan(row: dict | None, counters: dict) -> None:
-    if row is None:
+    if row is None or row["owner"] == "user":
         return
     if row["status"] != "orphaned":
         counters["rows_orphaned"] += 1

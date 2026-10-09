@@ -35,7 +35,7 @@ _FUNCTION_REQUIRED_KEYS = frozenset({
     "used_stub_keys",
     "stubs",
 })
-_FUNCTION_KEYS = _FUNCTION_REQUIRED_KEYS | frozenset({"parameters"})
+_FUNCTION_KEYS = _FUNCTION_REQUIRED_KEYS | frozenset({"parameters", "status", "row_variables", "stub_signatures"})
 _ROW_KEYS = frozenset({"owner", "status", "description", "input", "output"})
 _DECISION_REQUIRED_KEYS = frozenset({"status", "expression", "atoms", "recipes"})
 _DECISION_OPTIONAL_KEYS = frozenset({"kind", "location"})
@@ -116,6 +116,9 @@ def _validate_function(
         _FUNCTION_REQUIRED_KEYS,
     )
     parameters = function.get("parameters", [])
+    status = function.get("status", "active")
+    if not _string(status) or status not in {"active", "orphaned"}:
+        _fail(f"functions.{function_name}.status is invalid")
     if not isinstance(parameters, list):
         _fail(f"functions.{function_name}.parameters must be a list")
     if any(not _string(name) for name in parameters):
@@ -143,8 +146,17 @@ def _validate_function(
         _fail(f"functions.{function_name}.max_decision_number is below an existing Decision key")
 
     rows = _mapping(function["rows"], f"functions.{function_name}.rows")
+    row_variables = _mapping(function.get("row_variables", {}), f"functions.{function_name}.row_variables")
+    for row_id, schema in row_variables.items():
+        if row_id not in rows or _mapping(rows[row_id], f"rows.{row_id}").get("owner") != "user":
+            _fail("saved variable schemas must reference user rows")
+        schema = _mapping(schema, f"functions.{function_name}.row_variables.{row_id}")
+        for name, spec in schema.items():
+            if not _string(name):
+                _fail("saved variable schema has an invalid name")
+            _validate_variable(spec, f"functions.{function_name}.row_variables.{row_id}.{name}", root=True)
     for row_id, row in rows.items():
-        _validate_row(row, variables, f"functions.{function_name}.rows.{row_id}")
+        _validate_row(row, row_variables.get(row_id, variables), f"functions.{function_name}.rows.{row_id}")
 
     generated_rows = function["generated_rows"]
     if not isinstance(generated_rows, list):
@@ -171,11 +183,16 @@ def _validate_function(
         _fail(f"functions.{function_name}.used_stub_keys contains duplicates")
 
     stubs = _mapping(function["stubs"], f"functions.{function_name}.stubs")
+    signatures = _mapping(function.get("stub_signatures", {}), f"functions.{function_name}.stub_signatures")
+    _validate_stub_catalog(signatures)
+    for key in signatures:
+        if key not in stubs or _mapping(stubs[key], f"stubs.{key}").get("owner") != "user":
+            _fail("saved stub signatures must reference user stubs")
     for key, stub in stubs.items():
         if not _string(key) or key not in catalog:
             _fail(f"unknown function stub reference: {key!r}")
         _validate_stub(stub, f"functions.{function_name}.stubs.{key}")
-        if catalog[key]["status"] == "orphaned" and stub["status"] != "orphaned":
+        if catalog[key]["status"] == "orphaned" and stub["status"] != "orphaned" and stub["owner"] != "user":
             _fail(f"orphaned stub catalog key has an active function record: {key!r}")
     missing_records = set(used_stub_keys) - set(stubs)
     if missing_records:
@@ -204,7 +221,7 @@ def _validate_function_links(
             links[row_id] = f"{function_name}.{decision_key}.recipes[{recipe_index}]"
             row = local_rows[row_id]
             if decision["status"] == "orphaned":
-                if row["status"] != "orphaned" and row_id not in active_recipe_rows:
+                if row["status"] != "orphaned" and row["owner"] != "user" and row_id not in active_recipe_rows:
                     _fail("orphaned Decision recipes must reference orphaned rows")
 
     for generated_index, item in enumerate(function["generated_rows"]):
