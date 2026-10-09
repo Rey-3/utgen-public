@@ -52,8 +52,10 @@ class UserMergeResult:
     def skipped(self) -> bool:
         return not self.changed
 
-def merge_user(state: dict, function_name: str, workbook_snapshot) -> UserMergeResult:
+def merge_user(state: dict, function_name: str, workbook_snapshot, *, output_only_keep_owner: bool = True) -> UserMergeResult:
     """Merge one complete function workbook into a current module state."""
+    if type(output_only_keep_owner) is not bool:
+        raise ValueError("output_only_keep_owner must be a boolean")
     validate_module(state)
     if function_name not in state["functions"]:
         raise ValueError(f"unknown function {function_name!r}")
@@ -96,6 +98,10 @@ def merge_user(state: dict, function_name: str, workbook_snapshot) -> UserMergeR
             continue
         old = rows[row_id]
         if old["status"] != "active" or _row_content(old) != _row_content(incoming) or not _row_matches_schema(function, row_id):
+            if output_only_keep_owner and old["status"] == "active" and all(
+                current["rows"][row_id][field] == incoming[field] for field in ("description", "input")
+            ):
+                incoming["owner"] = old["owner"]
             old.clear()
             old.update(incoming)
             function.get("row_variables", {}).pop(row_id, None)

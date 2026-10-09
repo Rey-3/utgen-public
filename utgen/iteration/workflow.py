@@ -479,7 +479,8 @@ def run_user_merge(config) -> list[ModuleSummary]:
                 if len(items) > 1:
                     raise ValueError(f"duplicate workbooks for {project}/{_module_name(module)}/{function_name}")
                 path, snapshot = items[0]
-                merged = merge_user(candidate, function_name, snapshot)
+                merged = merge_user(candidate, function_name, snapshot,
+                                    output_only_keep_owner=(config.get("iteration") or {}).get("output_only_keep_owner", True))
                 candidate = merged.state
                 function_summaries[function_name] = merged.summary
                 allocated.extend(merged.allocated_ids)
