@@ -34,6 +34,13 @@ def _pointer_roots(function: Mapping) -> set[str]:
 
 
 def _workbook_state_name(function: Mapping, name: str, channel: str, storage_members) -> str:
+    if channel == "output" and _state_value_root(name) == "return" and "return" not in function["variables"]:
+        returns = []
+        for root, spec in function["variables"].items():
+            if root.endswith("()") and spec["direction"] in {"output", "inout"}:
+                returns.append(root)
+        if len(returns) == 1:
+            return returns[0] + name[len("return"):]
     if name in storage_members:
         return storage_members[name]
     pointer_roots = _pointer_roots(function)
@@ -138,8 +145,8 @@ def snapshot_values(case, function: dict, channel: str, allow_missing: bool) -> 
         if name not in defaults:
             raise ValueError(f"workbook value path is outside metadata: {workbook_name!r}")
         raw = getattr(cell, "raw_text", cell)
-        is_member_address = workbook_name in members and (
-            workbook_name in address_columns or raw == members[workbook_name][0]
+        is_member_address = name in members and workbook_name not in storage_members and (
+            name in address_columns or raw == members[name][0]
         )
         destination = addresses if is_member_address else flat
         if name in destination:

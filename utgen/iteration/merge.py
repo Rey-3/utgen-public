@@ -165,6 +165,10 @@ def _snapshot_row(case, function: dict, *, allow_missing: bool = False) -> dict:
 
 def _row_content(row: Mapping) -> tuple:
     return row["description"], row["input"], row["output"]
+
+def _stub_body_text(body: str) -> str:
+    return body.replace("\r\n", "\n").replace("\r", "\n")
+
 def _merge_user_stubs(function: dict, snapshot, catalog: Mapping) -> tuple[int, int]:
     stubs = _get(snapshot, "stubs", default=())
     if not isinstance(stubs, (list, tuple)):
@@ -185,11 +189,11 @@ def _merge_user_stubs(function: dict, snapshot, catalog: Mapping) -> tuple[int, 
             raise ValueError(f"workbook references an unavailable stub: {key!r}")
         item = current.get(key)
         if item is None:
-            if body == _default_stub_body(catalog[key], key in function["used_stub_keys"]):
+            if _stub_body_text(body) == _stub_body_text(_default_stub_body(catalog[key], key in function["used_stub_keys"])):
                 continue
             current[key] = {"owner": "user", "status": "active", "body": body}
             changed += 1
-        elif item["body"] != body or item["status"] != "active" or not _stub_matches_catalog(function, key, catalog[key]):
+        elif _stub_body_text(item["body"]) != _stub_body_text(body) or item["status"] != "active" or not _stub_matches_catalog(function, key, catalog[key]):
             item.update(owner="user", status="active", body=body)
             function.get("stub_signatures", {}).pop(key, None)
             changed += 1
