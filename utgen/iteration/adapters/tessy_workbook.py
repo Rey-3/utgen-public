@@ -439,7 +439,8 @@ class TessyWorkbookAdapter:
             _error("MISSING_VALUES_SHEET", "Values pages must be numbered consecutively", sheet="Values")
         columns, rows, seen = [], {}, set()
         for name in names:
-            page_columns, page_rows = self._parse_values(workbook[name])
+            row_labels = {row[5]: row[2] for row in rows.values()} if name != "Values" else None
+            page_columns, page_rows = self._parse_values(workbook[name], row_labels)
             for column in page_columns:
                 key = (column.base_name, column.channel, column.element_path)
                 if key in seen:
@@ -458,12 +459,22 @@ class TessyWorkbookAdapter:
         self._validate_array_structure(columns)
         return columns, list(rows.values())
 
-    def _parse_values(self, ws):
+    def _parse_values(self, ws, row_labels=None):
         _active_formula_check(ws, sheet=ws.title, min_row=1)
         cells = _cell_map(ws)
+        unlabelled = row_labels is not None and any(_text_value(cells.get((row, 1))) for row in (1, 2))
+        if unlabelled:
+            try:
+                parse_direction_token(_text_value(cells.get((2, 1))))
+            except WorkbookAdapterError:
+                headings = tuple(_normalize_label(_text_value(cells.get((row, 1))) or "") for row in (1, 2))
+                unlabelled = headings != ("test case", "test step") and not any(
+                    _CASE_LABEL_RE.fullmatch(_text_value(cell) or "")
+                    for (row, column), cell in cells.items() if row >= 3 and column == 1)
+        first_column = 1 if unlabelled else 2
         columns = []
         seen = set()
-        active_numbers = sorted({column for (row, column), cell in cells.items() if column >= 2 and getattr(cell, "value", None) is not None})
+        active_numbers = sorted({column for (row, column), cell in cells.items() if column >= first_column and getattr(cell, "value", None) is not None})
         for column in active_numbers:
             name_cell, direction_cell = cells.get((1, column)), cells.get((2, column))
             name, raw_direction = _text_value(name_cell), _text_value(direction_cell)
@@ -484,10 +495,10 @@ class TessyWorkbookAdapter:
             columns.append(ExportColumn(key, name, token.direction, token.channel, token.raw, token.raw_type_hint, element_path, base_name, column))
         rows = []
         labels = set()
-        candidate_rows = sorted({row for (row, _column), cell in cells.items() if row >= 3 and getattr(cell, "value", None) is not None})
+        candidate_rows = sorted({row for (row, _column), cell in cells.items() if row >= 3 and (unlabelled or getattr(cell, "value", None) is not None)})
         for row in candidate_rows:
-            label_cell = cells.get((row, 1))
-            label = _text_value(label_cell)
+            label_cell = None if unlabelled else cells.get((row, 1))
+            label = row_labels.get(row) if unlabelled else _text_value(label_cell)
             if not (label is not None or _row_has_payload(cells, row, active_numbers)):
                 continue
             if label is None or not label.strip() or _CASE_LABEL_RE.fullmatch(label) is None:

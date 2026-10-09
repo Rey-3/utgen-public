@@ -67,7 +67,7 @@ def write_testlist_cells(workbook, rows, stubs, columns):
     for name in value_sheet_names(workbook.sheetnames):
         if name != "Values":
             workbook.remove(workbook[name])
-    # Keep ordinary exports intact; oversized exports use A for labels and B:CU for values.
+    # Only the main Values page carries testcase labels; numbered pages start at A.
     page_width = 98 if len(columns) + 1 > 16384 else 16383
     if page_width == 98:
         workbook.move_sheet(values, offset=len(workbook.worksheets) - 1 - workbook.index(values))
@@ -95,15 +95,17 @@ def write_testlist_cells(workbook, rows, stubs, columns):
         description_cell.alignment = alignment
     for page, start in enumerate(range(0, max(1, len(columns)), page_width)):
         target = values if page == 0 else workbook.create_sheet(f"Values {page}")
+        first_column = 2 if page == 0 else 1
         page_columns = columns[start:start + page_width]
-        for column_index, column in enumerate(page_columns, 2):
+        for column_index, column in enumerate(page_columns, first_column):
             name, channel = column[:2]
             token = column[2] if len(column) > 2 else ("i" if channel == "input" else "o")
             target.cell(1, column_index).value = name
             target.cell(2, column_index).value = token
         for index, row in enumerate(rows, 1):
-            target.cell(index + 2, 1).value = f"tc{index}.1"
-            for column_index, column in enumerate(page_columns, 2):
+            if page == 0:
+                target.cell(index + 2, 1).value = f"tc{index}.1"
+            for column_index, column in enumerate(page_columns, first_column):
                 name, channel = column[:2]
                 source = row["input"] if channel == "input" else row["output"]
                 target.cell(index + 2, column_index).value = source[name]
