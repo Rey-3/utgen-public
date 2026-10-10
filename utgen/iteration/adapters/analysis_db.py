@@ -1,8 +1,8 @@
-"""Read, validate, and metadata-render Analysis DB XML.
+"""Read source-analysis XML and add its version, content ID, and generation time.
 
-The adapter keeps source-analysis payload separate from mutable iteration state.
-It uses the existing UTGen XML serializer for canonical content-addressing while
-retaining unknown source-analysis attributes and elements.
+Test rows and expected outputs belong in JSON state and are rejected here.
+Hash the analysis without generated metadata so its ID does not depend on the
+generation time. Keep unrecognized source-analysis attributes and elements.
 """
 
 from __future__ import annotations
@@ -81,7 +81,7 @@ class AnalysisDbError(ValueError):
 
 
 class AnalysisDbValidationError(AnalysisDbError):
-    """Raised when DB XML violates the source-analysis boundary."""
+    """Raised when source-analysis XML or its database metadata fails validation."""
 
 
 @dataclass(frozen=True)
@@ -221,8 +221,7 @@ def _metadata(root: ET.Element, *, require_metadata: bool) -> AnalysisDbMetadata
 
 
 def _serialize_root(root: ET.Element) -> bytes:
-    # The existing serializer is the single UTGen XML wire serializer.  Import
-    # lazily so importing this domain adapter does not eagerly initialize clang.
+    # Reuse the DB writer's XML formatting; import it here so adapter imports do not load clang.
     from utgen.db import _indent_xml, _serialize_xml
 
     _indent_xml(root, space="    ")
@@ -231,7 +230,7 @@ def _serialize_root(root: ET.Element) -> bytes:
 
 
 def canonical_payload_bytes(value: Path | bytes | bytearray) -> bytes:
-    """Serialize metadata-free source-analysis payload with the UTGen writer."""
+    """Serialize analysis XML without db_schema_version, analysis_id, or generated_at."""
 
     root = _parse_root(_read_input(value))
     _metadata(root, require_metadata=False)
@@ -246,7 +245,7 @@ def _canonical_payload(root: ET.Element) -> bytes:
 
 
 def analysis_content_hash(value: Path | bytes | bytearray) -> str:
-    """Hash canonical XML after removing only generated DB metadata."""
+    """Hash analysis XML in UTGen's format, excluding generated DB metadata."""
 
     return hashlib.sha256(canonical_payload_bytes(value)).hexdigest()
 
@@ -264,7 +263,7 @@ def enrich_with_metadata(
     analysis_id: str,
     generated_at: str,
 ) -> bytes:
-    """Return canonical XML with required metadata, preserving all payload data."""
+    """Add the validated analysis ID, schema version, and timestamp without changing analysis data."""
 
     root = _parse_root(_read_input(value))
     _metadata(root, require_metadata=False)
@@ -335,7 +334,7 @@ class AnalysisDbAdapter:
         return stem
 
     def read_module(self, path: Path):
-        """Validate a DB and return metadata plus the legacy parsed model."""
+        """Return validated DB metadata and the analysis objects parsed by XmlDbReader."""
 
         path = Path(path)
         metadata = self.inspect(path)
@@ -348,7 +347,7 @@ class AnalysisDbAdapter:
         return metadata, analysis
 
 class AnalysisDbWriter:
-    """Render or publish a metadata-enriched DB without changing legacy writers."""
+    """Add Analysis DB metadata and save complete XML files through a temporary file."""
 
     def render(
         self,
@@ -356,7 +355,7 @@ class AnalysisDbWriter:
         *,
         generated_at: str,
     ) -> bytes:
-        """Return canonical DB bytes with content-derived ID and schema metadata."""
+        """Return analysis XML bytes with a content-based ID, schema version, and timestamp."""
 
         root = _parse_root(_read_input(value))
         _metadata(root, require_metadata=False)
@@ -370,7 +369,7 @@ class AnalysisDbWriter:
         *,
         generated_at: str | None = None,
     ) -> AnalysisDbMetadata:
-        """Render and validate a complete DB before replacing its current publication."""
+        """Write and validate a temporary DB, then replace the destination file."""
 
         path = Path(path)
         if isinstance(value, Path):

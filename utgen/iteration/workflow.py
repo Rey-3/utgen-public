@@ -226,7 +226,7 @@ def _run_generation_module(
 
 
 def _generation_config(config, base: Path, project_name: str, module: Mapping):
-    """Resolve source/root paths once at the generator boundary."""
+    """Copy generation settings and resolve relative source/root paths against the config directory."""
 
     project = next(
         item
@@ -236,6 +236,7 @@ def _generation_config(config, base: Path, project_name: str, module: Mapping):
     )
     result_project = dict(project)
     result_project["description"] = config.get("settings", {}).get("description")
+    result_project["defines"] = config.get("settings", {}).get("defines", ())
     root = Path(os.fspath(project.get("root_path", base)))
     if not root.is_absolute():
         root = base / root
@@ -303,7 +304,7 @@ def _module_input_hash(
     module_config = {
         key: value
         for key, value in module.items()
-        if key not in {"excel_input_dir", "excel_output_dir"}
+        if key != "excel_output_dir"
     }
     payload = {
         "schema_version": 1,
@@ -313,6 +314,7 @@ def _module_input_hash(
             "version": __version__,
             "include_dirs": list(_include_dirs(config, base)),
             "description": config.get("settings", {}).get("description"),
+            "defines": config.get("settings", {}).get("defines", ()),
         },
         "files": file_payload,
     }
@@ -346,7 +348,7 @@ def _write_current_database(analysis, path: Path, raw_database=None):
 
 
 def _excel_directory(module: Mapping, base: Path) -> Path:
-    value = module.get("excel_output_dir", module.get("excel_input_dir"))
+    value = module.get("excel_output_dir")
     directory = Path(os.fspath(value)) if value else base / "excel"
     return directory if directory.is_absolute() else base / directory
 
@@ -600,7 +602,7 @@ def _module_identities(module: Mapping) -> set[str]:
 def _scan_entries(config, base):
     entries, scanned = [], set()
     for _project, module in _configured_modules(config):
-        directory = module.get("excel_input_dir")
+        directory = module.get("excel_output_dir")
         if not directory:
             continue
         directory = Path(os.fspath(directory))

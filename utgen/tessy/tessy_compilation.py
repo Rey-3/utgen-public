@@ -2,7 +2,7 @@ import os
 import sys
 import time
 from utgen.includes import IncludeScanner
-from tessy_command import TessyCommand
+from utgen.tessy.tessy_command import TessyCommand
 
 
 class Tessy_Compilation():
@@ -18,8 +18,7 @@ class Tessy_Compilation():
         self.tessy_command = command or TessyCommand(work_dir, project_name)
 
     def compilation(self):
-        # Open this project's pdbx once, then configure every module inside its
-        # single shared collection, run the collection once, and export per module.
+        # Open the project, configure its modules in one collection, and import their Excel test data.
         self.tessy_command.ensure_project_open()
         self.tessy_command.run_or_fail(["select-project", self.project_name], "select project")
 
@@ -75,7 +74,7 @@ class Tessy_Compilation():
 
         test_objects = [f.strip() for f in raw_list.splitlines() if f.strip()]
         for func in test_objects:
-            excel_path = self.find_excel_file(module.excel_input_dir, func)
+            excel_path = self.find_excel_file(module.excel_output_dir, func)
             if excel_path:
                 print(f"      Importing: {func}")
                 self.tessy_command.run(["select-test-object", func])

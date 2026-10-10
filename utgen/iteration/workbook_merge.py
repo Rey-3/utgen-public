@@ -1,4 +1,4 @@
-"""Workbook-to-state value projection helpers used by iteration merge."""
+"""Match workbook columns to JSON variables and convert cell values for iteration merges."""
 
 from __future__ import annotations
 

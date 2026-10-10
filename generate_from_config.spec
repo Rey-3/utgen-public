@@ -22,8 +22,7 @@ version = os.path.basename(resource_dirs[-1])
 binaries = [(clang_exe, "clang/bin"), (libclang, "clang/bin")]
 datas = [(resource_dirs[-1], os.path.join("clang", "lib", "clang", version)),
          (os.path.join(here, "template.xlsx"), ".")]
-hiddenimports = (collect_submodules("utgen") + collect_submodules("clang") +
-                 ["tessy_excel"])
+hiddenimports = collect_submodules("utgen") + collect_submodules("clang")
 
 a = Analysis(
     [os.path.join(here, "generate_from_config.py")],
@@ -39,7 +38,7 @@ a = Analysis(
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz, a.scripts, a.binaries, a.zipfiles, a.datas, [],
-    name="generate_from_config",
+    name="utgen",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

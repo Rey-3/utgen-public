@@ -7,11 +7,15 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 # External templates live beside the executable when frozen.
-RESOURCE_DIR = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
+RESOURCE_DIR = (
+    Path(sys.executable).resolve().parent
+    if getattr(sys, "frozen", False)
+    else Path(__file__).resolve().parents[2]
+)
 TEMPLATE_DIR = RESOURCE_DIR / "template2"
 TEMPLATE_CONFIG_XML = TEMPLATE_DIR / "config" / "configuration.xml"
 
-# --- Settings (previously config.yaml) ---
+# Derby database files whose stored directory must be updated after cloning.
 PATCH_FILE_PATH1 = r"persist\ite\cache\service.properties"
 PATCH_FILE_PATH2 = r"persist\ite\itedb\service.properties"
 

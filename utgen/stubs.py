@@ -14,8 +14,13 @@ DEFAULT_NO_STUB = ("memcpy", "memset", "memcmp", "abs")
 
 
 def prepare_snapshot_callbacks(function):
-    """Expose existing event callbacks at a stub between a snapshot and its check."""
-    # ponytail: exact bit-snapshot/public-setter patterns; other event models need explicit hooks.
+    """Add a stub input that can call an existing function to set an event bit.
+
+    Recognize code that copies flags, calls a stub, then compares saved and current
+    flags under the same mask. Link the stub to the public void callback that sets
+    that bit, so a test can make the flags change during the stub call.
+    """
+    # shortcut: match copied bit masks and one public setter, add explicit hooks for other callback patterns.
     stubs = {stub.name: stub for stub in function.stubs}
     inputs = {leaf.name for leaf in function.leaves}
 

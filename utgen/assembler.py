@@ -19,7 +19,7 @@ from utgen.solver import AtomConstraints, Solver
 
 
 class RowAssembler:
-    """Build the final test rows from symbolic decision coverage requirements."""
+    """Choose C input values for MC/DC, boundary, and fault test cases."""
 
     def __init__(self, solver: Solver, mcdc: McdcGenerator, fault_overrides: dict | None = None,
                  include_boundary=True, include_fault=True) -> None:
@@ -35,13 +35,13 @@ class RowAssembler:
         return self._assemble(function)[0]
 
     def assemble_with_provenance(self, function: FunctionIR) -> AssemblyResult:
-        """Return generated rows together with their read-only recipe mapping."""
+        """Return test rows and records linking each coverage goal to its row index."""
 
         rows, recipes, generated_rows = self._assemble(function, collect_provenance=True)
         return AssemblyResult(tuple(rows), tuple(recipes), tuple(generated_rows))
 
     def _assemble(self, function: FunctionIR, *, collect_provenance=False):
-        """Build rows once, optionally collecting logical-to-concrete mappings."""
+        """Build test rows and optionally record which condition assignments produced them."""
 
         from utgen.stubs import prepare_snapshot_callbacks
 
@@ -58,7 +58,7 @@ class RowAssembler:
         recipes = []
         generated_rows = []
         # Different coverage goals can resolve to exactly the same concrete inputs.
-        # Keep one row per input set and merge the coverage intent into that row.
+        # Keep one row per input set and record all decisions it is meant to cover.
         by_values = {}
         row_indices = {}
         seen_recipes = set()
@@ -70,7 +70,7 @@ class RowAssembler:
         repair_decisions = []
         for decision_index, decision in enumerate(function.decisions):
             # A nested decision is only reachable when all of its enclosing guards have
-            # the required outcomes. _guards() expands those guards into compatible atom recipes.
+            # the required outcomes. _guards() assigns True/False to their individual conditions.
             guard_assignments = self._guards(decision)
             if not guard_assignments:
                 continue
@@ -234,13 +234,12 @@ class RowAssembler:
             for current in out:
                 for recipe in RowAssembler._recipes(guard.expr, guard.outcome):
                     candidate = current | recipe
-                    # Reject recipes that require an atom to be both True and False after
-                    # combining multiple nesting guards.
+                    # Reject combined guard assignments that require the same condition
+                    # to be both True and False.
                     if all(current.get(atom, outcome) == outcome for atom, outcome in recipe.items()):
                         merged.append(candidate)
-                        # Guard alternatives grow exponentially for nested boolean expressions.
-                        # A fixed cap keeps row generation bounded without losing the first
-                        # useful recipes, including the canonical masking recipe.
+                        # Keep at most 32 compatible assignments so nested guards do not
+                        # multiply the number of solver calls without a limit.
                         if len(merged) == 32:
                             break
                 if len(merged) == 32:
@@ -252,7 +251,7 @@ class RowAssembler:
     def _recipes(expr, outcome: bool) -> list:
         """Return bounded atom assignments that force an expression to the requested outcome."""
 
-        # Start with the masking recipe because it gives a compact deterministic assignment.
+        # Try the direct True/False assignment before enumerating alternatives.
         canonical = MaskingRecipes.make(expr, outcome)
         if canonical is None:
             return []
@@ -262,8 +261,8 @@ class RowAssembler:
             if atom not in atoms:
                 atoms.append(atom)
 
-        # Exhaustively enumerating boolean combinations is 2^N. For large expressions,
-        # use only the canonical recipe to avoid an explosion in generation time.
+        # Trying every True/False combination costs 2^N. Above 12 conditions,
+        # use only the direct assignment to keep generation time bounded.
         if len(atoms) > 12:
             return [canonical]
 
@@ -277,8 +276,8 @@ class RowAssembler:
                 continue
             seen.add(frozenset(recipe.items()))
             out.append(recipe)
-            # Extra recipes improve the chance that one remains solvable with outer guards,
-            # but keeping all valid combinations would unnecessarily multiply solver work.
+            # Keep up to 16 alternatives: a different assignment may satisfy outer guards
+            # when the first one conflicts with them.
             if len(out) == 16:
                 break
         return out

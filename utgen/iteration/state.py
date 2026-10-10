@@ -33,7 +33,10 @@ _ROW_ALLOCATOR_LOCK = threading.Lock()
 
 
 def module_paths(state_root: str | os.PathLike[str], project: str, module: str) -> ModulePaths:
-    """Return project-scoped Analysis DB and single-module JSON paths."""
+    """Return the saved file paths under state_root/iteration/<project>.
+
+    Analysis is stored in db_<module>.xml; JSON state is in <module>/<module>.json.
+    """
 
     _safe_component(project, "project")
     _safe_component(module, "module")
@@ -61,7 +64,7 @@ def load_module(path: str | os.PathLike[str]) -> dict:
 
 
 def write_module(path: str | os.PathLike[str], state: dict) -> None:
-    """Validate and atomically publish a module JSON document."""
+    """Validate JSON state, write a complete temporary file, then replace the saved module file."""
 
     validate_module(state)
     path = Path(path)

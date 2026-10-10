@@ -1,4 +1,8 @@
-"""Nested value, metadata, and generated-row projection helpers."""
+"""Convert nested JSON test values to Excel column paths and back.
+
+Scalar fields have paths such as ``motor.speed`` or ``data[0]``; these are called
+leaves because they hold one value rather than another struct or array.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +11,6 @@ from copy import deepcopy
 import re
 from typing import Any
 
-from tessy_excel import pointer_member_storage_names
 from ..model import expand_array_names
 from .validation import (
     StateValidationError,
@@ -24,7 +27,7 @@ _PATH_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 def parse_leaf_path(path: str) -> tuple[str | int, ...]:
-    """Parse one TESSY leaf path into identifier and array-index tokens."""
+    """Split a path such as 'motor.data[2]' into ('motor', 'data', 2)."""
 
     if not isinstance(path, str) or not path:
         _fail("leaf path must be a non-empty string")
@@ -60,12 +63,12 @@ def parse_leaf_path(path: str) -> tuple[str | int, ...]:
 
 
 def flatten_values(value: dict, metadata: Mapping[str, Any], channel: str | None = None) -> dict[str, str]:
-    """Flatten nested JSON values to TESSY-style leaf paths."""
+    """Convert nested values such as {'motor': {'speed': '7'}} to {'motor.speed': '7'}."""
     return next(flatten_values_many((value,), metadata, channel))
 
 
 def flatten_values_many(values, metadata: Mapping[str, Any], channel: str | None = None):
-    """Flatten rows against one validated schema, checking every row's values."""
+    """Convert each row to column paths, checking its values against shared variable definitions."""
 
     variables = metadata_variables(metadata)
     selected = _selected_variables(variables, channel)
@@ -83,7 +86,7 @@ def flatten_values_many(values, metadata: Mapping[str, Any], channel: str | None
 
 
 def nest_values(flat_values: Mapping[str, str], metadata: Mapping[str, Any], channel: str | None = None) -> dict:
-    """Rebuild nested JSON values from TESSY-style leaf paths."""
+    """Rebuild nested dicts and lists from column paths, rejecting unknown or missing fields."""
 
     flat = _mapping(flat_values, "flat_values")
     if any(not isinstance(key, str) for key in flat):
@@ -102,14 +105,18 @@ def nest_values(flat_values: Mapping[str, str], metadata: Mapping[str, Any], cha
 
 
 def preserve_user_variables(function: dict) -> None:
-    """Save the original schema before replacing a function's generated metadata."""
+    """Save current variable definitions for each user row before generated definitions change."""
     for row_id, row in function["rows"].items():
         if row["owner"] == "user" and row_id not in function.get("row_variables", {}):
             function.setdefault("row_variables", {})[row_id] = deepcopy(function["variables"])
 
 
 def sync_row_schema(row: dict, old_variables: Mapping[str, Any], new_variables: Mapping[str, Any]) -> None:
-    """Project one row onto a changed variable schema without changing old lexemes."""
+    """Update a generated row to new variable definitions; leave user rows unchanged.
+
+    Keep value strings, including spelling such as '0xFF', for fields with matching
+    paths and types. Set new or changed fields to '0' and remove fields no longer defined.
+    """
 
     row = _mapping(row, "row")
     if row.get("owner") == "user":
@@ -134,13 +141,13 @@ def sync_row_schema(row: dict, old_variables: Mapping[str, Any], new_variables: 
 
 
 def project_generated_values(values, metadata, channel: str) -> dict:
-    """Project generated flat values into the validated nested state shape."""
+    """Convert generated column-path values to the nested dicts/lists required by JSON state."""
 
     return next(project_generated_values_many((values,), metadata, channel))
 
 
 def project_generated_values_many(values, metadata, channel: str):
-    """Project rows using one validated schema for the function and channel."""
+    """Convert generated rows to nested values using shared input/output variable definitions."""
 
     variables = metadata_variables(metadata)
     selected = _selected_variables(variables, channel)
@@ -153,13 +160,17 @@ def project_generated_values_many(values, metadata, channel: str):
 
 
 def metadata_variables(metadata: Mapping[str, Any]) -> Mapping[str, Any]:
-    """Convert FunctionIR/Inventory leaves or plain metadata into state specs."""
+    """Return JSON variable definitions from FunctionIR, Inventory, or an existing metadata dict."""
 
     return _metadata_variables(metadata)
 
 
 def pointer_member_storage(variables: Mapping[str, Any]) -> dict[str, tuple[str, str]]:
-    """Map struct pointer leaves to their backing cell and pointee declaration."""
+    """Map each struct pointer field to its TESSY storage variable and pointed-to C type."""
+
+    # Import after module initialization to avoid the adapter/value dependency cycle.
+    from .adapters.tessy_workbook import pointer_member_storage_names
+
     declared = {}
 
     def collect(spec, path):
@@ -171,7 +182,7 @@ def pointer_member_storage(variables: Mapping[str, Any]) -> dict[str, tuple[str,
             declared[path] = spec
 
     for root, spec in variables.items():
-        # An @ control already projects the entire pointed-to object.
+        # @name controls the whole pointed-to object, so its fields do not need separate storage.
         if not root.startswith('@') and f'@{root}' not in variables:
             collect(spec, root)
     result = {}
@@ -190,7 +201,7 @@ def pointer_member_storage(variables: Mapping[str, Any]) -> dict[str, tuple[str,
 
 
 def project_variable_schema(spec: Mapping[str, Any], root: str, paths: set[str]) -> dict | None:
-    """Restrict a known variable schema to the workbook leaves that use it."""
+    """Keep fields used by workbook columns, retaining their declared array dimensions."""
 
     requested = set()
     for path in paths:

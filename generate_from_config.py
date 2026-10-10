@@ -14,15 +14,15 @@ from types import SimpleNamespace
 from typing import Mapping
 
 import yaml
-from clone_tessy_project import TessyProjectCloner
-from tessy_compilation import Tessy_Compilation
+from utgen.tessy.clone_tessy_project import TessyProjectCloner
+from utgen.tessy.tessy_compilation import Tessy_Compilation
 from utgen.assembler import RowAssembler
 from utgen.db import ModuleIndexer, XmlDbWriter
 from utgen.interp import Interpreter, Verifier
 from utgen.mcdc import McdcGenerator
 from utgen.model import AssemblyResult, Direction, GeneratedRowProvenance, Inventory, TestRow
 from utgen.solver import Solver
-from utgen.tessy_command import TessyCommand
+from utgen.tessy.tessy_command import TessyCommand
 
 
 CONFIG_PATH = (
@@ -60,7 +60,7 @@ def _verified_result(function, rows, recipes=(), generated_rows=(), description=
 
 
 def write_timeout_outputs(function, description=None):
-    """Return verified timeout rows without emitting legacy XML files."""
+    """Return fallback test rows with predicted outputs after generation times out."""
 
     rows = fallback_rows(function)
     return _verified_result(
@@ -183,29 +183,28 @@ def _print_function_progress(current, total, name, elapsed, status=None):
 
 
 def generate_module(project, module, include_dirs=(), profile_dir=None):
-    """Index once and pass the precomputed graph to each worker.
+    """Parse the module once and send the resulting analysis to each worker.
 
-    The iteration workflow owns the accepted project-scoped XML DB. Its temporary
-    export is separate from worker transport, which preserves object sharing.
+    Workers receive the Python analysis objects, not the temporary XML file.
+    The iteration workflow saves the accepted Analysis DB after generation.
     """
 
     from utgen.descriptions import DescriptionFormatter
 
     description = project.get("description")
     DescriptionFormatter(description)
+    defines = project.get("defines", ())
+    if not isinstance(defines, (list, tuple)) or any(
+        not isinstance(define, str) or not define.strip() for define in defines
+    ):
+        raise ValueError("settings.defines must be a list of non-empty strings")
     root = Path(project.get("root_path", "."))
     source = Path(module["source_file"])
     if not source.is_absolute():
         source = root / source
     indexer = ModuleIndexer(
         {
-            "defines": (
-                "__GHS__",
-                "USE_CANTRV_TJA1145",
-                "__CCRH__",
-                "USE_IOC",
-                "USE_PMIC_FS26",
-            ),
+            "defines": defines,
             "includes": tuple(include_dirs or ()),
         }
     )
@@ -357,6 +356,7 @@ def run_user_merge(config=None):
 def run_tessy_import(config, config_path=None):
     tessy = config["Tessy"]
     config_dir = Path(config_path or CONFIG_PATH).resolve().parent
+    bin_dir = tessy.get("tessy_bin_dir")
     template = Path(tessy.get("template_path") or "template2")
     if not template.is_absolute():
         template = config_dir / template
@@ -379,6 +379,10 @@ def run_tessy_import(config, config_path=None):
             collection_name=project["collection_name"],
             report_dir=project.get("report_dir", workspace / project_name / "reports"),
             modules=[SimpleNamespace(**module) for module in project.get("modules", ())],
+            command=TessyCommand(
+                workspace, project_name,
+                tessy_bin_dir=config_dir / bin_dir if bin_dir else None,
+            ),
         ).compilation()
     return []
 
@@ -390,14 +394,14 @@ def run_tessy_export(config, project, config_path=None):
     exports = []
     for module in project.get("modules", ()):
         name = module.get("module_name") or module.get("name")
-        directory = module.get("excel_output_dir") or module.get("excel_input_dir")
+        directory = module.get("excel_output_dir")
         if not name or not directory:
-            raise ValueError("Each export module needs a name and excel_output_dir or excel_input_dir")
+            raise ValueError("Each export module needs a name and excel_output_dir")
         exports.append((name, config_dir / directory))
     if not exports:
         raise ValueError(f"Project {project['name']} has no modules to export")
 
-    # Match option 3: relative workspace/source paths start at the working directory.
+    # Relative workspace and source paths are resolved from the current working directory.
     workspace = Path(project.get("workspace") or tessy["default_workspace"]).resolve()
     root = project.get("root_path")
     bin_dir = tessy.get("tessy_bin_dir")
@@ -429,7 +433,7 @@ def run_tessy_export(config, project, config_path=None):
                 if not test_object:
                     continue
                 require(cmd.select_test_object(test_object), f"select test object {test_object}")
-                # Match the reference workflow: one XLSX with actual values per test object.
+                # Each test object gets one XLSX containing its actual test results.
                 require(cmd.export(directory, format="xlsx", actual=True, file=test_object), f"export {test_object}")
                 exported += 1
             print(f"{project['name']}/{name}: {exported} Excel files exported to {directory}")
@@ -464,13 +468,14 @@ def main(argv=None):
     """Dispatch generation, JSON Excel export, TESSY import/export, and user merge."""
 
     parser = argparse.ArgumentParser(description="UTGen iteration workflow")
-    parser.add_argument("mode", nargs="?", choices=("1", "2", "3", "4", "5","6"))
+
     parser.add_argument("--config", type=Path, default=None)
     parser.add_argument("--profile-dir", type=Path)
     args = parser.parse_args(argv)
     config_path = args.config or CONFIG_PATH
-    mode = args.mode
-    if mode is None:
+
+
+    while True:
         print("1. Normal generation / next tool iteration")
         print("2. Rebuild Excel from current JSON")
         print("3. import excel")
@@ -480,56 +485,57 @@ def main(argv=None):
         mode = input("Select option: ").strip()
         if mode not in {"1", "2", "3", "4", "5","6"}:
             parser.error("mode must be 1, 2, 3, 4, 5 or 6")
-    total_started = time.monotonic()
-    config = _load_cli_config(config_path)
-    if mode == "1":
-        if args.profile_dir is None:
-            result = run_generation(config_path)
-        else:
-            profiler = cProfile.Profile()
-            profiler.enable()
-            try:
-                result = run_generation(config_path, args.profile_dir)
-            finally:
-                profiler.disable()
-                print("\nTotal profile:")
-                pstats.Stats(profiler).sort_stats("cumulative").print_stats(100)
-    elif mode == "2":
-        result = run_excel_export(config_path)
-    elif mode == "3":
-        result = run_tessy_import(config, config_path)
-    elif mode == "4":
-        result = run_user_merge(config_path)
-    elif mode == "5":
-        projects = config.get("projects", ())
-        if not projects:
-            parser.error("no projects configured for TESSY export")
-        for number, project in enumerate(projects, 1):
-            print(f"{number}.{project['name']}")
-        try:
-            selected = int(input("Select project: ").strip())
-        except ValueError:
-            parser.error("project selection must be a number")
-        if not 1 <= selected <= len(projects):
-            parser.error(f"project selection must be between 1 and {len(projects)}")
-        result = run_tessy_export(config, projects[selected - 1], config_path)
-    else:
-        if args.profile_dir is None:
-            result = run_generation(config_path)
-        else:
-            profiler = cProfile.Profile()
-            profiler.enable()
-            try:
-                result = run_generation(config_path, args.profile_dir)
-            finally:
-                profiler.disable()
-                print("\nTotal profile:")
-                pstats.Stats(profiler).sort_stats("cumulative").print_stats(100)
 
-        result = run_tessy_import(config, config_path)
-    _print_summaries(result)
-    print(f"\nTotal runtime (after mode selection): {time.monotonic() - total_started:.3f}s", flush=True)
-    return result
+        total_started = time.monotonic()
+        config = _load_cli_config(config_path)
+        if mode == "1":
+            if args.profile_dir is None:
+                result = run_generation(config_path)
+            else:
+                profiler = cProfile.Profile()
+                profiler.enable()
+                try:
+                    result = run_generation(config_path, args.profile_dir)
+                finally:
+                    profiler.disable()
+                    print("\nTotal profile:")
+                    pstats.Stats(profiler).sort_stats("cumulative").print_stats(100)
+        elif mode == "2":
+            result = run_excel_export(config_path)
+        elif mode == "3":
+            result = run_tessy_import(config, config_path)
+        elif mode == "4":
+            result = run_user_merge(config_path)
+        elif mode == "5":
+            projects = config.get("projects", ())
+            if not projects:
+                parser.error("no projects configured for TESSY export")
+            for number, project in enumerate(projects, 1):
+                print(f"{number}.{project['name']}")
+            try:
+                selected = int(input("Select project: ").strip())
+            except ValueError:
+                parser.error("project selection must be a number")
+            if not 1 <= selected <= len(projects):
+                parser.error(f"project selection must be between 1 and {len(projects)}")
+            result = run_tessy_export(config, projects[selected - 1], config_path)
+        else:
+            if args.profile_dir is None:
+                result = run_generation(config_path)
+            else:
+                profiler = cProfile.Profile()
+                profiler.enable()
+                try:
+                    result = run_generation(config_path, args.profile_dir)
+                finally:
+                    profiler.disable()
+                    print("\nTotal profile:")
+                    pstats.Stats(profiler).sort_stats("cumulative").print_stats(100)
+
+            result = run_tessy_import(config, config_path)
+        _print_summaries(result)
+        print(f"\nTotal runtime (after mode selection): {time.monotonic() - total_started:.3f}s", flush=True)
+
 
 
 if __name__ == "__main__":

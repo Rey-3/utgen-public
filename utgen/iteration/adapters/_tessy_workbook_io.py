@@ -1,4 +1,4 @@
-"""Low-level, bounded XLSX I/O used by the TESSY workbook adapter."""
+"""Read workbook cells with archive-size limits and checks for unsupported formulas."""
 
 from __future__ import annotations
 

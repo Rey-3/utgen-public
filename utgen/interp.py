@@ -53,7 +53,7 @@ class Interpreter:
         self._array_variables = {}
         self._member_pointers = set()
         self._stub_callbacks = {stub.name: stub.callbacks for stub in inventory.stubs if stub.callbacks}
-        # ponytail: inventory bounds only; local-array bounds need IR dimensions.
+        # shortcut: check bounds for arrays in Inventory, add local-array checks when IR stores their dimensions.
         self._array_bounds = {}
         self._path_cache = {}
         self._local_roots = {}
@@ -831,17 +831,11 @@ class Verifier:
     def predict(self, function, row_or_values):
         """Predict outputs without changing the supplied row.
 
-        Merge B must be able to validate a candidate containing user-owned
-        expected outputs.  The historical :meth:`check` method intentionally
-        mutates rows, so callers that use it while inspecting WORKING can
-        silently overwrite manual data.  ``predict`` is the read-only
-        counterpart: it accepts either a :class:`TestRow` or the raw values
-        mapping and returns a detached :class:`ExecResult`.
-
-        The returned execution record is also detached from the interpreter's
-        mutable per-run state.  This makes it safe for callers to inspect or
-        modify ``outputs`` while the accepted row and interpreter remain
-        untouched.
+        Accept a TestRow or a values dict and return an ExecResult containing
+        predicted outputs and observed coverage. Copy nested inputs before running
+        the interpreter so checking a manually edited row cannot overwrite its data.
+        Copy the returned dicts and sets so later runs cannot change this result.
+        Use ``check`` when the generated row itself should receive predicted outputs.
         """
 
         if isinstance(row_or_values, TestRow):
@@ -850,11 +844,8 @@ class Verifier:
             values = row_or_values
         else:
             raise TypeError("predict expects a TestRow or values dict")
-        # ``Interpreter.run`` mutates its environment while evaluating nested
-        # aggregates, pointers, and array leaves.  A shallow ``dict`` copy
-        # protects only the top-level mapping and used to let verification
-        # silently rewrite accepted WORKING values.  Prediction is explicitly
-        # non-destructive, so detach the complete input graph here.
+        # The interpreter can modify nested lists and dicts; deepcopy protects them,
+        # while a shallow dict copy would still share those objects with the input row.
         result = self.interpreter.run(function, deepcopy(values))
         return ExecResult(
             outcomes=dict(result.outcomes),

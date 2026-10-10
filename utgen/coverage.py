@@ -29,13 +29,12 @@ class CoverageGenerator:
         self._results = {}
 
     def rows(self, function: FunctionIR, existing: list[TestRow], decision_ids=None) -> list[TestRow]:
-        """Repair uncovered targets with a finite, decision-scoped concrete search.
+        """Try different C input values to cover missing branches, conditions, and MC/DC pairs.
 
-        All existing rows count as coverage evidence, but only rows intended for or
-        observed at the selected decision become mutation seeds. Search begins with
-        the selected decision's inputs and expands to enclosing guard inputs only
-        when reachability still blocks the target.
-        An empty decision selection repairs only loop outcomes.
+        Run existing rows to count their coverage. Start new trials from rows that
+        target or reach the selected decisions, changing those decisions' inputs
+        first. Change enclosing if/switch inputs when needed to reach the decision.
+        Passing an empty decision selection searches only for missing loop outcomes.
         """
         inputs = [leaf for leaf in function.leaves if leaf.direction in (Direction.IN, Direction.INOUT)]
         if not inputs or not function.body:
@@ -51,9 +50,8 @@ class CoverageGenerator:
         index_values = self._index_values(function.body, array_inputs, index_inputs)
         indexed_guards = any(re.sub(r"\[\d+\]", "[*]", leaf.name) in index_inputs for leaf in inputs)
 
-        # Existing rows are evidence, not automatically mutation seeds. Running them
-        # once preserves any coverage they already provide while avoiding the old
-        # "every historical row x every input" frontier explosion.
+        # Count coverage from every existing row, but choose starting rows separately
+        # so the search does not try changing every input in every row.
         state = _CoverageState(function)
         helper_patterns = {}
         evidence, evidence_keys = [], set()
@@ -83,7 +81,8 @@ class CoverageGenerator:
         seeds, seed_keys, preferred_seeds = [], set(), set()
         for row, values, result in evidence:
             guard_seed = bool(guards) and row.intent.get(guards[-1][0]) == (not guards[-1][1])
-            # Incidental guard seeds help lookup paths; ordinary paths retain their intent priority.
+            # Array lookups may reuse a row that reached the guard even if it was
+            # generated for another decision.
             observed_guard = indexed_guards and bool(guards) and (not guards[-1][1]) in result.observed.get(guards[-1][0], ())
             if not (loops_only or selected.intersection(row.intent) or selected.intersection(result.observed) or guard_seed or observed_guard):
                 continue
@@ -145,7 +144,7 @@ class CoverageGenerator:
         emitted = {self._key(row.values) for row in existing}
 
         if loops_only:
-            # ponytail: cyclic table probes; exact lookup constraints if sparse keys are required.
+            # shortcut: probe cyclic array values, use exact lookup constraints when valid keys are sparse.
             cyclic = {}
             for offset, leaf in enumerate(leaf for leaf in inputs
                                           if leaf.name in index_inputs & individual_inputs):
@@ -165,7 +164,7 @@ class CoverageGenerator:
                         if targets <= state.covered:
                             return generated
 
-        # ponytail: bound candidate search per decision; dependency setup is not search time.
+        # Start the search time budget after collecting input dependencies and choosing starting rows.
         deadline = time.monotonic() + self.max_seconds
         # Reuse proven controls on seeds that reach the target. Earlier input
         # conditions can trigger helper side effects; derived controls open
@@ -220,8 +219,7 @@ class CoverageGenerator:
                                 seeds.append(candidate)
                                 if targets <= state.covered:
                                     return generated
-        # ponytail: probe shared indirect inputs together before the bounded
-        # search; mixed values still use the normal frontier.
+        # Try enabling related inputs together before the per-input search tries mixed values.
         if len(combination_inputs) > 1:
             enabled = {leaf.name: min(max(1, leaf.ctype.lo), leaf.ctype.hi)
                        for leaf in inputs if leaf.name in combination_inputs}
@@ -332,8 +330,8 @@ class CoverageGenerator:
                                 if required in result.observed.get(decision_id, set())
                                 and required not in base_result.observed.get(decision_id, set())
                             } - helper_patterns[seed_index]
-                            # An upstream control can change a counter before its condition flips.
-                            # ponytail: final INOUT values approximate progress until decision snapshots are available.
+                            # A helper can change a counter before the tested condition changes.
+                            # shortcut: track final INOUT values, use values at each decision if later writes hide progress.
                             control_progress |= {
                                 ("operand", name, result.outputs[name])
                                 for name in operand_outputs
@@ -441,7 +439,7 @@ class CoverageGenerator:
 
     @staticmethod
     def _targets(function: FunctionIR, decision_ids=None) -> set[tuple]:
-        """Encode all coverage obligations into comparable tuple keys.
+        """Represent each coverage goal as a tuple so covered goals can be compared.
 
         A decision contributes branch True/False targets, each atom contributes
         condition True/False targets, and controllable atoms also contribute one
@@ -621,7 +619,7 @@ class CoverageGenerator:
             yield candidate
             changed = next(name for name in candidate if candidate[name] != base.get(name))
             old_value = base.get(changed, base.get(leaf.name, 0))
-            # ponytail: equal-valued selectors; trace lookup relations if unrelated indices dominate.
+            # shortcut: link selectors with equal starting values, trace lookup relationships if unrelated indices change.
             linked = {element: candidate[changed]
                       for name in sorted(index_inputs - {leaf.name})
                       for element in expand_array_names(name) or (name,)
@@ -742,9 +740,9 @@ class CoverageGenerator:
                         function, state.condition, dataflow_paths, bindings, resolved=True, memo=memo,
                     )
 
-        # Raw indirect paths can require neutral multi-input combinations. Dataflow
-        # provenance only broadens which upstream inputs are tried; it does not make
-        # those inputs an exhaustive Cartesian frontier unless they become useful.
+        # Inputs used directly by helper calls may need to change together.
+        # Inputs found by tracing assignments are also tried, but are not automatically
+        # included in every multi-input combination.
         symbolic = set(names)
         raw_normalized = {
             re.sub(r"\[\d+\]", "[*]", path) for path in raw_paths
@@ -785,7 +783,7 @@ class CoverageGenerator:
 
     @staticmethod
     def _dataflow_paths(function, value, paths, bindings=None, seen=(), resolved=False, memo=None) -> None:
-        """Reuse shared snapshot paths within this dependency collection."""
+        """Collect input names used by an expression, caching repeated dependency walks."""
         if memo is None:
             memo = {}
         identity = value if isinstance(value, (Ref, Unknown)) else id(value)
@@ -798,7 +796,7 @@ class CoverageGenerator:
 
     @staticmethod
     def _collect_dataflow_paths(function, value, paths, bindings, seen, resolved, memo) -> None:
-        """Collect input paths while preserving already-substituted value snapshots."""
+        """Trace an expression to its inputs without re-resolving values already saved by dataflow analysis."""
         base = value
         while isinstance(base, (MemberE, Index, Unary)):
             if isinstance(base, Index):
@@ -822,7 +820,7 @@ class CoverageGenerator:
                         for constraint in state.path:
                             CoverageGenerator._dataflow_paths(helper, constraint.expr, used, state.values, helper_seen, resolved=True, memo=memo)
                 else:
-                    # ponytail: conservatively retain side-effect reads until write snapshots are available.
+                    # shortcut: include all helper reads, narrow them when dependencies of each write are recorded.
                     CoverageGenerator._dataflow_paths(helper, helper.body, used, seen=helper_seen, memo=memo)
                 used = {re.sub(r"\[\d+\]", "[*]", path) for path in used}
                 mapped = False
@@ -858,10 +856,9 @@ class CoverageGenerator:
                                 mapped = True
                         break
                     if not matched_param and not memo.get("arguments_only"):
-                        # Caller bindings include later calls, not this helper's entry state.
+                        # Caller values can include later calls, so they do not describe this helper's entry state.
                         paths.add(leaf.name)
-                        # ponytail: conservatively retain earlier global-copy sources;
-                        # exact call-time snapshots would require a larger IR change.
+                        # shortcut: also trace assignments to this global, narrow them when call-entry values are recorded.
                         path = re.sub(r"\[\d+\]", "[*]", leaf.name)
                         write_key = ("writes", id(function))
                         if write_key not in memo:
@@ -884,7 +881,7 @@ class CoverageGenerator:
 
         path = CoverageGenerator._expression_path(value)
         if path:
-            # Resolved references are snapshots; Unknown locals still need provenance.
+            # Already-resolved values keep their recorded input names; Unknown values still need assignment tracing.
             if resolved:
                 paths.add(path)
                 if not isinstance(CoverageGenerator._path_reference(value, path), Unknown):
@@ -926,7 +923,7 @@ class CoverageGenerator:
 
     @staticmethod
     def _path_reference(value, path):
-        """Preserve unknown provenance when rebuilding a field or argument path."""
+        """Build Unknown(path) for an unknown base value, otherwise Ref(path)."""
         while isinstance(value, (MemberE, Index, Unary)):
             value = value.x if isinstance(value, Unary) else value.base
         return Unknown(path) if isinstance(value, Unknown) else Ref(path)
@@ -1063,11 +1060,11 @@ class _CoverageState:
         return False
 
     def _changes(self, result, commit):
-        """Calculate newly covered obligations and optionally commit them.
+        """Find newly covered goals and save them only when ``commit`` is True.
 
-        New condition patterns are compared against all previously committed patterns
-        to detect MC/DC pairs. Keeping calculation and commit separate lets the search
-        score candidates without corrupting its baseline state.
+        Compare the new condition results with saved results to find MC/DC pairs.
+        With ``commit=False``, a trial row can be scored without changing the coverage
+        used to score the next trial.
         """
         if result.invalid_accesses:
             return set()
@@ -1111,7 +1108,7 @@ class _CoverageState:
         return gained
 
     def _independent(self, decision, index, left, right):
-        # Pair checks are repeated heavily while the frontier grows, so cache the
+        # The search checks the same MC/DC pairs repeatedly, so cache the
         # symmetric pair by frozenset: (left, right) and (right, left) are equivalent.
         key = decision.id, index, frozenset((left, right))
         if key not in self._pairs:

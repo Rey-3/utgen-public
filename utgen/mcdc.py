@@ -22,8 +22,7 @@ def eval_expr(node, assign) -> bool | None:
     if isinstance(node, Not):
         value = eval_expr(node.child, assign)
         return None if value is None else not value
-    # Keep short-circuit behaviour: masking recipes may intentionally leave
-    # conditions unassigned once an AND/OR result is already determined.
+    # Stop evaluating when AND/OR is decided; skipped conditions may have no assigned value.
     if isinstance(node, And):
         for child in node.children:
             value = eval_expr(child, assign)
@@ -60,16 +59,16 @@ def _merge(*assignments):
 
 
 class MaskingRecipes:
-    """Construct condition assignments that force a subtree to an outcome.
+    """Assign True/False to individual conditions to force an expression's result.
 
-    ``make`` fully specifies a canonical recipe. ``masked`` keeps only the
-    conditions still needed after short-circuiting, which matters when several
-    conditions are derived from the same concrete C variable.
+    A recipe is an ``Atom -> bool`` mapping, where each Atom is one C condition.
+    ``make`` assigns every child. ``masked`` can omit skipped conditions: for
+    ``A && B`` to be False, it can assign only ``A=False`` without constraining B.
     """
 
     @classmethod
     def make(cls, node, outcome) -> dict | None:
-        """Build a canonical assignment that makes ``node`` equal ``outcome``."""
+        """Choose one repeatable True/False assignment giving the requested result."""
 
         if isinstance(node, Atom):
             return {node: outcome}

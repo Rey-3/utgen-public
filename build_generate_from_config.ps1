@@ -44,5 +44,5 @@ Invoke-Python @(
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "config.yaml") `
     -Destination (Join-Path $ProjectRoot "dist\config.yaml") -Force
 
-Write-Host "Built: $(Join-Path $ProjectRoot 'dist\generate_from_config.exe')"
+Write-Host "Built: $(Join-Path $ProjectRoot 'dist\utgen.exe')"
 Write-Host "Config: $(Join-Path $ProjectRoot 'dist\config.yaml')"
