@@ -23,9 +23,10 @@ to add no macros. Changing this list invalidates the generation cache.
 
 ## Documents
 
-- Spec: `docs/superpowers/specs/2026-07-21-utgen-design.md`
-- Implementation plan: `docs/superpowers/plans/2026-07-21-utgen-implementation.md`
-- Progress log: `docs/superpowers/plans/PROGRESS.md`
+- [User guide: setup, configuration, generation, Excel editing, and TESSY](docs/user-guide.md)
+- [config.yaml field reference and annotated example](docs/user-guide.md#configyaml-field-reference)
+- [Description settings](docs/descriptions.md)
+- [Iteration rules](docs/iteration-rules.md)
 
 ## Windows runtime MC/DC requirements
 
@@ -74,5 +75,5 @@ and [LLVM MC/DC documentation](https://releases.llvm.org/19.1.0/tools/clang/docs
 
 ## Status
 
-Under development, one task per run (see progress log).
-Full install/usage documentation arrives with Task 17.
+Under development. See the [user guide](docs/user-guide.md) for the current
+install and usage workflow.
