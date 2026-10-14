@@ -25,7 +25,7 @@ datas = [(resource_dirs[-1], os.path.join("clang", "lib", "clang", version)),
 hiddenimports = collect_submodules("utgen") + collect_submodules("clang")
 
 a = Analysis(
-    [os.path.join(here, "generate_from_config.py")],
+    [os.path.join(here, "utgen.py")],
     pathex=[here],
     binaries=binaries,
     datas=datas,

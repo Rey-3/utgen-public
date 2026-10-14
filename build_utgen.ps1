@@ -15,7 +15,7 @@ foreach ($Path in @(
     (Join-Path $LlvmRoot "bin\clang.exe"),
     (Join-Path $LlvmRoot "bin\libclang.dll"),
     (Join-Path $ProjectRoot "requirements.txt"),
-    (Join-Path $ProjectRoot "generate_from_config.spec"),
+    (Join-Path $ProjectRoot "utgen.spec"),
     (Join-Path $ProjectRoot "config.yaml")
 )) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
@@ -38,7 +38,7 @@ Invoke-Python @(
     "-m", "PyInstaller", "--clean", "--noconfirm",
     "--distpath", (Join-Path $ProjectRoot "dist"),
     "--workpath", (Join-Path $ProjectRoot ".pyinstaller_build"),
-    (Join-Path $ProjectRoot "generate_from_config.spec")
+    (Join-Path $ProjectRoot "utgen.spec")
 )
 
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "config.yaml") `

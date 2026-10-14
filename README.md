@@ -32,7 +32,7 @@ to add no macros. Changing this list invalidates the generation cache.
 
 Install Python dependencies with `python -m pip install -r requirements.txt`.
 
-On Windows, run `./build_generate_from_config.ps1` to build `dist/utgen.exe`.
+On Windows, run `./build_utgen.ps1` to build `dist/utgen.exe`.
 The build script installs PyInstaller and copies `config.yaml` beside the executable.
 The C runtime test also requires these separately installed tools:
 
