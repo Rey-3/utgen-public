@@ -601,17 +601,15 @@ class TessyCommand:
         success, output = self.connect()
 
         if not success:
-            if output == "CLIENT_NOT_RUNNING":
-                return self.connect_with_tessyd()
-            return False, output
+            self.close_running_tessy()
+            return self.connect_with_tessyd()
+
 
         ok, current = self.which_project()
         if not ok:
             return False, current
         if self.source_root or current.strip() != self.project_name:
-            success, output = self.close_running_tessy()
-            if not success:
-                return False, output
+            self.close_running_tessy()
             return self.connect_with_tessyd()
         return True, current
 
